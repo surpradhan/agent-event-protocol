@@ -1,0 +1,83 @@
+﻿{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aep.dev/schemas/aep-envelope.schema.json",
+  "title": "AEP Envelope",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "specversion",
+    "id",
+    "time",
+    "source",
+    "type",
+    "session_id",
+    "trace_id",
+    "payload"
+  ],
+  "properties": {
+    "specversion": {
+      "type": "string",
+      "pattern": "^0\\.1\\.0$"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "subject": {
+      "type": "string"
+    },
+    "causation_id": {
+      "type": "string"
+    },
+    "idempotency_key": {
+      "type": "string"
+    },
+    "schema": {
+      "type": "string"
+    },
+    "content_type": {
+      "type": "string",
+      "default": "application/json"
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "tenant": {
+      "type": "string"
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "payload": {
+      "type": "object"
+    }
+  }
+}

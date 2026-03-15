@@ -1,0 +1,12 @@
+﻿{
+  "specversion": "0.1.0",
+  "id": "evt_sample_001",
+  "time": "2026-03-10T00:00:00Z",
+  "source": "agent://sample",
+  "type": "task.created",
+  "session_id": "ses_sample_001",
+  "trace_id": "trc_sample_001",
+  "payload": {
+    "task": "Draft AEP docs"
+  }
+}

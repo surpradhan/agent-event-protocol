@@ -1,0 +1,440 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AEP Demo Dashboard</title>
+  <style>
+    :root {
+      --bg: #f6f8f4;
+      --card: #ffffff;
+      --ink: #132018;
+      --muted: #4c5f52;
+      --accent: #166534;
+      --line: #d7e1d9;
+      --warn: #8a2d1f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Aptos", sans-serif;
+      color: var(--ink);
+      background: radial-gradient(circle at 20% -10%, #dce9de 0%, var(--bg) 40%);
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: end;
+      margin-bottom: 16px;
+    }
+    h1 { margin: 0; font-size: 28px; }
+    p { margin: 6px 0 0; color: var(--muted); }
+    .btn {
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: #fff;
+      border-radius: 10px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-weight: 600;
+      text-decoration: none;
+      display: inline-block;
+    }
+    .btn.secondary {
+      background: #fff;
+      color: var(--accent);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(130px, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+    }
+    .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+    .v { font-size: 22px; margin-top: 6px; font-weight: 700; }
+    .layout {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 14px;
+    }
+    .panel-title {
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+    .sessions {
+      display: grid;
+      gap: 8px;
+      max-height: 62vh;
+      overflow: auto;
+    }
+    .session-item {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      cursor: pointer;
+      background: #fcfdfb;
+    }
+    .session-item.active {
+      border-color: var(--accent);
+      background: #eef6ef;
+    }
+    .session-main { font-weight: 600; }
+    .session-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1fr 180px auto auto;
+      gap: 8px;
+      margin-bottom: 10px;
+      align-items: center;
+    }
+    input, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 8px 10px;
+      font-size: 13px;
+      color: var(--ink);
+      background: #fff;
+    }
+    .replay {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .timeline {
+      display: grid;
+      gap: 8px;
+      max-height: 55vh;
+      overflow: auto;
+    }
+    .event {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      background: #fff;
+    }
+    .event.active {
+      border-color: #0f766e;
+      box-shadow: 0 0 0 2px #d5f3ef;
+    }
+    .event-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+    }
+    .badge {
+      font-size: 12px;
+      border: 1px solid #bfd2c2;
+      color: #1f4e31;
+      border-radius: 999px;
+      padding: 2px 8px;
+      white-space: nowrap;
+    }
+    .warn {
+      color: var(--warn);
+      border-color: #e7c2ba;
+      background: #fff4f2;
+    }
+    pre {
+      margin: 8px 0 0;
+      background: #f7faf7;
+      border-radius: 8px;
+      border: 1px solid #e5ece6;
+      padding: 8px;
+      white-space: pre-wrap;
+      font-size: 12px;
+      max-height: 150px;
+      overflow: auto;
+    }
+    .hint { font-size: 12px; color: var(--muted); }
+    @media (max-width: 980px) {
+      .grid { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
+      .layout { grid-template-columns: 1fr; }
+      .toolbar { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <div>
+        <h1>AEP Demo Dashboard</h1>
+        <p>Track agent runs with session timelines, event-level details, and operational metrics.</p>
+      </div>
+      <button class="btn" onclick="loadAll()">Refresh</button>
+    </div>
+
+    <div class="grid">
+      <div class="card"><div class="k">Sessions</div><div id="m-sessions" class="v">0</div></div>
+      <div class="card"><div class="k">Events Received</div><div id="m-received" class="v">0</div></div>
+      <div class="card"><div class="k">Accepted</div><div id="m-accepted" class="v">0</div></div>
+      <div class="card"><div class="k">Rejected</div><div id="m-rejected" class="v">0</div></div>
+      <div class="card"><div class="k">Duplicates</div><div id="m-duplicates" class="v">0</div></div>
+    </div>
+
+    <div class="layout">
+      <div class="card">
+        <div class="panel-title">Sessions</div>
+        <div id="sessions" class="sessions"></div>
+      </div>
+
+      <div class="card">
+        <div class="panel-title">Session Timeline</div>
+
+        <div class="toolbar">
+          <input id="search-input" type="text" placeholder="Search event id, type, causation id, payload" />
+          <select id="type-filter">
+            <option value="">All event types</option>
+          </select>
+          <button class="btn secondary" onclick="downloadExport('json')">Export JSON</button>
+          <button class="btn secondary" onclick="downloadExport('csv')">Export CSV</button>
+        </div>
+
+        <div class="replay">
+          <button class="btn secondary" onclick="replayPrev()">Prev</button>
+          <button id="play-btn" class="btn secondary" onclick="toggleAutoplay()">Autoplay</button>
+          <button class="btn secondary" onclick="replayNext()">Next</button>
+          <span id="replay-state" class="hint">No event selected</span>
+        </div>
+
+        <div id="timeline" class="timeline"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let selectedSessionId = null;
+    let latestSessions = [];
+    let currentEvents = [];
+    let activeEventIndex = -1;
+    let autoplayTimer = null;
+
+    async function json(url) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    }
+
+    function setMetric(id, value) {
+      document.getElementById(id).textContent = value;
+    }
+
+    function getFilters() {
+      return {
+        q: document.getElementById("search-input").value.trim(),
+        type: document.getElementById("type-filter").value
+      };
+    }
+
+    function buildEventsUrl(sessionId) {
+      const { q, type } = getFilters();
+      const params = new URLSearchParams();
+      if (q) params.set("q", q);
+      if (type) params.set("type", type);
+      const qs = params.toString();
+      return `/sessions/${encodeURIComponent(sessionId)}/events${qs ? `?${qs}` : ""}`;
+    }
+
+    function renderSessions(sessions) {
+      latestSessions = sessions;
+      const box = document.getElementById("sessions");
+      box.innerHTML = "";
+
+      if (!sessions.length) {
+        box.innerHTML = '<div class="session-sub">No sessions yet. Run a demo script.</div>';
+        return;
+      }
+
+      if (!selectedSessionId) {
+        selectedSessionId = sessions[0].session_id;
+      }
+
+      for (const s of sessions) {
+        const item = document.createElement("div");
+        item.className = "session-item" + (s.session_id === selectedSessionId ? " active" : "");
+        item.innerHTML = `
+          <div class="session-main">${s.session_id}</div>
+          <div class="session-sub">${s.source} • ${s.event_count} events</div>
+          <div class="session-sub">Updated ${new Date(s.updated_at).toLocaleString()}</div>
+        `;
+        item.onclick = async () => {
+          selectedSessionId = s.session_id;
+          activeEventIndex = -1;
+          stopAutoplay();
+          renderSessions(sessions);
+          await loadTimeline();
+        };
+        box.appendChild(item);
+      }
+    }
+
+    function updateReplayState() {
+      const box = document.getElementById("replay-state");
+      if (!currentEvents.length || activeEventIndex < 0) {
+        box.textContent = "No event selected";
+        return;
+      }
+      box.textContent = `Event ${activeEventIndex + 1} of ${currentEvents.length}: ${currentEvents[activeEventIndex].type}`;
+    }
+
+    function renderTypeOptions(events) {
+      const filter = document.getElementById("type-filter");
+      const prev = filter.value;
+      const types = Array.from(new Set(events.map((e) => e.type))).sort();
+      filter.innerHTML = '<option value="">All event types</option>' +
+        types.map((t) => `<option value="${t}">${t}</option>`).join("");
+      if (types.includes(prev)) {
+        filter.value = prev;
+      }
+    }
+
+    function renderTimeline(events) {
+      currentEvents = events;
+      const box = document.getElementById("timeline");
+      box.innerHTML = "";
+
+      if (!events.length) {
+        activeEventIndex = -1;
+        updateReplayState();
+        box.innerHTML = '<div class="session-sub">No events match current filters.</div>';
+        return;
+      }
+
+      if (activeEventIndex < 0 || activeEventIndex >= events.length) {
+        activeEventIndex = 0;
+      }
+
+      for (const [idx, e] of events.entries()) {
+        const item = document.createElement("div");
+        item.className = "event" + (idx === activeEventIndex ? " active" : "");
+        const warn = e.type === "policy.blocked" || e.type === "task.failed" || e.type === "error.raised";
+        item.innerHTML = `
+          <div class="event-top">
+            <strong>${e.type}</strong>
+            <span class="badge ${warn ? "warn" : ""}">${new Date(e.time).toLocaleString()}</span>
+          </div>
+          <div class="session-sub">id: ${e.id}</div>
+          <div class="session-sub">causation: ${e.causation_id || "-"}</div>
+          <pre>${JSON.stringify(e.payload, null, 2)}</pre>
+        `;
+        item.onclick = () => {
+          activeEventIndex = idx;
+          renderTimeline(currentEvents);
+        };
+        box.appendChild(item);
+      }
+
+      updateReplayState();
+    }
+
+    async function loadTimeline() {
+      if (!selectedSessionId) return;
+      const data = await json(buildEventsUrl(selectedSessionId));
+      renderTypeOptions(data.events || []);
+      renderTimeline(data.events || []);
+    }
+
+    function replayPrev() {
+      if (!currentEvents.length) return;
+      activeEventIndex = Math.max(0, activeEventIndex - 1);
+      renderTimeline(currentEvents);
+    }
+
+    function replayNext() {
+      if (!currentEvents.length) return;
+      activeEventIndex = Math.min(currentEvents.length - 1, activeEventIndex + 1);
+      renderTimeline(currentEvents);
+    }
+
+    function stopAutoplay() {
+      if (autoplayTimer) {
+        clearInterval(autoplayTimer);
+        autoplayTimer = null;
+      }
+      document.getElementById("play-btn").textContent = "Autoplay";
+    }
+
+    function toggleAutoplay() {
+      if (autoplayTimer) {
+        stopAutoplay();
+        return;
+      }
+      if (!currentEvents.length) return;
+      document.getElementById("play-btn").textContent = "Stop";
+      autoplayTimer = setInterval(() => {
+        if (activeEventIndex >= currentEvents.length - 1) {
+          stopAutoplay();
+          return;
+        }
+        replayNext();
+      }, 900);
+    }
+
+    function downloadExport(format) {
+      if (!selectedSessionId) return;
+      const { q, type } = getFilters();
+      const params = new URLSearchParams({ format });
+      if (q) params.set("q", q);
+      if (type) params.set("type", type);
+      window.location.href = `/sessions/${encodeURIComponent(selectedSessionId)}/export?${params.toString()}`;
+    }
+
+    async function loadAll() {
+      try {
+        const [metrics, sessionsPayload] = await Promise.all([json("/metrics"), json("/sessions")]);
+        setMetric("m-sessions", metrics.session_count || 0);
+        setMetric("m-received", metrics.received || 0);
+        setMetric("m-accepted", metrics.accepted || 0);
+        setMetric("m-rejected", metrics.rejected || 0);
+        setMetric("m-duplicates", metrics.duplicates || 0);
+
+        const sessions = sessionsPayload.sessions || [];
+        if (selectedSessionId && !sessions.find((s) => s.session_id === selectedSessionId)) {
+          selectedSessionId = sessions[0] ? sessions[0].session_id : null;
+        }
+        renderSessions(sessions);
+        await loadTimeline();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    const debounce = (fn, ms) => {
+      let t = null;
+      return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), ms);
+      };
+    };
+
+    document.getElementById("search-input").addEventListener("input", debounce(async () => {
+      activeEventIndex = -1;
+      await loadTimeline();
+    }, 250));
+
+    document.getElementById("type-filter").addEventListener("change", async () => {
+      activeEventIndex = -1;
+      await loadTimeline();
+    });
+
+    loadAll();
+    setInterval(loadAll, 5000);
+  </script>
+</body>
+</html>
