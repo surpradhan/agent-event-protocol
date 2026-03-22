@@ -1,4 +1,4 @@
-﻿{
+{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://aep.dev/schemas/aep-envelope.schema.json",
   "title": "AEP Envelope",
@@ -17,7 +17,7 @@
   "properties": {
     "specversion": {
       "type": "string",
-      "pattern": "^0\\.1\\.0$"
+      "pattern": "^0\\.2\\.0$"
     },
     "id": {
       "type": "string",
@@ -42,6 +42,15 @@
     "trace_id": {
       "type": "string",
       "minLength": 1
+    },
+    "parent_session_id": {
+      "type": "string",
+      "description": "Session ID of the spawning parent agent. Null/absent for root or standalone sessions."
+    },
+    "agent_role": {
+      "type": "string",
+      "enum": ["orchestrator", "subagent", "standalone"],
+      "description": "Role of the agent in the execution hierarchy. Allows node-type inference without traversing the tree."
     },
     "subject": {
       "type": "string"
@@ -77,7 +86,13 @@
       "additionalProperties": true
     },
     "payload": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "$schema": {
+          "type": "string",
+          "description": "Optional URI reference to a JSON Schema for validating the structure of this payload. If present, the validator will attempt to resolve and validate the payload against the referenced schema."
+        }
+      }
     }
   }
 }

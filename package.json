@@ -14,7 +14,9 @@
     "emit:example": "node examples/emit-example.js",
     "demo:support": "node examples/demos/support-agent-demo.js",
     "demo:itops": "node examples/demos/itops-agent-demo.js",
-    "demo:research": "node examples/demos/research-agent-demo.js"
+    "demo:research": "node examples/demos/research-agent-demo.js",
+    "demo:subagent": "node examples/demos/subagent-research-demo.js",
+    "demo:all": "npm run demo:support && npm run demo:itops && npm run demo:research && npm run demo:subagent"
   },
   "keywords": [],
   "author": "",

@@ -7,7 +7,8 @@ async function main() {
   const env = scenarioEnvelope({
     source: "agent://support-agent",
     sessionId,
-    traceId
+    traceId,
+    agentRole: "standalone"
   });
 
   const e1 = createEvent({

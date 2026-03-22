@@ -1,7 +1,7 @@
 ﻿{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://aep.dev/schemas/aep-core-events.schema.json",
-  "title": "AEP Core Event Types v0.1",
+  "title": "AEP Core Event Types v0.2",
   "type": "object",
   "additionalProperties": false,
   "required": [

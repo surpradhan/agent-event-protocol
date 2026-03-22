@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AEP Demo Dashboard — Live Snapshot</title>
+  <style>
+    :root {
+      --bg: #f6f8f4;
+      --card: #ffffff;
+      --ink: #132018;
+      --muted: #4c5f52;
+      --accent: #166534;
+      --line: #d7e1d9;
+      --warn: #8a2d1f;
+      --yellow: #854d0e;
+      --blue: #1e40af;
+      --purple: #6b21a8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Aptos", sans-serif;
+      color: var(--ink);
+      background: radial-gradient(circle at 20% -10%, #dce9de 0%, var(--bg) 40%);
+    }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
+
+    /* ── Header ── */
+    .hero {
+      display: flex; justify-content: space-between;
+      gap: 16px; align-items: flex-end; margin-bottom: 20px;
+    }
+    h1 { margin: 0; font-size: 28px; }
+    .subtitle { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+    .live-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: #dcfce7; border: 1px solid #86efac;
+      color: #166534; border-radius: 20px; padding: 4px 12px; font-size: 13px; font-weight: 600;
+    }
+    .live-dot {
+      width: 8px; height: 8px; background: #16a34a; border-radius: 50%;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity:1; } 50% { opacity:0.3; }
+    }
+
+    /* ── Metrics row ── */
+    .metrics-row {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+      margin-bottom: 24px;
+    }
+    .metric-card {
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 12px; padding: 16px 20px;
+    }
+    .metric-label { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+    .metric-value { font-size: 32px; font-weight: 700; margin: 4px 0 0; }
+    .metric-value.green { color: #166534; }
+    .metric-value.red   { color: #991b1b; }
+    .metric-value.gray  { color: var(--ink); }
+
+    /* ── Type breakdown ── */
+    .section-title { font-size: 15px; font-weight: 700; margin: 0 0 12px; color: var(--ink); }
+    .type-grid {
+      display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 28px;
+    }
+    .type-chip {
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 8px; padding: 6px 12px; font-size: 13px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .type-chip .count {
+      background: #f0fdf4; color: #166534;
+      font-weight: 700; border-radius: 6px;
+      padding: 1px 7px; font-size: 12px;
+    }
+
+    /* ── Sessions ── */
+    .sessions-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 28px;
+    }
+    .session-card {
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 14px; padding: 18px; cursor: pointer;
+      transition: box-shadow .15s, border-color .15s;
+    }
+    .session-card:hover, .session-card.active {
+      border-color: var(--accent); box-shadow: 0 0 0 3px #bbf7d0;
+    }
+    .session-card.active { background: #f0fdf4; }
+    .session-source {
+      font-size: 12px; color: var(--muted); font-weight: 600;
+      text-transform: uppercase; letter-spacing: .4px; margin-bottom: 4px;
+    }
+    .session-id { font-size: 13px; font-family: monospace; color: var(--ink); margin-bottom: 8px; }
+    .session-meta { display: flex; justify-content: space-between; align-items: center; }
+    .session-count {
+      background: #dcfce7; color: #166534;
+      border-radius: 8px; padding: 2px 10px; font-size: 13px; font-weight: 700;
+    }
+    .session-time { font-size: 11px; color: var(--muted); }
+
+    /* ── Event timeline ── */
+    .timeline-header {
+      display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;
+    }
+    .timeline { display: flex; flex-direction: column; gap: 0; }
+    .event-row {
+      display: grid; grid-template-columns: 140px 160px 1fr 28px;
+      align-items: start; gap: 12px;
+      padding: 10px 14px; border-radius: 10px;
+      border: 1px solid transparent; margin-bottom: 6px;
+      background: var(--card); border-color: var(--line);
+      transition: background .1s;
+    }
+    .event-row:hover { background: #f0fdf4; border-color: #86efac; }
+    .event-time { font-size: 11px; color: var(--muted); font-family: monospace; padding-top: 2px; }
+    .event-type-badge {
+      display: inline-block; padding: 2px 10px; border-radius: 20px;
+      font-size: 12px; font-weight: 600; white-space: nowrap;
+    }
+    .badge-task    { background: #dcfce7; color: #166534; }
+    .badge-tool    { background: #dbeafe; color: #1e40af; }
+    .badge-memory  { background: #ede9fe; color: #6b21a8; }
+    .badge-policy  { background: #fee2e2; color: #991b1b; }
+    .badge-handoff { background: #fef9c3; color: #854d0e; }
+    .badge-error   { background: #fee2e2; color: #991b1b; }
+    .event-payload {
+      font-size: 12px; color: var(--muted); font-family: monospace;
+      white-space: pre-wrap; word-break: break-all; line-height: 1.5;
+    }
+    .event-detail { font-size: 12px; font-family: monospace; }
+    .event-id { color: #94a3b8; font-size: 11px; }
+    .causation { color: #b3c4ba; font-size: 10px; }
+    .expand-btn { background: none; border: none; cursor: pointer; color: #94a3b8; font-size: 16px; padding: 0; }
+
+    /* ── No selection ── */
+    .no-sel {
+      text-align: center; padding: 40px 0; color: var(--muted);
+      font-size: 14px; background: var(--card);
+      border: 1px dashed var(--line); border-radius: 14px;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--line);
+      font-size: 12px; color: var(--muted);
+      display: flex; justify-content: space-between;
+    }
+    .url { font-family: monospace; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; color: var(--accent); }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Header -->
+  <div class="hero">
+    <div>
+      <h1>AEP Demo Dashboard</h1>
+      <p class="subtitle">Agent Event Protocol · ingest v0.1.0 · snapshot captured 2026-03-15 12:26 UTC</p>
+    </div>
+    <div>
+      <span class="live-badge"><span class="live-dot"></span>Server Running · localhost:8787</span>
+    </div>
+  </div>
+
+  <!-- Metrics -->
+  <div class="metrics-row">
+    <div class="metric-card">
+      <div class="metric-label">Received</div>
+      <div class="metric-value gray">15</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Accepted</div>
+      <div class="metric-value green">15</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Rejected</div>
+      <div class="metric-value" style="color:#94a3b8">0</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Sessions</div>
+      <div class="metric-value gray">3</div>
+    </div>
+  </div>
+
+  <!-- Event type breakdown -->
+  <div class="section-title">Event Types</div>
+  <div class="type-grid">
+    <div class="type-chip">task.created <span class="count">3</span></div>
+    <div class="type-chip">tool.called <span class="count">3</span></div>
+    <div class="type-chip">tool.result <span class="count">3</span></div>
+    <div class="type-chip">task.completed <span class="count">2</span></div>
+    <div class="type-chip">memory.read <span class="count">1</span></div>
+    <div class="type-chip">memory.write <span class="count">1</span></div>
+    <div class="type-chip">policy.blocked <span class="count">1</span></div>
+    <div class="type-chip">handoff.started <span class="count">1</span></div>
+  </div>
+
+  <!-- Sessions -->
+  <div class="section-title">Sessions</div>
+  <div class="sessions-grid">
+    <div class="session-card active" onclick="showSession('support')">
+      <div class="session-source">agent://support-agent</div>
+      <div class="session-id">ses_support_…3910</div>
+      <div class="session-meta">
+        <span class="session-count">5 events</span>
+        <span class="session-time">12:26:43 UTC</span>
+      </div>
+    </div>
+    <div class="session-card" onclick="showSession('itops')">
+      <div class="session-source">agent://itops-agent</div>
+      <div class="session-id">ses_itops_…4121</div>
+      <div class="session-meta">
+        <span class="session-count">5 events</span>
+        <span class="session-time">12:26:44 UTC</span>
+      </div>
+    </div>
+    <div class="session-card" onclick="showSession('research')">
+      <div class="session-source">agent://research-agent</div>
+      <div class="session-id">ses_research_…4333</div>
+      <div class="session-meta">
+        <span class="session-count">5 events</span>
+        <span class="session-time">12:26:44 UTC</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Timeline -->
+  <div class="timeline-header">
+    <div class="section-title" id="timeline-title" style="margin:0">Support Agent — Event Timeline</div>
+  </div>
+  <div class="timeline" id="timeline"></div>
+
+  <div class="footer">
+    <span>AEP Ingest · <span class="url">http://localhost:8787</span> · running with nohup</span>
+    <span>Static snapshot — open <span class="url">http://localhost:8787/dashboard</span> for live version</span>
+  </div>
+</div>
+
+<script>
+const SESSIONS = {
+  support: {
+    label: "Support Agent — Event Timeline",
+    events: [
+      { time:"12:26:43.910", type:"task.created", id:"evt_ee8fccd5…", causation:"—",
+        payload: '{"ticket_id":"SUP-4217","customer_tier":"enterprise","issue":"Cannot login after SSO migration"}' },
+      { time:"12:26:43.940", type:"memory.read", id:"evt_72b0e69f…", causation:"evt_ee8fccd5…",
+        payload: '{"knowledge_base":"auth-runbook","query":"sso migration login failure"}' },
+      { time:"12:26:43.965", type:"tool.called", id:"evt_4f887ef3…", causation:"evt_72b0e69f…",
+        payload: '{"tool_name":"ticketing.lookup","arguments":{"ticket_id":"SUP-4217"}}' },
+      { time:"12:26:43.991", type:"tool.result", id:"evt_54f5a740…", causation:"evt_4f887ef3…",
+        payload: '{"tool_name":"ticketing.lookup","output":{"last_error":"MFA assertion mismatch","region":"us-east-1"}}' },
+      { time:"12:26:44.019", type:"task.completed", id:"evt_21c334b5…", causation:"evt_54f5a740…",
+        payload: '{"resolution":"Reset MFA binding and force new SSO assertion","escalation_required":false}' },
+    ]
+  },
+  itops: {
+    label: "IT Ops Agent — Event Timeline",
+    events: [
+      { time:"12:26:44.122", type:"task.created", id:"evt_cf3c312c…", causation:"—",
+        payload: '{"alert_id":"ALRT-9911","service":"checkout-api","severity":"critical","symptom":"p95 latency > 4s"}' },
+      { time:"12:26:44.148", type:"tool.called", id:"evt_57166258…", causation:"evt_cf3c312c…",
+        payload: '{"tool_name":"monitoring.query","arguments":{"window":"15m","metric":"latency_p95","service":"checkout-api"}}' },
+      { time:"12:26:44.179", type:"tool.result", id:"evt_19198d69…", causation:"evt_57166258…",
+        payload: '{"tool_name":"monitoring.query","output":{"latency_p95_ms":4300,"error_rate":0.12}}' },
+      { time:"12:26:44.206", type:"policy.blocked", id:"evt_8e0c4c33…", causation:"evt_19198d69…",
+        payload: '{"policy":"auto-restart-in-business-hours","reason":"requires human approval","retryable":true}' },
+      { time:"12:26:44.235", type:"handoff.started", id:"evt_db0eca60…", causation:"evt_8e0c4c33…",
+        payload: '{"from_agent":"itops-agent","to_team":"oncall-sre","handoff_reason":"prod restart requires approval"}' },
+    ]
+  },
+  research: {
+    label: "Research Agent — Event Timeline",
+    events: [
+      { time:"12:26:44.333", type:"task.created", id:"evt_f5aeee5e…", causation:"—",
+        payload: '{"objective":"Summarize competitive landscape for AI observability","depth":"medium"}' },
+      { time:"12:26:44.360", type:"tool.called", id:"evt_d2b2caa6…", causation:"evt_f5aeee5e…",
+        payload: '{"tool_name":"web.search","arguments":{"query":"AI agent observability vendors","limit":5}}' },
+      { time:"12:26:44.391", type:"tool.result", id:"evt_e867e97d…", causation:"evt_d2b2caa6…",
+        payload: '{"tool_name":"web.search","output":{"hits":5,"urls":["https://example.com/vendor-a","https://example.com/vendor-b"]}}' },
+      { time:"12:26:44.421", type:"memory.write", id:"evt_a1aa31dd…", causation:"evt_e867e97d…",
+        payload: '{"note_id":"memo-1","summary":"Top vendors differentiate on replay and policy controls"}' },
+      { time:"12:26:44.448", type:"task.completed", id:"evt_343dae13…", causation:"evt_a1aa31dd…",
+        payload: '{"deliverable":"3-page briefing","confidence":"medium"}' },
+    ]
+  }
+};
+
+function badgeClass(type) {
+  if (type.startsWith("task"))    return "badge-task";
+  if (type.startsWith("tool"))    return "badge-tool";
+  if (type.startsWith("memory"))  return "badge-memory";
+  if (type.startsWith("policy"))  return "badge-policy";
+  if (type.startsWith("handoff")) return "badge-handoff";
+  if (type.startsWith("error"))   return "badge-error";
+  return "badge-task";
+}
+
+function showSession(key) {
+  // Highlight card
+  document.querySelectorAll(".session-card").forEach(c => c.classList.remove("active"));
+  const cards = document.querySelectorAll(".session-card");
+  const keys = ["support","itops","research"];
+  cards[keys.indexOf(key)].classList.add("active");
+
+  const s = SESSIONS[key];
+  document.getElementById("timeline-title").textContent = s.label;
+  const tl = document.getElementById("timeline");
+  tl.innerHTML = s.events.map(e => `
+    <div class="event-row">
+      <div class="event-time">${e.time}</div>
+      <div><span class="event-type-badge ${badgeClass(e.type)}">${e.type}</span></div>
+      <div>
+        <div class="event-payload">${e.payload}</div>
+        <div class="event-id" style="margin-top:4px">${e.id}</div>
+        ${e.causation !== "—" ? `<div class="causation">↳ caused by ${e.causation}</div>` : ""}
+      </div>
+      <div></div>
+    </div>
+  `).join("");
+}
+
+showSession("support");
+</script>
+</body>
+</html>

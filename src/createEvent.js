@@ -1,4 +1,4 @@
-﻿const crypto = require("crypto");
+const crypto = require("crypto");
 const { CORE_EVENT_TYPES } = require("./coreEventTypes");
 
 function createEvent(input) {
@@ -12,6 +12,8 @@ function createEvent(input) {
     session_id,
     trace_id,
     payload,
+    parent_session_id,
+    agent_role,
     subject,
     causation_id,
     idempotency_key,
@@ -27,8 +29,15 @@ function createEvent(input) {
     throw new Error(`Unsupported event type: ${type}`);
   }
 
+  if (agent_role !== undefined) {
+    const validRoles = ["orchestrator", "subagent", "standalone"];
+    if (!validRoles.includes(agent_role)) {
+      throw new Error(`Invalid agent_role '${agent_role}'. Must be one of: ${validRoles.join(", ")}`);
+    }
+  }
+
   const event = {
-    specversion: "0.1.0",
+    specversion: "0.2.0",
     id: input.id || `evt_${crypto.randomUUID().replace(/-/g, "")}`,
     time: input.time || new Date().toISOString(),
     source,
@@ -39,6 +48,8 @@ function createEvent(input) {
   };
 
   const optionalFields = {
+    parent_session_id,
+    agent_role,
     subject,
     causation_id,
     idempotency_key,

@@ -17,6 +17,10 @@ build/
 .cache/
 coverage/
 
+# Docs
+docs/
+AEP_PRD.md
+
 # Lock files
 package-lock.json
 yarn.lock
@@ -28,6 +32,7 @@ pnpm-lock.yaml
 .env.*.local
 
 # Editor
+.claude/
 .vscode/
 .idea/
 *.swp
