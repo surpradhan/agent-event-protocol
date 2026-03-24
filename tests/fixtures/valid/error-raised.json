@@ -1,0 +1,15 @@
+{
+  "specversion": "0.2.0",
+  "id": "evt_fix_error_001",
+  "time": "2026-01-01T10:02:00Z",
+  "source": "agent://test/subagent",
+  "type": "error.raised",
+  "session_id": "ses_fix_002",
+  "trace_id": "trc_fix_001",
+  "agent_role": "subagent",
+  "payload": {
+    "code": "TOOL_TIMEOUT",
+    "message": "web_search timed out after 30 s",
+    "recoverable": true
+  }
+}

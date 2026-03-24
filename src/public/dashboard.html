@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -20,421 +20,962 @@
       font-family: "Segoe UI", "Aptos", sans-serif;
       color: var(--ink);
       background: radial-gradient(circle at 20% -10%, #dce9de 0%, var(--bg) 40%);
+      min-height: 100vh;
     }
-    .wrap {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 24px;
-    }
+    .wrap { max-width: 1300px; margin: 0 auto; padding: 24px; }
+
+    /* ── Header ── */
     .hero {
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      align-items: end;
-      margin-bottom: 16px;
+      display: flex; justify-content: space-between;
+      align-items: flex-end; gap: 16px; margin-bottom: 16px;
     }
     h1 { margin: 0; font-size: 28px; }
-    p { margin: 6px 0 0; color: var(--muted); }
-    .btn {
-      border: 1px solid var(--accent);
-      background: var(--accent);
-      color: #fff;
-      border-radius: 10px;
-      padding: 10px 14px;
-      cursor: pointer;
-      font-weight: 600;
-      text-decoration: none;
-      display: inline-block;
-    }
-    .btn.secondary {
-      background: #fff;
-      color: var(--accent);
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(130px, 1fr));
-      gap: 10px;
-      margin-bottom: 16px;
-    }
-    .card {
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 12px;
-    }
-    .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
-    .v { font-size: 22px; margin-top: 6px; font-weight: 700; }
-    .layout {
-      display: grid;
-      grid-template-columns: 360px 1fr;
-      gap: 14px;
-    }
-    .panel-title {
-      font-size: 14px;
-      font-weight: 700;
-      margin-bottom: 10px;
-    }
-    .sessions {
-      display: grid;
-      gap: 8px;
-      max-height: 62vh;
-      overflow: auto;
-    }
-    .session-item {
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 10px;
-      cursor: pointer;
-      background: #fcfdfb;
-    }
-    .session-item.active {
-      border-color: var(--accent);
-      background: #eef6ef;
-    }
-    .session-main { font-weight: 600; }
-    .session-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
-    .toolbar {
-      display: grid;
-      grid-template-columns: 1fr 180px auto auto;
-      gap: 8px;
-      margin-bottom: 10px;
-      align-items: center;
-    }
-    input, select {
-      width: 100%;
-      border: 1px solid var(--line);
-      border-radius: 9px;
-      padding: 8px 10px;
-      font-size: 13px;
-      color: var(--ink);
-      background: #fff;
-    }
-    .replay {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      margin-bottom: 10px;
-      flex-wrap: wrap;
-    }
-    .timeline {
-      display: grid;
-      gap: 8px;
-      max-height: 55vh;
-      overflow: auto;
-    }
-    .event {
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 10px;
-      background: #fff;
-    }
-    .event.active {
-      border-color: #0f766e;
-      box-shadow: 0 0 0 2px #d5f3ef;
-    }
-    .event-top {
-      display: flex;
-      justify-content: space-between;
-      gap: 8px;
-      align-items: center;
-    }
-    .badge {
-      font-size: 12px;
-      border: 1px solid #bfd2c2;
-      color: #1f4e31;
-      border-radius: 999px;
-      padding: 2px 8px;
+    p  { margin: 6px 0 0; color: var(--muted); }
+
+    .live-pill {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 13px; color: var(--muted);
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 999px; padding: 6px 14px;
       white-space: nowrap;
     }
-    .warn {
-      color: var(--warn);
-      border-color: #e7c2ba;
-      background: #fff4f2;
+    .live-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: #d1d5db;
     }
-    pre {
-      margin: 8px 0 0;
-      background: #f7faf7;
-      border-radius: 8px;
-      border: 1px solid #e5ece6;
-      padding: 8px;
-      white-space: pre-wrap;
-      font-size: 12px;
-      max-height: 150px;
-      overflow: auto;
+    .live-dot.on  { background: #22c55e; box-shadow: 0 0 0 3px #dcfce7; animation: blink 2s infinite; }
+    .live-dot.err { background: #ef4444; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.5} }
+
+    /* ── Metrics bar ── */
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(120px, 1fr));
+      gap: 10px; margin-bottom: 16px;
+    }
+    .card {
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 12px; padding: 12px;
+    }
+    .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+    .v { font-size: 22px; margin-top: 6px; font-weight: 700; }
+
+    /* ── Main tabs ── */
+    .main-tabs {
+      display: flex; gap: 4px;
+      border-bottom: 2px solid var(--line);
+      margin-bottom: 14px; padding-bottom: 0;
+    }
+    .tab-btn {
+      background: none; border: none;
+      border-bottom: 2px solid transparent; margin-bottom: -2px;
+      padding: 8px 20px; font-size: 14px; font-weight: 600;
+      color: var(--muted); cursor: pointer; border-radius: 6px 6px 0 0;
+    }
+    .tab-btn:hover { color: var(--accent); background: #f0f7f1; }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    /* ── Layout ── */
+    .layout {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 14px;
+    }
+    .panel-header {
+      display: flex; justify-content: space-between;
+      align-items: center; margin-bottom: 12px; gap: 8px;
+    }
+    .panel-title {
+      font-size: 14px; font-weight: 700; margin-bottom: 10px;
+    }
+    .panel-header .panel-title { margin-bottom: 0; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── Sub-tabs ── */
+    .sub-tabs { display: flex; gap: 4px; flex-shrink: 0; }
+    .sub-tab {
+      background: none; border: 1px solid var(--line); border-radius: 8px;
+      padding: 5px 12px; font-size: 12px; font-weight: 600;
+      color: var(--muted); cursor: pointer; white-space: nowrap;
+    }
+    .sub-tab:hover { border-color: var(--accent); color: var(--accent); }
+    .sub-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+    /* ── Scrollable lists ── */
+    .item-list {
+      display: grid; gap: 7px;
+      max-height: 65vh; overflow: auto;
+    }
+    .clickable-item {
+      border: 1px solid var(--line); border-radius: 10px;
+      padding: 10px; cursor: pointer; background: #fcfdfb;
+      transition: border-color .12s, background .12s;
+    }
+    .clickable-item:hover { border-color: #86b894; background: #f5fbf6; }
+    .clickable-item.active { border-color: var(--accent); background: #eef6ef; }
+    .item-main {
+      font-weight: 600; font-size: 13px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .item-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+
+    /* ── Buttons ── */
+    .btn {
+      border: 1px solid var(--accent); background: var(--accent); color: #fff;
+      border-radius: 10px; padding: 8px 12px; cursor: pointer;
+      font-weight: 600; font-size: 13px; white-space: nowrap;
+    }
+    .btn.secondary { background: #fff; color: var(--accent); }
+    .btn.secondary:hover { background: #eef6ef; }
+
+    /* ── Toolbar ── */
+    .toolbar {
+      display: grid; grid-template-columns: 1fr 180px auto auto;
+      gap: 8px; margin-bottom: 10px; align-items: center;
+    }
+    input, select {
+      width: 100%; border: 1px solid var(--line); border-radius: 9px;
+      padding: 8px 10px; font-size: 13px; color: var(--ink); background: #fff;
+    }
+    .replay {
+      display: flex; gap: 8px; align-items: center;
+      margin-bottom: 10px; flex-wrap: wrap;
     }
     .hint { font-size: 12px; color: var(--muted); }
+
+    /* ── Timeline ── */
+    .timeline-list { max-height: 50vh; }
+    .event {
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--ev-accent, var(--line));
+      border-radius: 10px; padding: 10px; background: #fff;
+      cursor: pointer; transition: border-color .12s, box-shadow .12s;
+    }
+    .event.active { border-color: #0f766e; border-left-color: #0f766e; box-shadow: 0 0 0 2px #d5f3ef; }
+    .event-top { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+    .event-type { font-weight: 700; font-size: 13px; }
+
+    /* ── Badges ── */
+    .badge {
+      font-size: 11px; border: 1px solid #bfd2c2; color: #1f4e31;
+      border-radius: 999px; padding: 2px 8px; white-space: nowrap; background: #f0f7f1;
+    }
+    .b-task-created    { background:#dbeafe; color:#1e40af; border-color:#93c5fd; }
+    .b-task-updated    { background:#eff6ff; color:#1e40af; border-color:#bfdbfe; }
+    .b-task-completed  { background:#dcfce7; color:#166534; border-color:#86efac; }
+    .b-task-failed     { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+    .b-tool-called     { background:#f3e8ff; color:#6b21a8; border-color:#d8b4fe; }
+    .b-tool-result     { background:#faf5ff; color:#6b21a8; border-color:#e9d5ff; }
+    .b-memory-read     { background:#fff7ed; color:#9a3412; border-color:#fdba74; }
+    .b-memory-write    { background:#ffedd5; color:#9a3412; border-color:#fb923c; }
+    .b-handoff-started    { background:#ccfbf1; color:#0f766e; border-color:#5eead4; }
+    .b-handoff-completed  { background:#f0fdfa; color:#0f766e; border-color:#99f6e4; }
+    .b-policy-blocked  { background:#fff4f2; color:#8a2d1f; border-color:#e7c2ba; }
+    .b-error-raised    { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+
+    /* event left-border accent colors */
+    .ea-task-created    { --ev-accent:#3b82f6; }
+    .ea-task-updated    { --ev-accent:#93c5fd; }
+    .ea-task-completed  { --ev-accent:#22c55e; }
+    .ea-task-failed     { --ev-accent:#ef4444; }
+    .ea-tool-called     { --ev-accent:#a855f7; }
+    .ea-tool-result     { --ev-accent:#d8b4fe; }
+    .ea-memory-read     { --ev-accent:#fb923c; }
+    .ea-memory-write    { --ev-accent:#f97316; }
+    .ea-handoff-started    { --ev-accent:#14b8a6; }
+    .ea-handoff-completed  { --ev-accent:#5eead4; }
+    .ea-policy-blocked  { --ev-accent:#dc2626; }
+    .ea-error-raised    { --ev-accent:#ef4444; }
+
+    pre {
+      margin: 8px 0 0; background: #f7faf7;
+      border-radius: 8px; border: 1px solid #e5ece6;
+      padding: 8px; white-space: pre-wrap; font-size: 11px;
+      max-height: 110px; overflow: auto;
+    }
+
+    /* ── Causation DAG ── */
+    .dag-wrap {
+      border: 1px solid var(--line); border-radius: 10px;
+      background: #f9fbf9; overflow: auto; max-height: 54vh; min-height: 120px;
+    }
+    .dag-detail {
+      margin-top: 10px; padding: 10px 12px;
+      background: #f0f7f1; border: 1px solid var(--line); border-radius: 10px;
+      font-size: 12px; max-height: 160px; overflow: auto;
+    }
+
+    /* ── Workflow tree ── */
+    .workflow-tree { max-height: 65vh; overflow: auto; }
+    .tree-node { margin: 0; padding: 0; }
+    .tree-row {
+      display: flex; align-items: flex-start; gap: 6px;
+      padding: 8px 10px; margin: 2px 0;
+      border: 1px solid var(--line); border-radius: 9px;
+      background: #fcfdfb; cursor: pointer;
+      transition: background .12s, border-color .12s;
+    }
+    .tree-row:hover { background: #eef6ef; border-color: #86b894; }
+    .tree-row.has-ch { border-left: 3px solid var(--accent); }
+    .tree-toggle {
+      font-size: 11px; color: var(--accent); min-width: 14px;
+      cursor: pointer; user-select: none; padding-top: 2px; flex-shrink: 0;
+    }
+    .tree-toggle-gap { min-width: 14px; flex-shrink: 0; }
+    .tree-content { flex: 1; min-width: 0; }
+    .tree-sid {
+      font-weight: 600; font-size: 13px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .tree-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .tree-children {
+      padding-left: 20px; margin-left: 10px;
+      border-left: 1px dashed var(--line);
+    }
+    .role-tag {
+      font-size: 10px; padding: 1px 7px; border-radius: 999px;
+      border: 1px solid #bfd2c2; color: var(--accent);
+      background: #f0f7f1; white-space: nowrap; margin-right: 4px;
+    }
+
+    /* ── Empty state ── */
+    .empty { font-size: 13px; color: var(--muted); padding: 28px; text-align: center; }
+
+    /* ── Responsive ── */
     @media (max-width: 980px) {
-      .grid { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
+      .metric-grid { grid-template-columns: repeat(3, minmax(100px, 1fr)); }
       .layout { grid-template-columns: 1fr; }
-      .toolbar { grid-template-columns: 1fr; }
+      .toolbar { grid-template-columns: 1fr 1fr; }
     }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="hero">
-      <div>
-        <h1>AEP Demo Dashboard</h1>
-        <p>Track agent runs with session timelines, event-level details, and operational metrics.</p>
+<div class="wrap">
+
+  <!-- Header -->
+  <div class="hero">
+    <div>
+      <h1>AEP Demo Dashboard</h1>
+      <p>Session timelines, causation graphs, workflow trees — in real time.</p>
+    </div>
+    <div class="live-pill">
+      <span class="live-dot" id="live-dot"></span>
+      <span id="live-label">Connecting…</span>
+    </div>
+  </div>
+
+  <!-- Metrics -->
+  <div class="metric-grid">
+    <div class="card"><div class="k">Sessions</div><div id="m-sessions" class="v">0</div></div>
+    <div class="card"><div class="k">Events Received</div><div id="m-received" class="v">0</div></div>
+    <div class="card"><div class="k">Accepted</div><div id="m-accepted" class="v">0</div></div>
+    <div class="card"><div class="k">Rejected</div><div id="m-rejected" class="v">0</div></div>
+    <div class="card"><div class="k">Workflows</div><div id="m-workflows" class="v">0</div></div>
+  </div>
+
+  <!-- Main tabs -->
+  <div class="main-tabs">
+    <button class="tab-btn active" id="tab-sessions"   onclick="switchMain('sessions')">Sessions</button>
+    <button class="tab-btn"        id="tab-workflows"  onclick="switchMain('workflows')">Workflows</button>
+  </div>
+
+  <!-- ═══ Sessions view ═══ -->
+  <div id="view-sessions" class="layout">
+
+    <div class="card">
+      <div class="panel-title">Sessions</div>
+      <div id="sessions-list" class="item-list">
+        <div class="empty">No sessions yet.</div>
       </div>
-      <button class="btn" onclick="loadAll()">Refresh</button>
     </div>
 
-    <div class="grid">
-      <div class="card"><div class="k">Sessions</div><div id="m-sessions" class="v">0</div></div>
-      <div class="card"><div class="k">Events Received</div><div id="m-received" class="v">0</div></div>
-      <div class="card"><div class="k">Accepted</div><div id="m-accepted" class="v">0</div></div>
-      <div class="card"><div class="k">Rejected</div><div id="m-rejected" class="v">0</div></div>
-      <div class="card"><div class="k">Duplicates</div><div id="m-duplicates" class="v">0</div></div>
-    </div>
-
-    <div class="layout">
-      <div class="card">
-        <div class="panel-title">Sessions</div>
-        <div id="sessions" class="sessions"></div>
+    <div class="card">
+      <div class="panel-header">
+        <div class="panel-title" id="session-title">Select a session</div>
+        <div class="sub-tabs">
+          <button class="sub-tab active" id="st-timeline" onclick="switchSub('timeline')">Timeline</button>
+          <button class="sub-tab"        id="st-dag"      onclick="switchSub('dag')">Causation DAG</button>
+        </div>
       </div>
 
-      <div class="card">
-        <div class="panel-title">Session Timeline</div>
-
+      <!-- Timeline sub-view -->
+      <div id="sv-timeline">
         <div class="toolbar">
-          <input id="search-input" type="text" placeholder="Search event id, type, causation id, payload" />
-          <select id="type-filter">
-            <option value="">All event types</option>
-          </select>
-          <button class="btn secondary" onclick="downloadExport('json')">Export JSON</button>
-          <button class="btn secondary" onclick="downloadExport('csv')">Export CSV</button>
+          <input id="search-input" type="text" placeholder="Search event id, type, causation id, payload…" />
+          <select id="type-filter"><option value="">All event types</option></select>
+          <button class="btn secondary" onclick="doExport('json')">Export JSON</button>
+          <button class="btn secondary" onclick="doExport('csv')">Export CSV</button>
         </div>
-
         <div class="replay">
-          <button class="btn secondary" onclick="replayPrev()">Prev</button>
-          <button id="play-btn" class="btn secondary" onclick="toggleAutoplay()">Autoplay</button>
-          <button class="btn secondary" onclick="replayNext()">Next</button>
-          <span id="replay-state" class="hint">No event selected</span>
+          <button class="btn secondary" onclick="replayStep(-1)">← Prev</button>
+          <button class="btn secondary" id="play-btn" onclick="togglePlay()">Autoplay</button>
+          <button class="btn secondary" onclick="replayStep(1)">Next →</button>
+          <span class="hint" id="replay-state">No event selected</span>
         </div>
+        <div id="timeline" class="item-list timeline-list"></div>
+      </div>
 
-        <div id="timeline" class="timeline"></div>
+      <!-- DAG sub-view -->
+      <div id="sv-dag" style="display:none">
+        <div class="hint" id="dag-hint" style="margin-bottom:8px"></div>
+        <div class="dag-wrap" id="dag-wrap">
+          <div class="empty">Select a session to view its causation graph.</div>
+        </div>
+        <div id="dag-detail" class="dag-detail" style="display:none"></div>
       </div>
     </div>
   </div>
 
-  <script>
-    let selectedSessionId = null;
-    let latestSessions = [];
-    let currentEvents = [];
-    let activeEventIndex = -1;
-    let autoplayTimer = null;
+  <!-- ═══ Workflows view ═══ -->
+  <div id="view-workflows" class="layout" style="display:none">
 
-    async function json(url) {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
-    }
+    <div class="card">
+      <div class="panel-title">Workflows</div>
+      <div id="workflows-list" class="item-list">
+        <div class="empty">No workflows yet.</div>
+      </div>
+    </div>
 
-    function setMetric(id, value) {
-      document.getElementById(id).textContent = value;
-    }
+    <div class="card">
+      <div class="panel-title" id="workflow-title">Select a workflow</div>
+      <div id="workflow-tree" class="workflow-tree">
+        <div class="empty">Select a workflow to view the agent tree.</div>
+      </div>
+    </div>
+  </div>
 
-    function getFilters() {
-      return {
-        q: document.getElementById("search-input").value.trim(),
-        type: document.getElementById("type-filter").value
-      };
-    }
+</div><!-- .wrap -->
 
-    function buildEventsUrl(sessionId) {
-      const { q, type } = getFilters();
-      const params = new URLSearchParams();
-      if (q) params.set("q", q);
-      if (type) params.set("type", type);
-      const qs = params.toString();
-      return `/sessions/${encodeURIComponent(sessionId)}/events${qs ? `?${qs}` : ""}`;
-    }
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// Auth helpers — store/retrieve the bearer token used for all API calls
+// ─────────────────────────────────────────────────────────────────────────────
+(function bootstrapAuth() {
+  // If ?token= is in the URL, persist it to sessionStorage then clean the URL.
+  const params = new URLSearchParams(window.location.search);
+  const urlTok = params.get('token');
+  if (urlTok) {
+    sessionStorage.setItem('aep_token', urlTok);
+    params.delete('token');
+    const clean = window.location.pathname + (params.toString() ? '?' + params : '');
+    window.history.replaceState({}, '', clean);
+  }
+})();
 
-    function renderSessions(sessions) {
-      latestSessions = sessions;
-      const box = document.getElementById("sessions");
-      box.innerHTML = "";
+function getToken() {
+  return sessionStorage.getItem('aep_token') || '';
+}
 
-      if (!sessions.length) {
-        box.innerHTML = '<div class="session-sub">No sessions yet. Run a demo script.</div>';
-        return;
-      }
+function clearToken() {
+  sessionStorage.removeItem('aep_token');
+}
 
-      if (!selectedSessionId) {
-        selectedSessionId = sessions[0].session_id;
-      }
-
-      for (const s of sessions) {
-        const item = document.createElement("div");
-        item.className = "session-item" + (s.session_id === selectedSessionId ? " active" : "");
-        item.innerHTML = `
-          <div class="session-main">${s.session_id}</div>
-          <div class="session-sub">${s.source} • ${s.event_count} events</div>
-          <div class="session-sub">Updated ${new Date(s.updated_at).toLocaleString()}</div>
-        `;
-        item.onclick = async () => {
-          selectedSessionId = s.session_id;
-          activeEventIndex = -1;
-          stopAutoplay();
-          renderSessions(sessions);
-          await loadTimeline();
-        };
-        box.appendChild(item);
-      }
-    }
-
-    function updateReplayState() {
-      const box = document.getElementById("replay-state");
-      if (!currentEvents.length || activeEventIndex < 0) {
-        box.textContent = "No event selected";
-        return;
-      }
-      box.textContent = `Event ${activeEventIndex + 1} of ${currentEvents.length}: ${currentEvents[activeEventIndex].type}`;
-    }
-
-    function renderTypeOptions(events) {
-      const filter = document.getElementById("type-filter");
-      const prev = filter.value;
-      const types = Array.from(new Set(events.map((e) => e.type))).sort();
-      filter.innerHTML = '<option value="">All event types</option>' +
-        types.map((t) => `<option value="${t}">${t}</option>`).join("");
-      if (types.includes(prev)) {
-        filter.value = prev;
-      }
-    }
-
-    function renderTimeline(events) {
-      currentEvents = events;
-      const box = document.getElementById("timeline");
-      box.innerHTML = "";
-
-      if (!events.length) {
-        activeEventIndex = -1;
-        updateReplayState();
-        box.innerHTML = '<div class="session-sub">No events match current filters.</div>';
-        return;
-      }
-
-      if (activeEventIndex < 0 || activeEventIndex >= events.length) {
-        activeEventIndex = 0;
-      }
-
-      for (const [idx, e] of events.entries()) {
-        const item = document.createElement("div");
-        item.className = "event" + (idx === activeEventIndex ? " active" : "");
-        const warn = e.type === "policy.blocked" || e.type === "task.failed" || e.type === "error.raised";
-        item.innerHTML = `
-          <div class="event-top">
-            <strong>${e.type}</strong>
-            <span class="badge ${warn ? "warn" : ""}">${new Date(e.time).toLocaleString()}</span>
-          </div>
-          <div class="session-sub">id: ${e.id}</div>
-          <div class="session-sub">causation: ${e.causation_id || "-"}</div>
-          <pre>${JSON.stringify(e.payload, null, 2)}</pre>
-        `;
-        item.onclick = () => {
-          activeEventIndex = idx;
-          renderTimeline(currentEvents);
-        };
-        box.appendChild(item);
-      }
-
-      updateReplayState();
-    }
-
-    async function loadTimeline() {
-      if (!selectedSessionId) return;
-      const data = await json(buildEventsUrl(selectedSessionId));
-      renderTypeOptions(data.events || []);
-      renderTimeline(data.events || []);
-    }
-
-    function replayPrev() {
-      if (!currentEvents.length) return;
-      activeEventIndex = Math.max(0, activeEventIndex - 1);
-      renderTimeline(currentEvents);
-    }
-
-    function replayNext() {
-      if (!currentEvents.length) return;
-      activeEventIndex = Math.min(currentEvents.length - 1, activeEventIndex + 1);
-      renderTimeline(currentEvents);
-    }
-
-    function stopAutoplay() {
-      if (autoplayTimer) {
-        clearInterval(autoplayTimer);
-        autoplayTimer = null;
-      }
-      document.getElementById("play-btn").textContent = "Autoplay";
-    }
-
-    function toggleAutoplay() {
-      if (autoplayTimer) {
-        stopAutoplay();
-        return;
-      }
-      if (!currentEvents.length) return;
-      document.getElementById("play-btn").textContent = "Stop";
-      autoplayTimer = setInterval(() => {
-        if (activeEventIndex >= currentEvents.length - 1) {
-          stopAutoplay();
-          return;
-        }
-        replayNext();
-      }, 900);
-    }
-
-    function downloadExport(format) {
-      if (!selectedSessionId) return;
-      const { q, type } = getFilters();
-      const params = new URLSearchParams({ format });
-      if (q) params.set("q", q);
-      if (type) params.set("type", type);
-      window.location.href = `/sessions/${encodeURIComponent(selectedSessionId)}/export?${params.toString()}`;
-    }
-
-    async function loadAll() {
-      try {
-        const [metrics, sessionsPayload] = await Promise.all([json("/metrics"), json("/sessions")]);
-        setMetric("m-sessions", metrics.session_count || 0);
-        setMetric("m-received", metrics.received || 0);
-        setMetric("m-accepted", metrics.accepted || 0);
-        setMetric("m-rejected", metrics.rejected || 0);
-        setMetric("m-duplicates", metrics.duplicates || 0);
-
-        const sessions = sessionsPayload.sessions || [];
-        if (selectedSessionId && !sessions.find((s) => s.session_id === selectedSessionId)) {
-          selectedSessionId = sessions[0] ? sessions[0].session_id : null;
-        }
-        renderSessions(sessions);
-        await loadTimeline();
-      } catch (err) {
-        console.error(err);
-      }
-    }
-
-    const debounce = (fn, ms) => {
-      let t = null;
-      return (...args) => {
-        clearTimeout(t);
-        t = setTimeout(() => fn(...args), ms);
-      };
-    };
-
-    document.getElementById("search-input").addEventListener("input", debounce(async () => {
-      activeEventIndex = -1;
-      await loadTimeline();
-    }, 250));
-
-    document.getElementById("type-filter").addEventListener("change", async () => {
-      activeEventIndex = -1;
-      await loadTimeline();
+// Auth gate overlay — shown when there is no token or the server returns 401.
+function showAuthOverlay(message) {
+  let overlay = document.getElementById('auth-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'auth-overlay';
+    overlay.style.cssText = [
+      'position:fixed;inset:0;z-index:9999',
+      'background:rgba(246,248,244,.96)',
+      'display:flex;align-items:center;justify-content:center'
+    ].join(';');
+    overlay.innerHTML = `
+      <div style="background:#fff;border:1px solid #d7e1d9;border-radius:16px;
+                  padding:40px 36px;max-width:360px;width:100%;
+                  box-shadow:0 4px 24px rgba(0,0,0,.08);text-align:left">
+        <h2 style="margin:0 0 8px;font-size:22px;color:#132018">AEP Dashboard</h2>
+        <p id="auth-msg" style="margin:0 0 20px;font-size:14px;color:#4c5f52">
+          Enter your dashboard token to continue.
+        </p>
+        <input id="auth-input" type="password" placeholder="Dashboard token"
+               autocomplete="current-password"
+               style="width:100%;box-sizing:border-box;border:1px solid #d7e1d9;
+                      border-radius:9px;padding:10px 12px;font-size:14px;color:#132018;outline:none"/>
+        <button onclick="submitAuthToken()"
+                style="margin-top:14px;width:100%;padding:11px;border:none;
+                       border-radius:9px;background:#166534;color:#fff;
+                       font-size:15px;font-weight:600;cursor:pointer">
+          Sign in
+        </button>
+        <div id="auth-err" style="color:#8a2d1f;font-size:13px;margin-top:10px;display:none">
+          Invalid token — please try again.
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    document.getElementById('auth-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') submitAuthToken();
     });
+  }
+  if (message) document.getElementById('auth-msg').textContent = message;
+  overlay.style.display = 'flex';
+  setTimeout(() => document.getElementById('auth-input').focus(), 50);
+}
 
+function hideAuthOverlay() {
+  const overlay = document.getElementById('auth-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+function submitAuthToken() {
+  const tok = document.getElementById('auth-input').value.trim();
+  if (!tok) return;
+  document.getElementById('auth-err').style.display = 'none';
+  sessionStorage.setItem('aep_token', tok);
+  // Test the token against /metrics.
+  fetchJson('/metrics').then(() => {
+    hideAuthOverlay();
     loadAll();
-    setInterval(loadAll, 5000);
-  </script>
+    initSSE();
+  }).catch(() => {
+    clearToken();
+    document.getElementById('auth-input').value = '';
+    document.getElementById('auth-err').style.display = 'block';
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────────────────────────────
+let mainView   = 'sessions';
+let subView    = 'timeline';
+let selSession = null;
+let selTrace   = null;
+let allSessions = [];
+let curEvents  = [];
+let activeIdx  = -1;
+let playTimer  = null;
+let sseConn    = null;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Event-type style config
+// ─────────────────────────────────────────────────────────────────────────────
+const ESTYLES = {
+  'task.created':      { b:'b-task-created',    ea:'ea-task-created',    dBg:'#dbeafe', dBd:'#3b82f6', dTx:'#1e40af' },
+  'task.updated':      { b:'b-task-updated',    ea:'ea-task-updated',    dBg:'#eff6ff', dBd:'#93c5fd', dTx:'#1e40af' },
+  'task.completed':    { b:'b-task-completed',  ea:'ea-task-completed',  dBg:'#dcfce7', dBd:'#22c55e', dTx:'#166534' },
+  'task.failed':       { b:'b-task-failed',     ea:'ea-task-failed',     dBg:'#fee2e2', dBd:'#ef4444', dTx:'#991b1b' },
+  'tool.called':       { b:'b-tool-called',     ea:'ea-tool-called',     dBg:'#f3e8ff', dBd:'#a855f7', dTx:'#6b21a8' },
+  'tool.result':       { b:'b-tool-result',     ea:'ea-tool-result',     dBg:'#faf5ff', dBd:'#d8b4fe', dTx:'#6b21a8' },
+  'memory.read':       { b:'b-memory-read',     ea:'ea-memory-read',     dBg:'#fff7ed', dBd:'#fb923c', dTx:'#9a3412' },
+  'memory.write':      { b:'b-memory-write',    ea:'ea-memory-write',    dBg:'#ffedd5', dBd:'#f97316', dTx:'#9a3412' },
+  'handoff.started':   { b:'b-handoff-started', ea:'ea-handoff-started', dBg:'#ccfbf1', dBd:'#14b8a6', dTx:'#0f766e' },
+  'handoff.completed': { b:'b-handoff-completed',ea:'ea-handoff-completed',dBg:'#f0fdfa',dBd:'#5eead4',dTx:'#0f766e'},
+  'policy.blocked':    { b:'b-policy-blocked',  ea:'ea-policy-blocked',  dBg:'#fff4f2', dBd:'#dc2626', dTx:'#8a2d1f' },
+  'error.raised':      { b:'b-error-raised',    ea:'ea-error-raised',    dBg:'#fee2e2', dBd:'#ef4444', dTx:'#991b1b' },
+};
+const DFLT_STYLE = { b:'badge', ea:'', dBg:'#f7faf7', dBd:'#a0b8a5', dTx:'#132018' };
+function es(type) { return ESTYLES[type] || DFLT_STYLE; }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Utilities
+// ─────────────────────────────────────────────────────────────────────────────
+async function fetchJson(url) {
+  const tok = getToken();
+  const headers = tok ? { 'Authorization': 'Bearer ' + tok } : {};
+  const r = await fetch(url, { headers });
+  if (r.status === 401) {
+    // Token is missing or invalid; show auth overlay.
+    clearToken();
+    showAuthOverlay('Your session has expired. Please sign in again.');
+    throw new Error('Unauthorized');
+  }
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+function setMetric(id, v) { document.getElementById(id).textContent = v; }
+function short(id, n = 20) { return id && id.length > n ? id.slice(0, n - 1) + '…' : (id || ''); }
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function ago(iso) {
+  const d = Date.now() - new Date(iso).getTime();
+  if (d < 60000) return 'just now';
+  if (d < 3600000) return Math.floor(d/60000) + 'm ago';
+  if (d < 86400000) return Math.floor(d/3600000) + 'h ago';
+  return new Date(iso).toLocaleDateString();
+}
+const debounce = (fn, ms) => {
+  let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SSE / Real-time
+// ─────────────────────────────────────────────────────────────────────────────
+function initSSE() {
+  if (sseConn) sseConn.close();
+  // EventSource doesn't support custom headers; pass token as query param.
+  const tok     = getToken();
+  const sseUrl  = tok ? '/stream?token=' + encodeURIComponent(tok) : '/stream';
+  sseConn = new EventSource(sseUrl);
+
+  sseConn.addEventListener('connected', () => setLive(true));
+  sseConn.onopen  = () => setLive(true);
+  sseConn.onerror = () => setLive(false);
+
+  sseConn.addEventListener('event.received', e => {
+    try {
+      const ev = JSON.parse(e.data);
+      // Optimistic metric bump
+      nudge('m-received');
+      nudge('m-accepted');
+      // If viewing the affected session, refresh timeline
+      if (ev.session_id === selSession) loadTimeline();
+      // Refresh session list (to update event counts, timestamps)
+      refreshSessions();
+    } catch(_) {}
+  });
+}
+function setLive(on) {
+  document.getElementById('live-dot').className   = 'live-dot' + (on ? ' on' : ' err');
+  document.getElementById('live-label').textContent = on ? 'Live' : 'Reconnecting…';
+}
+function nudge(id) {
+  const el = document.getElementById(id);
+  el.textContent = (parseInt(el.textContent) || 0) + 1;
+}
+async function refreshSessions() {
+  try {
+    const d = await fetchJson('/sessions');
+    renderSessions(d.sessions || []);
+    buildWorkflowList(d.sessions || []);
+  } catch(_) {}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// View switching
+// ─────────────────────────────────────────────────────────────────────────────
+function switchMain(v) {
+  mainView = v;
+  document.getElementById('view-sessions').style.display  = v === 'sessions'  ? '' : 'none';
+  document.getElementById('view-workflows').style.display = v === 'workflows' ? '' : 'none';
+  document.getElementById('tab-sessions').className   = 'tab-btn' + (v === 'sessions'  ? ' active' : '');
+  document.getElementById('tab-workflows').className  = 'tab-btn' + (v === 'workflows' ? ' active' : '');
+}
+function switchSub(v) {
+  subView = v;
+  document.getElementById('sv-timeline').style.display = v === 'timeline' ? '' : 'none';
+  document.getElementById('sv-dag').style.display      = v === 'dag'      ? '' : 'none';
+  document.getElementById('st-timeline').className = 'sub-tab' + (v === 'timeline' ? ' active' : '');
+  document.getElementById('st-dag').className      = 'sub-tab' + (v === 'dag'      ? ' active' : '');
+  if (v === 'dag' && selSession) renderDag(curEvents);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sessions panel
+// ─────────────────────────────────────────────────────────────────────────────
+function renderSessions(sessions) {
+  allSessions = sessions;
+  const box = document.getElementById('sessions-list');
+  box.innerHTML = '';
+  if (!sessions.length) { box.innerHTML = '<div class="empty">No sessions yet. Run a demo script.</div>'; return; }
+  if (!selSession) selSession = sessions[0].session_id;
+
+  for (const s of sessions) {
+    const el = document.createElement('div');
+    el.className = 'clickable-item' + (s.session_id === selSession ? ' active' : '');
+    el.innerHTML = `
+      <div class="item-main" title="${esc(s.session_id)}">${esc(short(s.session_id))}</div>
+      <div class="item-sub">${esc(s.source)} · ${s.event_count} event${s.event_count !== 1 ? 's' : ''}</div>
+      <div class="item-sub">Updated ${ago(s.updated_at)}</div>`;
+    el.onclick = () => {
+      selSession = s.session_id; activeIdx = -1; stopPlay();
+      renderSessions(sessions);
+      document.getElementById('session-title').textContent = short(s.session_id, 30);
+      loadTimeline();
+    };
+    box.appendChild(el);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Workflows panel
+// ─────────────────────────────────────────────────────────────────────────────
+function buildWorkflowList(sessions) {
+  const byTrace = new Map();
+  for (const s of sessions) {
+    if (!s.trace_id) continue;
+    if (!byTrace.has(s.trace_id)) byTrace.set(s.trace_id, []);
+    byTrace.get(s.trace_id).push(s);
+  }
+  setMetric('m-workflows', byTrace.size);
+
+  const box = document.getElementById('workflows-list');
+  box.innerHTML = '';
+  if (!byTrace.size) { box.innerHTML = '<div class="empty">No workflows yet.</div>'; return; }
+
+  for (const [traceId, ws] of byTrace) {
+    const el = document.createElement('div');
+    el.className = 'clickable-item' + (traceId === selTrace ? ' active' : '');
+    el.innerHTML = `
+      <div class="item-main" title="${esc(traceId)}">${esc(short(traceId))}</div>
+      <div class="item-sub">${ws.length} session${ws.length !== 1 ? 's' : ''}</div>
+      <div class="item-sub">Last active ${ago(ws[0].updated_at)}</div>`;
+    el.onclick = () => loadWorkflow(traceId);
+    box.appendChild(el);
+  }
+}
+
+async function loadWorkflow(traceId) {
+  selTrace = traceId;
+  buildWorkflowList(allSessions); // refresh active state
+  try {
+    const data = await fetchJson('/workflows/' + encodeURIComponent(traceId));
+    renderWorkflowTree(data);
+  } catch(_) {
+    document.getElementById('workflow-tree').innerHTML = '<div class="empty">Could not load workflow.</div>';
+  }
+}
+
+function renderWorkflowTree(wf) {
+  const cnt  = wf.session_count;
+  document.getElementById('workflow-title').textContent =
+    `Workflow: ${short(wf.trace_id, 26)} · ${cnt} session${cnt !== 1 ? 's' : ''}`;
+  const box = document.getElementById('workflow-tree');
+  if (!wf.tree || !wf.tree.length) { box.innerHTML = '<div class="empty">No sessions in this workflow.</div>'; return; }
+  box.innerHTML = wf.tree.map(n => treeNodeHtml(n)).join('');
+}
+
+function treeNodeHtml(node) {
+  const s  = node.session;
+  const ch = node.children || [];
+  const cid = 'tch_' + s.session_id.replace(/[^a-z0-9]/gi, '_');
+  const roleHtml = s.agent_role ? `<span class="role-tag">${esc(s.agent_role)}</span>` : '';
+  const toggle = ch.length
+    ? `<span class="tree-toggle" onclick="event.stopPropagation(); toggleTree('${esc(cid)}', this)">▼</span>`
+    : `<span class="tree-toggle-gap"></span>`;
+  const childrenHtml = ch.length
+    ? `<div class="tree-children" id="${esc(cid)}">${ch.map(treeNodeHtml).join('')}</div>`
+    : '';
+  return `
+    <div class="tree-node">
+      <div class="tree-row ${ch.length ? 'has-ch' : ''}" onclick="drillSession('${esc(s.session_id)}')">
+        ${toggle}
+        <div class="tree-content">
+          <div class="tree-sid">${roleHtml}${esc(short(s.session_id, 28))}</div>
+          <div class="tree-meta">${s.event_count} events · started ${ago(s.started_at)}</div>
+        </div>
+      </div>
+      ${childrenHtml}
+    </div>`;
+}
+
+function toggleTree(cid, btn) {
+  const el = document.getElementById(cid);
+  if (!el) return;
+  const hide = el.style.display !== 'none';
+  el.style.display = hide ? 'none' : '';
+  btn.textContent  = hide ? '▶' : '▼';
+}
+
+function drillSession(sessionId) {
+  selSession = sessionId; activeIdx = -1; stopPlay();
+  switchMain('sessions');
+  renderSessions(allSessions);
+  document.getElementById('session-title').textContent = short(sessionId, 30);
+  loadTimeline();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Timeline
+// ─────────────────────────────────────────────────────────────────────────────
+function filtersUrl(sid) {
+  const q    = document.getElementById('search-input').value.trim();
+  const type = document.getElementById('type-filter').value;
+  const p    = new URLSearchParams();
+  if (q)    p.set('q', q);
+  if (type) p.set('type', type);
+  const qs = p.toString();
+  return `/sessions/${encodeURIComponent(sid)}/events${qs ? '?' + qs : ''}`;
+}
+
+async function loadTimeline() {
+  if (!selSession) return;
+  try {
+    const d = await fetchJson(filtersUrl(selSession));
+    const evs = d.events || [];
+    buildTypeOptions(evs);
+    curEvents = evs;
+    renderTimeline(evs);
+    if (subView === 'dag') renderDag(evs);
+  } catch(_) {}
+}
+
+function buildTypeOptions(events) {
+  const sel  = document.getElementById('type-filter');
+  const prev = sel.value;
+  const types = [...new Set(events.map(e => e.type))].sort();
+  sel.innerHTML = '<option value="">All event types</option>' +
+    types.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
+  if (types.includes(prev)) sel.value = prev;
+}
+
+function renderTimeline(events) {
+  curEvents = events;
+  const box = document.getElementById('timeline');
+  box.innerHTML = '';
+  if (!events.length) {
+    activeIdx = -1; updReplay();
+    box.innerHTML = '<div class="empty">No events match the current filters.</div>';
+    return;
+  }
+  if (activeIdx < 0 || activeIdx >= events.length) activeIdx = 0;
+
+  for (const [i, e] of events.entries()) {
+    const st  = es(e.type);
+    const el  = document.createElement('div');
+    el.className = `event ${st.ea}` + (i === activeIdx ? ' active' : '');
+    el.innerHTML = `
+      <div class="event-top">
+        <span class="event-type">${esc(e.type)}</span>
+        <span class="badge ${st.b}">${new Date(e.time).toLocaleTimeString()}</span>
+      </div>
+      <div class="hint">id: ${esc(short(e.id, 22))}</div>
+      <div class="hint">causation: ${esc(e.causation_id ? short(e.causation_id, 22) : '–')}</div>
+      <pre>${esc(JSON.stringify(e.payload, null, 2))}</pre>`;
+    el.onclick = () => { activeIdx = i; renderTimeline(curEvents); };
+    box.appendChild(el);
+  }
+  updReplay();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Replay controls
+// ─────────────────────────────────────────────────────────────────────────────
+function updReplay() {
+  const el = document.getElementById('replay-state');
+  if (!curEvents.length || activeIdx < 0) { el.textContent = 'No event selected'; return; }
+  el.textContent = `Event ${activeIdx + 1} of ${curEvents.length}: ${curEvents[activeIdx].type}`;
+}
+function replayStep(dir) {
+  if (!curEvents.length) return;
+  activeIdx = Math.max(0, Math.min(curEvents.length - 1, activeIdx + dir));
+  renderTimeline(curEvents);
+}
+function stopPlay() {
+  if (playTimer) { clearInterval(playTimer); playTimer = null; }
+  document.getElementById('play-btn').textContent = 'Autoplay';
+}
+function togglePlay() {
+  if (playTimer) { stopPlay(); return; }
+  if (!curEvents.length) return;
+  document.getElementById('play-btn').textContent = 'Stop';
+  playTimer = setInterval(() => {
+    if (activeIdx >= curEvents.length - 1) { stopPlay(); return; }
+    replayStep(1);
+  }, 900);
+}
+function doExport(fmt) {
+  if (!selSession) return;
+  const q    = document.getElementById('search-input').value.trim();
+  const type = document.getElementById('type-filter').value;
+  const p    = new URLSearchParams({ format: fmt });
+  if (q)    p.set('q', q);
+  if (type) p.set('type', type);
+  // Include token so the export endpoint can authenticate the download.
+  const tok = getToken();
+  if (tok)  p.set('token', tok);
+  window.location.href = `/sessions/${encodeURIComponent(selSession)}/export?${p}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Causation DAG
+// ─────────────────────────────────────────────────────────────────────────────
+const NW = 162, NH = 48, HG = 50, VG = 14, PAD = 18;
+
+function dagLayout(events) {
+  const eMap = new Map(events.map(e => [e.id, e]));
+  const kids  = new Map(); // parentId → [childId]
+  const indeg = new Map(events.map(e => [e.id, 0]));
+
+  for (const e of events) {
+    if (e.causation_id && eMap.has(e.causation_id)) {
+      if (!kids.has(e.causation_id)) kids.set(e.causation_id, []);
+      kids.get(e.causation_id).push(e.id);
+      indeg.set(e.id, (indeg.get(e.id) || 0) + 1);
+    }
+  }
+
+  // Longest-path depth (Kahn's topological sort)
+  const depths = new Map(events.map(e => [e.id, 0]));
+  const rem    = new Map(indeg);
+  const q      = [];
+  for (const [id, d] of rem) if (d === 0) q.push(id);
+
+  while (q.length) {
+    const id = q.shift();
+    const d  = depths.get(id);
+    for (const kid of (kids.get(id) || [])) {
+      depths.set(kid, Math.max(depths.get(kid), d + 1));
+      rem.set(kid, rem.get(kid) - 1);
+      if (rem.get(kid) === 0) q.push(kid);
+    }
+  }
+
+  // Group by depth, sort by time within depth
+  const byDepth = new Map();
+  for (const e of events) {
+    const d = depths.get(e.id) || 0;
+    if (!byDepth.has(d)) byDepth.set(d, []);
+    byDepth.get(d).push(e);
+  }
+  for (const arr of byDepth.values()) arr.sort((a, b) => new Date(a.time) - new Date(b.time));
+
+  // Assign pixel positions
+  const pos = new Map();
+  for (const [depth, arr] of byDepth) {
+    for (let row = 0; row < arr.length; row++) {
+      pos.set(arr[row].id, { x: PAD + depth * (NW + HG), y: PAD + row * (NH + VG) });
+    }
+  }
+
+  let maxX = 0, maxY = 0;
+  for (const p of pos.values()) {
+    maxX = Math.max(maxX, p.x + NW + PAD);
+    maxY = Math.max(maxY, p.y + NH + PAD);
+  }
+  return { eMap, kids, pos, w: Math.max(maxX, 280), h: Math.max(maxY, 100) };
+}
+
+function renderDag(events) {
+  const wrap    = document.getElementById('dag-wrap');
+  const hintEl  = document.getElementById('dag-hint');
+  const detailEl = document.getElementById('dag-detail');
+  detailEl.style.display = 'none';
+
+  if (!events.length) {
+    wrap.innerHTML = '<div class="empty">No events to visualise.</div>';
+    hintEl.textContent = '';
+    return;
+  }
+
+  const MAX = 100;
+  const show = events.length > MAX ? events.slice(0, MAX) : events;
+  hintEl.textContent = events.length > MAX
+    ? `Showing first ${MAX} of ${events.length} events. Use the Timeline view to see all.`
+    : `${events.length} event${events.length !== 1 ? 's' : ''}. Click a node for details.`;
+
+  const { eMap, kids, pos, w, h } = dagLayout(show);
+
+  let edges = '', crosses = '', nodes = '';
+
+  // Standard edges
+  for (const [pid, cids] of kids) {
+    const p = pos.get(pid); if (!p) continue;
+    for (const cid of cids) {
+      const c = pos.get(cid); if (!c) continue;
+      const x1 = p.x + NW, y1 = p.y + NH / 2;
+      const x2 = c.x,      y2 = c.y + NH / 2;
+      const mx = (x1 + x2) / 2;
+      edges += `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"
+        fill="none" stroke="#a0b8a5" stroke-width="1.5" marker-end="url(#arr)"/>`;
+    }
+  }
+
+  // Cross-session stubs (causation_id points outside this session's events)
+  for (const e of show) {
+    if (!e.causation_id || eMap.has(e.causation_id)) continue;
+    const p = pos.get(e.id); if (!p) continue;
+    const x2 = p.x, y2 = p.y + NH / 2;
+    const x1 = Math.max(4, x2 - 36);
+    crosses += `<line x1="${x1}" y1="${y2}" x2="${x2}" y2="${y2}"
+      stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr-x)"/>`;
+    if (x1 > 30) {
+      crosses += `<text x="${x1 - 3}" y="${y2 + 4}" text-anchor="end"
+        font-size="9" fill="#94a3b8">↗ cross-session</text>`;
+    }
+  }
+
+  // Nodes
+  for (const [id, p] of pos) {
+    const e   = eMap.get(id);
+    const st  = es(e.type);
+    const lbl = e.type.length > 19 ? e.type.slice(0, 17) + '…' : e.type;
+    const idl = id.length > 16 ? id.slice(0, 14) + '…' : id;
+    const isActive = curEvents[activeIdx]?.id === id;
+    const sw = isActive ? '2.5' : '1.5';
+    const sc = isActive ? '#0f766e' : st.dBd;
+    nodes += `<g style="cursor:pointer" onclick="dagClick('${esc(id)}')">
+      <rect x="${p.x}" y="${p.y}" width="${NW}" height="${NH}" rx="8"
+        fill="${st.dBg}" stroke="${sc}" stroke-width="${sw}"/>
+      <text x="${p.x + 8}" y="${p.y + 18}" font-size="11" font-weight="700" fill="${st.dTx}">${esc(lbl)}</text>
+      <text x="${p.x + 8}" y="${p.y + 34}" font-size="10" fill="#6b7280">${esc(idl)}</text>
+    </g>`;
+  }
+
+  wrap.innerHTML = `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="arr"   markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+        <polygon points="0 0, 8 3, 0 6" fill="#a0b8a5"/>
+      </marker>
+      <marker id="arr-x" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+        <polygon points="0 0, 8 3, 0 6" fill="#94a3b8"/>
+      </marker>
+    </defs>
+    ${crosses}${edges}${nodes}
+  </svg>`;
+}
+
+function dagClick(id) {
+  const e = curEvents.find(x => x.id === id);
+  if (!e) return;
+  const i = curEvents.indexOf(e);
+  if (i >= 0) { activeIdx = i; updReplay(); }
+
+  const st  = es(e.type);
+  const det = document.getElementById('dag-detail');
+  det.style.display = '';
+  det.innerHTML = `
+    <span class="badge ${st.b}">${esc(e.type)}</span>
+    <span class="hint" style="margin-left:8px">${new Date(e.time).toLocaleString()}</span>
+    <div class="hint" style="margin-top:4px">id: ${esc(e.id)}</div>
+    ${e.causation_id ? `<div class="hint">causation: ${esc(e.causation_id)}</div>` : ''}
+    <pre style="max-height:90px;margin-top:6px">${esc(JSON.stringify(e.payload, null, 2))}</pre>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Full load
+// ─────────────────────────────────────────────────────────────────────────────
+async function loadAll() {
+  try {
+    const [metrics, sd] = await Promise.all([fetchJson('/metrics'), fetchJson('/sessions')]);
+    setMetric('m-sessions',  metrics.session_count || 0);
+    setMetric('m-received',  metrics.received      || 0);
+    setMetric('m-accepted',  metrics.accepted      || 0);
+    setMetric('m-rejected',  metrics.rejected      || 0);
+    setMetric('m-workflows', metrics.workflow_count || 0);
+
+    const sessions = sd.sessions || [];
+    if (selSession && !sessions.find(s => s.session_id === selSession))
+      selSession = sessions[0]?.session_id ?? null;
+
+    renderSessions(sessions);
+    buildWorkflowList(sessions);
+
+    if (selSession) {
+      document.getElementById('session-title').textContent = short(selSession, 30);
+      await loadTimeline();
+    }
+  } catch(e) { console.error('loadAll:', e); }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wire up search / filter
+// ─────────────────────────────────────────────────────────────────────────────
+document.getElementById('search-input').addEventListener('input',
+  debounce(() => { activeIdx = -1; loadTimeline(); }, 250));
+document.getElementById('type-filter').addEventListener('change',
+  () => { activeIdx = -1; loadTimeline(); });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Boot
+// ─────────────────────────────────────────────────────────────────────────────
+// Attempt initial data load.  If the server requires auth and we have no
+// token, loadAll's first fetchJson will trigger the auth overlay automatically.
+// If DASHBOARD_TOKEN is not configured (dev mode), the overlay is never shown.
+loadAll().then(() => initSSE()).catch(() => {
+  // Auth overlay will have been shown inside fetchJson; don't init SSE yet.
+  // initSSE is called by submitAuthToken on successful sign-in.
+});
+</script>
 </body>
 </html>

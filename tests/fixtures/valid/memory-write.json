@@ -1,0 +1,15 @@
+{
+  "specversion": "0.2.0",
+  "id": "evt_fix_mem_write_001",
+  "time": "2026-01-01T10:04:00Z",
+  "source": "agent://test/orchestrator",
+  "type": "memory.write",
+  "session_id": "ses_fix_001",
+  "trace_id": "trc_fix_001",
+  "agent_role": "orchestrator",
+  "labels": { "tier": "episodic" },
+  "payload": {
+    "key": "quarterly_summary",
+    "value": "Q3 revenue: $4.2B (+7.7% YoY)"
+  }
+}

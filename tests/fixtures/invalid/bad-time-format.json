@@ -1,0 +1,10 @@
+{
+  "specversion": "0.2.0",
+  "id": "evt_bad_004",
+  "time": "not-a-date",
+  "source": "agent://test",
+  "type": "task.created",
+  "session_id": "ses_bad_004",
+  "trace_id": "trc_bad_004",
+  "payload": {}
+}

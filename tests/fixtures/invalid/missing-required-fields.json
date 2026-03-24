@@ -1,0 +1,6 @@
+{
+  "specversion": "0.2.0",
+  "id": "evt_bad_001",
+  "type": "task.created",
+  "payload": { "task": "no session_id or trace_id or source or time" }
+}

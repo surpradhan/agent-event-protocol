@@ -1,0 +1,16 @@
+{
+  "specversion": "0.2.0",
+  "id": "evt_fix_task_failed_001",
+  "time": "2026-01-01T10:03:30Z",
+  "source": "agent://test/orchestrator",
+  "type": "task.failed",
+  "session_id": "ses_fix_001",
+  "trace_id": "trc_fix_001",
+  "causation_id": "evt_fix_task_created_001",
+  "agent_role": "orchestrator",
+  "payload": {
+    "reason": "dependency_timeout",
+    "message": "Upstream data fetch timed out after 30 s",
+    "retryable": true
+  }
+}

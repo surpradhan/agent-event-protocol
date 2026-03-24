@@ -1,0 +1,749 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Agent Event Protocol (AEP) API",
+    "version": "0.2.0",
+    "description": "HTTP API for ingesting, querying, and exporting structured agent telemetry events under the Agent Event Protocol specification.\n\n## Authentication\n\nMost endpoints require an **API key** passed as a bearer token:\n```\nAuthorization: Bearer aep_<48-hex-chars>\n```\nKeys are created via the Admin API and are scoped to either `read` or `write` (or both).\n\nAdmin endpoints require a separate **admin token** set in the `ADMIN_TOKEN` environment variable.",
+    "contact": {
+      "name": "AEP",
+      "url": "https://github.com/your-org/agent-event-protocol"
+    },
+    "license": {
+      "name": "ISC"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8787",
+      "description": "Local development server"
+    }
+  ],
+  "tags": [
+    { "name": "Health", "description": "Service health check" },
+    { "name": "Ingest", "description": "Write events to the store" },
+    { "name": "Sessions", "description": "Query and export session data" },
+    { "name": "Workflows", "description": "Cross-session workflow queries" },
+    { "name": "Metrics", "description": "Aggregate counters and statistics" },
+    { "name": "Stream", "description": "Real-time Server-Sent Events feed" },
+    { "name": "Admin", "description": "API key management (requires ADMIN_TOKEN)" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "aep_<48-hex>",
+        "description": "API key with `read` and/or `write` scope"
+      },
+      "AdminAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Admin token set via the ADMIN_TOKEN environment variable"
+      }
+    },
+    "schemas": {
+      "AepEnvelope": {
+        "type": "object",
+        "required": ["specversion", "id", "time", "source", "type", "session_id", "trace_id", "payload"],
+        "properties": {
+          "specversion": {
+            "type": "string",
+            "pattern": "^0\\.2\\.0$",
+            "example": "0.2.0"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "example": "evt_3f8a9b2c1d4e5f6a7b8c9d0e1f2a3b4c"
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-01-15T12:34:56.000Z"
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "example": "agent://my-orchestrator"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "task.created",
+              "task.updated",
+              "task.completed",
+              "task.failed",
+              "tool.called",
+              "tool.result",
+              "memory.read",
+              "memory.write",
+              "handoff.started",
+              "handoff.completed",
+              "policy.blocked",
+              "error.raised"
+            ],
+            "example": "task.created"
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "example": "ses_abc123"
+          },
+          "trace_id": {
+            "type": "string",
+            "minLength": 1,
+            "example": "trc_xyz789"
+          },
+          "parent_session_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "Session ID of the spawning parent agent. Absent for root or standalone sessions.",
+            "example": "ses_parent001"
+          },
+          "agent_role": {
+            "type": "string",
+            "enum": ["orchestrator", "subagent", "standalone"],
+            "description": "Role of the agent in the execution hierarchy.",
+            "example": "orchestrator"
+          },
+          "subject": {
+            "type": "string",
+            "example": "topic:quarterly-report"
+          },
+          "causation_id": {
+            "type": "string",
+            "description": "ID of the event that caused this event.",
+            "example": "evt_cause001"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "Caller-supplied deduplication key. If set, the server deduplicates by this key instead of `id`.",
+            "example": "idem_abc"
+          },
+          "schema": {
+            "type": "string",
+            "description": "URI reference to the schema for the payload.",
+            "example": "https://aep.dev/schemas/payloads/tool-called.schema.json"
+          },
+          "content_type": {
+            "type": "string",
+            "default": "application/json",
+            "example": "application/json"
+          },
+          "signature": {
+            "type": "object",
+            "description": "HMAC-SHA256 signature envelope used when the API key has a configured hmac_secret.",
+            "additionalProperties": true
+          },
+          "tenant": {
+            "type": "string",
+            "description": "Optional tenant hint in the envelope (informational only; data isolation is enforced by the API key).",
+            "example": "acme-corp"
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "description": "Arbitrary string key/value pairs for filtering and routing.",
+            "example": { "env": "production", "tier": "episodic" }
+          },
+          "extensions": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Extension fields beyond the core envelope.",
+            "example": { "custom_field": "value" }
+          },
+          "payload": {
+            "type": "object",
+            "description": "Event-specific data. May include an optional `$schema` key for payload validation.",
+            "properties": {
+              "$schema": {
+                "type": "string",
+                "description": "URI reference to a JSON Schema for validating this payload."
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "IngestResponse": {
+        "type": "object",
+        "required": ["accepted", "duplicate", "id"],
+        "properties": {
+          "accepted": { "type": "boolean", "example": true },
+          "duplicate": { "type": "boolean", "example": false },
+          "id": { "type": "string", "example": "evt_3f8a9b2c1d4e5f6a7b8c9d0e1f2a3b4c" }
+        }
+      },
+      "ValidationError": {
+        "type": "object",
+        "required": ["accepted", "errors"],
+        "properties": {
+          "accepted": { "type": "boolean", "example": false },
+          "errors": {
+            "type": "array",
+            "items": { "type": "string" },
+            "example": ["/ must have required property 'session_id'"]
+          }
+        }
+      },
+      "SessionMeta": {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" },
+          "trace_id": { "type": "string" },
+          "parent_session_id": { "type": "string", "nullable": true },
+          "agent_role": { "type": "string" },
+          "event_count": { "type": "integer" },
+          "first_event_at": { "type": "string", "format": "date-time" },
+          "last_event_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ApiKeyRecord": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "keyPrefix": { "type": "string", "example": "aep_3f8a9b" },
+          "tenantId": { "type": "string" },
+          "label": { "type": "string" },
+          "scopes": { "type": "array", "items": { "type": "string" } },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "revokedAt": { "type": "string", "format": "date-time", "nullable": true },
+          "active": { "type": "boolean" }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": { "type": "string" }
+        }
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Missing or invalid API key",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "API key lacks the required scope",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Service health check",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "Service is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean", "example": true },
+                    "service": { "type": "string", "example": "aep-ingest" },
+                    "version": { "type": "string", "example": "0.1.0" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events": {
+      "post": {
+        "tags": ["Ingest"],
+        "summary": "Ingest a single event",
+        "operationId": "ingestEvent",
+        "security": [{ "ApiKeyAuth": [] }],
+        "description": "Accepts a single AEP envelope, validates it against the schema and registered event types, and persists it. Duplicate `id` values are silently accepted and flagged as `duplicate: true`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AepEnvelope" },
+              "example": {
+                "specversion": "0.2.0",
+                "id": "evt_3f8a9b2c",
+                "time": "2026-01-15T12:34:56Z",
+                "source": "agent://my-agent",
+                "type": "task.created",
+                "session_id": "ses_abc123",
+                "trace_id": "trc_xyz789",
+                "payload": { "task": "Summarise the report" }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Event accepted and persisted",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/IngestResponse" }
+              }
+            }
+          },
+          "200": {
+            "description": "Duplicate event — already ingested, accepted idempotently",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/IngestResponse" }
+              }
+            }
+          },
+          "400": {
+            "description": "Event failed schema or type validation",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ValidationError" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/sessions": {
+      "get": {
+        "tags": ["Sessions"],
+        "summary": "List all sessions",
+        "operationId": "listSessions",
+        "security": [{ "ApiKeyAuth": [] }],
+        "description": "Returns all sessions for the authenticated tenant, ordered by most-recently-updated first.",
+        "responses": {
+          "200": {
+            "description": "Session list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sessions": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/SessionMeta" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/sessions/{sessionId}/events": {
+      "get": {
+        "tags": ["Sessions"],
+        "summary": "Get events for a session",
+        "operationId": "getSessionEvents",
+        "security": [{ "ApiKeyAuth": [] }],
+        "description": "Returns the ordered event timeline for a session, optionally filtered by type or full-text search.",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "example": "ses_abc123"
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "description": "Filter to a specific event type (e.g. `tool.called`)",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Full-text search string matched against the raw event JSON",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event timeline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session_id": { "type": "string" },
+                    "events": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/AepEnvelope" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/sessions/{sessionId}/tree": {
+      "get": {
+        "tags": ["Sessions"],
+        "summary": "Get session and all descendant sessions as a tree",
+        "operationId": "getSessionTree",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recursive session tree",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session_id": { "type": "string" },
+                    "children": {
+                      "type": "array",
+                      "description": "Recursively nested child sessions"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/sessions/{sessionId}/export": {
+      "get": {
+        "tags": ["Sessions"],
+        "summary": "Export session events as JSON or CSV",
+        "operationId": "exportSessionEvents",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "Export format — `json` (default) or `csv`",
+            "schema": { "type": "string", "enum": ["json", "csv"], "default": "json" }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "description": "Optional event-type filter",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Optional full-text search filter",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session events in the requested format",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session_id": { "type": "string" },
+                    "events": { "type": "array", "items": { "$ref": "#/components/schemas/AepEnvelope" } }
+                  }
+                }
+              },
+              "text/csv": {
+                "schema": { "type": "string" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/workflows/{traceId}": {
+      "get": {
+        "tags": ["Workflows"],
+        "summary": "Get all sessions sharing a trace_id as a workflow tree",
+        "operationId": "getWorkflow",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          {
+            "name": "traceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "example": "trc_xyz789"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workflow tree",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "trace_id": { "type": "string" },
+                    "session_count": { "type": "integer" },
+                    "tree": { "type": "array" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": ["Metrics"],
+        "summary": "Get aggregate counters and statistics",
+        "operationId": "getMetrics",
+        "security": [{ "ApiKeyAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Metrics snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "received":   { "type": "integer", "description": "Total events received" },
+                    "rejected":   { "type": "integer", "description": "Events that failed validation" },
+                    "duplicates": { "type": "integer", "description": "Duplicate events detected" },
+                    "sessions":   { "type": "integer", "description": "Total distinct sessions" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/stream": {
+      "get": {
+        "tags": ["Stream"],
+        "summary": "Server-Sent Events stream of real-time ingest activity",
+        "operationId": "getStream",
+        "security": [{ "ApiKeyAuth": [] }],
+        "description": "Subscribes the caller to an SSE stream. On each accepted `POST /events`, an `event.received` SSE message is pushed. A `: heartbeat` comment is sent every 15 seconds to keep the connection alive.",
+        "responses": {
+          "200": {
+            "description": "SSE stream (open-ended)",
+            "content": {
+              "text/event-stream": {
+                "schema": { "type": "string" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/admin/keys": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Create a new API key",
+        "operationId": "createApiKey",
+        "security": [{ "AdminAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["tenantId"],
+                "properties": {
+                  "tenantId": { "type": "string", "example": "acme-corp" },
+                  "label": { "type": "string", "example": "prod-writer" },
+                  "scopes": {
+                    "type": "array",
+                    "items": { "type": "string", "enum": ["read", "write"] },
+                    "default": ["read", "write"],
+                    "example": ["read", "write"]
+                  },
+                  "hmacSecret": {
+                    "type": "string",
+                    "description": "If provided, all events ingested with this key must carry a valid HMAC-SHA256 signature.",
+                    "example": "my-signing-secret"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "API key created. The raw key is shown once and cannot be retrieved again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": { "type": "string" },
+                    "key": { "type": "string", "description": "Raw key — store securely." },
+                    "id": { "type": "string" },
+                    "keyPrefix": { "type": "string" },
+                    "tenantId": { "type": "string" },
+                    "label": { "type": "string" },
+                    "scopes": { "type": "array", "items": { "type": "string" } },
+                    "signingEnabled": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Forbidden" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "503": {
+            "description": "Admin API is not enabled (ADMIN_TOKEN not set)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List all API keys",
+        "operationId": "listApiKeys",
+        "security": [{ "AdminAuth": [] }],
+        "description": "Returns all API keys. Raw key values and HMAC secrets are never included.",
+        "responses": {
+          "200": {
+            "description": "API key list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "keys": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/ApiKeyRecord" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "503": { "description": "Admin API not enabled" }
+        }
+      }
+    },
+    "/admin/keys/{id}": {
+      "delete": {
+        "tags": ["Admin"],
+        "summary": "Revoke an API key",
+        "operationId": "revokeApiKey",
+        "security": [{ "AdminAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "UUID of the API key to revoke"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key successfully revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "message": { "type": "string" },
+                    "id": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": {
+            "description": "Key is already revoked",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "OpenAPI 3.1 specification document",
+        "operationId": "getOpenApiSpec",
+        "responses": {
+          "200": {
+            "description": "OpenAPI JSON document",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/docs": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Swagger UI — interactive API explorer",
+        "operationId": "getDocs",
+        "responses": {
+          "200": {
+            "description": "Swagger UI HTML page",
+            "content": { "text/html": { "schema": { "type": "string" } } }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,7 +1,9 @@
 /**
  * Sub-agent research demo (AEP v0.2)
  *
- * Illustrates a multi-agent hierarchy using parent_session_id and agent_role.
+ * Illustrates a multi-agent hierarchy using parent_session_id and agent_role,
+ * then exercises the Session Tree API and Workflow API to verify the server
+ * correctly reconstructs the hierarchy.
  *
  * Topology:
  *
@@ -12,6 +14,11 @@
  *
  * All sessions share a single trace_id so a consumer can reconstruct the tree.
  * Sub-agents carry parent_session_id = orchestrator's session_id.
+ *
+ * After emitting all events the demo calls:
+ *   GET /sessions/:orchId/tree   — verifies the orchestrator's descendant tree
+ *   GET /workflows/:traceId      — verifies the full workflow view
+ *   GET /metrics                 — shows the new workflow_count / max_tree_depth fields
  *
  * The web-retrieval sub-agent also demonstrates payload.$schema: its
  * tool.called payload references a local payload schema so the validator
@@ -282,6 +289,28 @@ async function buildOrchestratorSynthesis(handoffId, subResults) {
   return [eMem, eHandoffDone, eDone];
 }
 
+// ─── tree API helpers ──────────────────────────────────────────────────────────
+
+async function fetchJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`GET ${url} returned HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Pretty-print a session tree node, indenting each level.
+ */
+function printTree(node, indent = 0) {
+  const pad  = "  ".repeat(indent);
+  const role = node.session.agent_role ? ` [${node.session.agent_role}]` : "";
+  console.log(`${pad}├─ ${node.session.session_id}${role}  (${node.session.event_count} events)`);
+  for (const child of node.children) {
+    printTree(child, indent + 1);
+  }
+}
+
 // ─── main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -316,6 +345,7 @@ async function main() {
     events: allEvents
   });
 
+  console.log("\n=== Emit results ===");
   console.log(
     JSON.stringify(
       {
@@ -331,6 +361,38 @@ async function main() {
       2
     )
   );
+
+  // ── 4. Exercise the Session Tree API ──────────────────────────────────────
+  console.log("\n=== GET /sessions/:id/tree (orchestrator) ===");
+  const sessionTree = await fetchJson(`${baseUrl}/sessions/${orchSessionId}/tree`);
+  printTree(sessionTree);
+  console.log(JSON.stringify(sessionTree, null, 2));
+
+  // ── 5. Exercise the Workflow API ──────────────────────────────────────────
+  console.log(`\n=== GET /workflows/${traceId} ===`);
+  const workflow = await fetchJson(`${baseUrl}/workflows/${traceId}`);
+  console.log(`trace_id:      ${workflow.trace_id}`);
+  console.log(`session_count: ${workflow.session_count}`);
+  console.log("Workflow tree:");
+  for (const root of workflow.tree) {
+    printTree(root);
+  }
+
+  // ── 6. Show updated metrics ───────────────────────────────────────────────
+  console.log("\n=== GET /metrics ===");
+  const metrics = await fetchJson(`${baseUrl}/metrics`);
+  console.log(JSON.stringify(
+    {
+      session_count:         metrics.session_count,
+      workflow_count:        metrics.workflow_count,
+      subagent_session_count: metrics.subagent_session_count,
+      max_tree_depth:        metrics.max_tree_depth,
+      accepted:              metrics.accepted,
+      received:              metrics.received
+    },
+    null,
+    2
+  ));
 }
 
 main().catch((err) => {

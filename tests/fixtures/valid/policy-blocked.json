@@ -1,0 +1,15 @@
+{
+  "specversion": "0.2.0",
+  "id": "evt_fix_policy_blocked_001",
+  "time": "2026-01-01T10:04:30Z",
+  "source": "agent://test/orchestrator",
+  "type": "policy.blocked",
+  "session_id": "ses_fix_001",
+  "trace_id": "trc_fix_001",
+  "agent_role": "orchestrator",
+  "payload": {
+    "policy": "data_exfiltration_guard",
+    "reason": "Attempted to write PII to external endpoint",
+    "action_blocked": "tool.called/send_email"
+  }
+}

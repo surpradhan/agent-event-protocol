@@ -1,13 +1,18 @@
 {
   "name": "aep-mvp",
   "version": "1.0.0",
-  "description": "",
+  "description": "Agent Event Protocol — ingest server, CLI, and SDK",
   "main": "index.js",
+  "bin": {
+    "aep": "./src/cli.js"
+  },
   "directories": {
     "example": "examples"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "npm run test:unit && npm run test:integration",
+    "test:unit": "node --test tests/unit/*.test.js",
+    "test:integration": "node --test tests/integration/server.test.js",
     "validate": "node src/cli-validate.js",
     "ingest": "node src/server.js",
     "dev": "nodemon src/server.js",
@@ -27,6 +32,8 @@
   "dependencies": {
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
-    "express": "^5.2.1"
+    "better-sqlite3": "^12.8.0",
+    "express": "^5.2.1",
+    "pino": "^10.3.1"
   }
 }

@@ -1,0 +1,52 @@
+version: "3.9"
+
+# ── Agent Event Protocol — ingest server ────────────────────────────────────
+#
+# Usage:
+#   docker compose up -d            # start in background
+#   docker compose logs -f aep      # tail logs
+#   docker compose down             # stop and remove containers
+#
+# Configuration:
+#   Copy .env.example to .env and set your secrets before running.
+#   All variables below can be overridden in the .env file.
+
+services:
+  aep:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aep-ingest:latest
+    container_name: aep-ingest
+    restart: unless-stopped
+
+    ports:
+      - "${HOST_PORT:-8787}:8787"
+
+    environment:
+      PORT:             "8787"
+      NODE_ENV:         "${NODE_ENV:-production}"
+      DATABASE_PATH:    "/data/aep.db"
+      LOG_LEVEL:        "${LOG_LEVEL:-info}"
+      LOG_PRETTY:       "${LOG_PRETTY:-false}"
+      ADMIN_TOKEN:      "${ADMIN_TOKEN:-}"
+      DASHBOARD_TOKEN:  "${DASHBOARD_TOKEN:-}"
+      RATE_LIMIT_RPM:   "${RATE_LIMIT_RPM:-300}"
+
+    volumes:
+      # Named volume for durable SQLite storage.
+      # Replace with a host-path bind mount if you need direct filesystem access:
+      #   - ./data:/data
+      - aep_data:/data
+
+    healthcheck:
+      test:         ["CMD", "wget", "-qO-", "http://localhost:8787/health"]
+      interval:     30s
+      timeout:      5s
+      start_period: 15s
+      retries:      3
+
+# ── Volumes ──────────────────────────────────────────────────────────────────
+volumes:
+  aep_data:
+    driver: local

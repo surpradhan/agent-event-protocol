@@ -29,6 +29,12 @@ package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
+# SQLite database files
+data/
+*.db
+*.db-shm
+*.db-wal
+
 # Environment variables
 .env
 .env.local

@@ -1,0 +1,16 @@
+{
+  "specversion": "0.2.0",
+  "id": "evt_fix_tool_result_001",
+  "time": "2026-01-01T10:01:30Z",
+  "source": "agent://test/subagent",
+  "type": "tool.result",
+  "session_id": "ses_fix_002",
+  "trace_id": "trc_fix_001",
+  "causation_id": "evt_fix_tool_called_001",
+  "agent_role": "subagent",
+  "payload": {
+    "tool": "web_search",
+    "output": { "results": ["$4.2B revenue", "$3.9B prior year"] },
+    "status": "success"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "specversion": "0.2.0",
+  "id": "evt_fix_mem_read_001",
+  "time": "2026-01-01T10:00:30Z",
+  "source": "agent://test/orchestrator",
+  "type": "memory.read",
+  "session_id": "ses_fix_001",
+  "trace_id": "trc_fix_001",
+  "agent_role": "orchestrator",
+  "labels": { "tier": "episodic" },
+  "payload": {
+    "key": "quarterly_summary",
+    "found": true,
+    "value": "Q2 revenue: $3.9B"
+  }
+}

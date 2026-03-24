@@ -1,0 +1,17 @@
+{
+  "specversion": "0.2.0",
+  "id": "evt_fix_handoff_done_001",
+  "time": "2026-01-01T10:03:45Z",
+  "source": "agent://test/subagent-b",
+  "type": "handoff.completed",
+  "session_id": "ses_fix_003",
+  "trace_id": "trc_fix_001",
+  "parent_session_id": "ses_fix_001",
+  "causation_id": "evt_fix_handoff_start_001",
+  "agent_role": "subagent",
+  "payload": {
+    "from_agent": "agent://test/orchestrator",
+    "result": "Analysis complete",
+    "output": { "summary": "Revenue grew 7.7% YoY" }
+  }
+}
