@@ -24,10 +24,6 @@ coverage/
 docs/
 AEP_PRD.md
 
-# Lock files
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
 
 # SQLite database files
 data/

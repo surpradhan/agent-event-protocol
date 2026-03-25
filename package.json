@@ -21,7 +21,8 @@
     "demo:itops": "node examples/demos/itops-agent-demo.js",
     "demo:research": "node examples/demos/research-agent-demo.js",
     "demo:subagent": "node examples/demos/subagent-research-demo.js",
-    "demo:all": "npm run demo:support && npm run demo:itops && npm run demo:research && npm run demo:subagent"
+    "demo:all": "npm run demo:support && npm run demo:itops && npm run demo:research && npm run demo:subagent",
+    "postinstall": "npm rebuild better-sqlite3"
   },
   "keywords": [],
   "author": "",
