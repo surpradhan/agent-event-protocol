@@ -24,6 +24,9 @@ coverage/
 docs/
 AEP_PRD.md
 
+# PDF exports (use SETUP.md as source of truth; PDF is for sharing only)
+*.pdf
+
 
 # SQLite database files
 data/
