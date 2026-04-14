@@ -1158,10 +1158,11 @@ function renderRejections() {
         ${r.session_id ? ` · session: ${esc(short(r.session_id, 20))}` : ''}
       </div>
       <div class="reject-detail"><pre style="margin:0;background:none;border:none;padding:0">${esc(errText)}</pre></div>
-      <div class="hint" style="margin-top:4px;font-size:11px">Click to show details</div>`;
+      <div class="hint reject-toggle-hint" style="margin-top:4px;font-size:11px">Click to show details</div>`;
     el.onclick = () => {
       el.classList.toggle('expanded');
-      const hint = el.querySelector('.hint:last-child');
+      // Use data-role selector so the button appended after never confuses :last-child
+      const hint = el.querySelector('.reject-toggle-hint');
       if (hint) hint.textContent = `Click to ${el.classList.contains('expanded') ? 'hide' : 'show'} details`;
     };
     // Go-to-session shortcut
