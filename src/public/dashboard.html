@@ -193,14 +193,25 @@
     }
 
     /* ── Causation DAG ── */
+    /* FIX 2: flex column so detail panel is always visible below the graph */
+    /* FIX 3: webkit scrollbar styles make horizontal scrolling discoverable */
+    #sv-dag {
+      display: flex; flex-direction: column; gap: 8px;
+      height: 60vh; max-height: 60vh; overflow: hidden;
+    }
     .dag-wrap {
       border: 1px solid var(--line); border-radius: 10px;
-      background: #f9fbf9; overflow: auto; max-height: 54vh; min-height: 120px;
+      background: #f9fbf9; overflow: auto;
+      flex: 1 1 0; min-height: 80px;
     }
+    .dag-wrap::-webkit-scrollbar { width: 6px; height: 6px; }
+    .dag-wrap::-webkit-scrollbar-track { background: #f0f7f1; border-radius: 3px; }
+    .dag-wrap::-webkit-scrollbar-thumb { background: #86b894; border-radius: 3px; }
+    .dag-wrap::-webkit-scrollbar-thumb:hover { background: #166534; }
     .dag-detail {
-      margin-top: 10px; padding: 10px 12px;
+      flex: 0 0 auto; padding: 10px 12px;
       background: #f0f7f1; border: 1px solid var(--line); border-radius: 10px;
-      font-size: 12px; max-height: 160px; overflow: auto;
+      font-size: 12px; max-height: 140px; overflow-y: auto;
     }
 
     /* ── Workflow tree ── */
@@ -239,6 +250,62 @@
     /* ── Empty state ── */
     .empty { font-size: 13px; color: var(--muted); padding: 28px; text-align: center; }
 
+    /* ── Session search ── */
+    .session-search-wrap { margin-bottom: 9px; position: relative; }
+    .session-search-wrap input { padding-left: 30px; }
+    .session-search-icon {
+      position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
+      font-size: 13px; color: var(--muted); pointer-events: none;
+    }
+
+    /* ── Rejection items ── */
+    .reject-item {
+      border: 1px solid #fca5a5; border-left: 3px solid #ef4444;
+      border-radius: 10px; padding: 10px 12px; background: #fff;
+      cursor: pointer; transition: background .12s;
+    }
+    .reject-item:hover { background: #fff5f5; }
+    .reject-item.expanded .reject-detail { display: block; }
+    .reject-detail {
+      display: none; margin-top: 8px;
+      background: #fef2f2; border: 1px solid #fecaca;
+      border-radius: 8px; padding: 8px; font-size: 11px;
+      white-space: pre-wrap; max-height: 140px; overflow-y: auto;
+    }
+    .reject-reason {
+      display: inline-block; font-size: 11px; font-weight: 700;
+      padding: 2px 8px; border-radius: 999px;
+      background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5;
+    }
+    .tab-badge {
+      display: inline-block; font-size: 10px; font-weight: 700;
+      background: #ef4444; color: #fff; border-radius: 999px;
+      padding: 1px 6px; margin-left: 5px; vertical-align: middle;
+      line-height: 1.4;
+    }
+
+    /* ── Replay bar (always-visible above sub-views) ── */
+    .replay-bar {
+      display: flex; gap: 8px; align-items: center;
+      margin-bottom: 10px; flex-wrap: wrap;
+      padding: 6px 10px; background: #f7faf7;
+      border: 1px solid var(--line); border-radius: 10px;
+    }
+    .replay-bar .hint { margin-left: auto; }
+
+    /* ── DAG ghost nodes animated on replay ── */
+    .dag-wrap svg .node-future { opacity: 0.18; }
+    .dag-wrap svg .node-current rect { filter: drop-shadow(0 0 4px #0f766e88); }
+
+    /* ── Rejected full-width view ── */
+    #view-rejected .reject-panel {
+      max-width: 860px;
+    }
+    .reject-toolbar {
+      display: flex; gap: 8px; align-items: center; margin-bottom: 12px;
+    }
+    .reject-toolbar input { flex: 1; }
+
     /* ── Responsive ── */
     @media (max-width: 980px) {
       .metric-grid { grid-template-columns: repeat(3, minmax(100px, 1fr)); }
@@ -275,6 +342,7 @@
   <div class="main-tabs">
     <button class="tab-btn active" id="tab-sessions"   onclick="switchMain('sessions')">Sessions</button>
     <button class="tab-btn"        id="tab-workflows"  onclick="switchMain('workflows')">Workflows</button>
+    <button class="tab-btn"        id="tab-rejected"   onclick="switchMain('rejected')">Rejected<span id="rejected-badge" class="tab-badge" style="display:none">0</span></button>
   </div>
 
   <!-- ═══ Sessions view ═══ -->
@@ -282,6 +350,10 @@
 
     <div class="card">
       <div class="panel-title">Sessions</div>
+      <div class="session-search-wrap">
+        <span class="session-search-icon">🔍</span>
+        <input id="session-search" type="text" placeholder="Filter by ID or source…" autocomplete="off" />
+      </div>
       <div id="sessions-list" class="item-list">
         <div class="empty">No sessions yet.</div>
       </div>
@@ -296,6 +368,14 @@
         </div>
       </div>
 
+      <!-- Replay bar — always visible; drives both Timeline highlight and DAG animation -->
+      <div class="replay-bar" id="replay-bar" style="display:none">
+        <button class="btn secondary" onclick="replayStep(-1)">← Prev</button>
+        <button class="btn secondary" id="play-btn" onclick="togglePlay()">▶ Play</button>
+        <button class="btn secondary" onclick="replayStep(1)">Next →</button>
+        <span class="hint" id="replay-state">No event selected</span>
+      </div>
+
       <!-- Timeline sub-view -->
       <div id="sv-timeline">
         <div class="toolbar">
@@ -303,12 +383,6 @@
           <select id="type-filter"><option value="">All event types</option></select>
           <button class="btn secondary" onclick="doExport('json')">Export JSON</button>
           <button class="btn secondary" onclick="doExport('csv')">Export CSV</button>
-        </div>
-        <div class="replay">
-          <button class="btn secondary" onclick="replayStep(-1)">← Prev</button>
-          <button class="btn secondary" id="play-btn" onclick="togglePlay()">Autoplay</button>
-          <button class="btn secondary" onclick="replayStep(1)">Next →</button>
-          <span class="hint" id="replay-state">No event selected</span>
         </div>
         <div id="timeline" class="item-list timeline-list"></div>
       </div>
@@ -338,6 +412,27 @@
       <div class="panel-title" id="workflow-title">Select a workflow</div>
       <div id="workflow-tree" class="workflow-tree">
         <div class="empty">Select a workflow to view the agent tree.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Rejected view ═══ -->
+  <div id="view-rejected" style="display:none">
+    <div class="card reject-panel">
+      <div class="panel-header" style="margin-bottom:12px">
+        <div class="panel-title">Recent Rejections <span id="reject-total" class="hint"></span></div>
+        <button class="btn secondary" onclick="loadRejections()">Refresh</button>
+      </div>
+      <div class="reject-toolbar">
+        <input id="reject-search" type="text" placeholder="Filter by event ID, type, session, or error…" autocomplete="off"/>
+        <select id="reject-reason-filter">
+          <option value="">All reasons</option>
+          <option value="schema_invalid">Schema invalid</option>
+          <option value="signature_invalid">Signature invalid</option>
+        </select>
+      </div>
+      <div id="rejections-list" class="item-list">
+        <div class="empty">No rejections recorded in this server session.</div>
       </div>
     </div>
   </div>
@@ -436,15 +531,17 @@ function submitAuthToken() {
 // ─────────────────────────────────────────────────────────────────────────────
 // State
 // ─────────────────────────────────────────────────────────────────────────────
-let mainView   = 'sessions';
-let subView    = 'timeline';
-let selSession = null;
-let selTrace   = null;
-let allSessions = [];
-let curEvents  = [];
-let activeIdx  = -1;
-let playTimer  = null;
-let sseConn    = null;
+let mainView      = 'sessions';
+let subView       = 'timeline';
+let selSession    = null;
+let selTrace      = null;
+let allSessions   = [];
+let curEvents     = [];
+let allRejections = [];
+let activeIdx     = -1;
+let playTimer     = null;
+let sseConn       = null;
+let sessionFilter = '';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Event-type style config
@@ -536,8 +633,11 @@ function nudge(id) {
 async function refreshSessions() {
   try {
     const d = await fetchJson('/sessions');
-    renderSessions(d.sessions || []);
-    buildWorkflowList(d.sessions || []);
+    const sessions = d.sessions || [];
+    /* FIX 1: keep SESSIONS metric card in sync on every live refresh */
+    setMetric('m-sessions', d.total ?? sessions.length);
+    renderSessions(sessions);
+    buildWorkflowList(sessions);
   } catch(_) {}
 }
 
@@ -548,8 +648,11 @@ function switchMain(v) {
   mainView = v;
   document.getElementById('view-sessions').style.display  = v === 'sessions'  ? '' : 'none';
   document.getElementById('view-workflows').style.display = v === 'workflows' ? '' : 'none';
+  document.getElementById('view-rejected').style.display  = v === 'rejected'  ? '' : 'none';
   document.getElementById('tab-sessions').className   = 'tab-btn' + (v === 'sessions'  ? ' active' : '');
   document.getElementById('tab-workflows').className  = 'tab-btn' + (v === 'workflows' ? ' active' : '');
+  document.getElementById('tab-rejected').className   = 'tab-btn' + (v === 'rejected'  ? ' active' : '');
+  if (v === 'rejected') loadRejections();
 }
 function switchSub(v) {
   subView = v;
@@ -557,7 +660,7 @@ function switchSub(v) {
   document.getElementById('sv-dag').style.display      = v === 'dag'      ? '' : 'none';
   document.getElementById('st-timeline').className = 'sub-tab' + (v === 'timeline' ? ' active' : '');
   document.getElementById('st-dag').className      = 'sub-tab' + (v === 'dag'      ? ' active' : '');
-  if (v === 'dag' && selSession) renderDag(curEvents);
+  if (v === 'dag' && selSession) renderDag(curEvents, activeIdx);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -570,19 +673,39 @@ function renderSessions(sessions) {
   if (!sessions.length) { box.innerHTML = '<div class="empty">No sessions yet. Run a demo script.</div>'; return; }
   if (!selSession) selSession = sessions[0].session_id;
 
-  for (const s of sessions) {
+  // Apply client-side filter
+  const q = sessionFilter.toLowerCase();
+  const filtered = q
+    ? sessions.filter(s =>
+        s.session_id.toLowerCase().includes(q) ||
+        (s.source || '').toLowerCase().includes(q) ||
+        (s.agent_role || '').toLowerCase().includes(q))
+    : sessions;
+
+  if (!filtered.length) {
+    box.innerHTML = '<div class="empty">No sessions match the filter.</div>';
+    return;
+  }
+
+  for (const s of filtered) {
     const el = document.createElement('div');
     el.className = 'clickable-item' + (s.session_id === selSession ? ' active' : '');
+    /* FIX 4: make the full row keyboard-accessible */
+    el.setAttribute('role', 'button');
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('aria-label', `Session ${s.session_id}, ${s.source}, ${s.event_count} events`);
     el.innerHTML = `
       <div class="item-main" title="${esc(s.session_id)}">${esc(short(s.session_id))}</div>
       <div class="item-sub">${esc(s.source)} · ${s.event_count} event${s.event_count !== 1 ? 's' : ''}</div>
       <div class="item-sub">Updated ${ago(s.updated_at)}</div>`;
-    el.onclick = () => {
+    const activate = () => {
       selSession = s.session_id; activeIdx = -1; stopPlay();
       renderSessions(sessions);
       document.getElementById('session-title').textContent = short(s.session_id, 30);
       loadTimeline();
     };
+    el.onclick = activate;
+    el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } };
     box.appendChild(el);
   }
 }
@@ -640,9 +763,14 @@ function treeNodeHtml(node) {
   const ch = node.children || [];
   const cid = 'tch_' + s.session_id.replace(/[^a-z0-9]/gi, '_');
   const roleHtml = s.agent_role ? `<span class="role-tag">${esc(s.agent_role)}</span>` : '';
+  /* FIX 5: toggle is keyboard-accessible with role, tabindex, aria-expanded, keydown */
   const toggle = ch.length
-    ? `<span class="tree-toggle" onclick="event.stopPropagation(); toggleTree('${esc(cid)}', this)">▼</span>`
-    : `<span class="tree-toggle-gap"></span>`;
+    ? `<span class="tree-toggle"
+          role="button" tabindex="0"
+          aria-expanded="true" aria-label="Collapse session children"
+          onclick="event.stopPropagation(); toggleTree('${esc(cid)}', this)"
+          onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();toggleTree('${esc(cid)}',this)}">▼</span>`
+    : `<span class="tree-toggle-gap" aria-hidden="true"></span>`;
   const childrenHtml = ch.length
     ? `<div class="tree-children" id="${esc(cid)}">${ch.map(treeNodeHtml).join('')}</div>`
     : '';
@@ -665,6 +793,9 @@ function toggleTree(cid, btn) {
   const hide = el.style.display !== 'none';
   el.style.display = hide ? 'none' : '';
   btn.textContent  = hide ? '▶' : '▼';
+  /* FIX 5: keep aria-expanded in sync with visual state */
+  btn.setAttribute('aria-expanded', String(!hide));
+  btn.setAttribute('aria-label', hide ? 'Expand session children' : 'Collapse session children');
 }
 
 function drillSession(sessionId) {
@@ -713,6 +844,7 @@ function renderTimeline(events) {
   curEvents = events;
   const box = document.getElementById('timeline');
   box.innerHTML = '';
+  document.getElementById('replay-bar').style.display = events.length ? '' : 'none';
   if (!events.length) {
     activeIdx = -1; updReplay();
     box.innerHTML = '<div class="empty">No events match the current filters.</div>';
@@ -744,24 +876,30 @@ function renderTimeline(events) {
 function updReplay() {
   const el = document.getElementById('replay-state');
   if (!curEvents.length || activeIdx < 0) { el.textContent = 'No event selected'; return; }
-  el.textContent = `Event ${activeIdx + 1} of ${curEvents.length}: ${curEvents[activeIdx].type}`;
+  el.textContent = `${activeIdx + 1} / ${curEvents.length} — ${curEvents[activeIdx].type}`;
 }
 function replayStep(dir) {
   if (!curEvents.length) return;
   activeIdx = Math.max(0, Math.min(curEvents.length - 1, activeIdx + dir));
   renderTimeline(curEvents);
+  // Animate DAG if that sub-view is active
+  if (subView === 'dag') renderDag(curEvents, activeIdx);
 }
 function stopPlay() {
   if (playTimer) { clearInterval(playTimer); playTimer = null; }
-  document.getElementById('play-btn').textContent = 'Autoplay';
+  document.getElementById('play-btn').textContent = '▶ Play';
 }
 function togglePlay() {
   if (playTimer) { stopPlay(); return; }
   if (!curEvents.length) return;
-  document.getElementById('play-btn').textContent = 'Stop';
+  // Restart from beginning if at end
+  if (activeIdx >= curEvents.length - 1) activeIdx = -1;
+  document.getElementById('play-btn').textContent = '⏸ Pause';
   playTimer = setInterval(() => {
     if (activeIdx >= curEvents.length - 1) { stopPlay(); return; }
-    replayStep(1);
+    activeIdx = Math.max(0, Math.min(curEvents.length - 1, activeIdx + 1));
+    renderTimeline(curEvents);
+    if (subView === 'dag') renderDag(curEvents, activeIdx);
   }, 900);
 }
 function doExport(fmt) {
@@ -836,7 +974,7 @@ function dagLayout(events) {
   return { eMap, kids, pos, w: Math.max(maxX, 280), h: Math.max(maxY, 100) };
 }
 
-function renderDag(events) {
+function renderDag(events, upToIdx = -1) {
   const wrap    = document.getElementById('dag-wrap');
   const hintEl  = document.getElementById('dag-hint');
   const detailEl = document.getElementById('dag-detail');
@@ -850,9 +988,14 @@ function renderDag(events) {
 
   const MAX = 100;
   const show = events.length > MAX ? events.slice(0, MAX) : events;
-  hintEl.textContent = events.length > MAX
-    ? `Showing first ${MAX} of ${events.length} events. Use the Timeline view to see all.`
-    : `${events.length} event${events.length !== 1 ? 's' : ''}. Click a node for details.`;
+  const replayMode = upToIdx >= 0;
+  if (events.length > MAX) {
+    hintEl.textContent = `Showing first ${MAX} of ${events.length} events. Use Timeline view to see all.`;
+  } else if (replayMode) {
+    hintEl.textContent = `Replay: step ${upToIdx + 1} of ${events.length} — greyed nodes are upcoming.`;
+  } else {
+    hintEl.textContent = `${events.length} event${events.length !== 1 ? 's' : ''}. Click a node for details.`;
+  }
 
   const { eMap, kids, pos, w, h } = dagLayout(show);
 
@@ -887,22 +1030,31 @@ function renderDag(events) {
 
   // Nodes
   for (const [id, p] of pos) {
-    const e   = eMap.get(id);
-    const st  = es(e.type);
-    const lbl = e.type.length > 19 ? e.type.slice(0, 17) + '…' : e.type;
-    const idl = id.length > 16 ? id.slice(0, 14) + '…' : id;
-    const isActive = curEvents[activeIdx]?.id === id;
-    const sw = isActive ? '2.5' : '1.5';
-    const sc = isActive ? '#0f766e' : st.dBd;
-    nodes += `<g style="cursor:pointer" onclick="dagClick('${esc(id)}')">
+    const e      = eMap.get(id);
+    const st     = es(e.type);
+    const lbl    = e.type.length > 19 ? e.type.slice(0, 17) + '…' : e.type;
+    const idl    = id.length > 16 ? id.slice(0, 14) + '…' : id;
+    const eIdx   = show.findIndex(x => x.id === id);
+    const isFuture  = replayMode && eIdx > upToIdx;
+    const isCurrent = replayMode && eIdx === upToIdx;
+    const isActive  = !replayMode && curEvents[activeIdx]?.id === id;
+    const opacity   = isFuture ? '0.2' : '1';
+    const sw = (isCurrent || isActive) ? '2.5' : '1.5';
+    const sc = isCurrent ? '#0f766e' : (isActive ? '#0f766e' : (isFuture ? '#d1d5db' : st.dBd));
+    const bg = isFuture ? '#f3f4f6' : st.dBg;
+    const tx = isFuture ? '#9ca3af' : st.dTx;
+    const glow = isCurrent ? ` filter="url(#glow)"` : '';
+    nodes += `<g style="cursor:pointer" opacity="${opacity}" onclick="dagClick('${esc(id)}')">
       <rect x="${p.x}" y="${p.y}" width="${NW}" height="${NH}" rx="8"
-        fill="${st.dBg}" stroke="${sc}" stroke-width="${sw}"/>
-      <text x="${p.x + 8}" y="${p.y + 18}" font-size="11" font-weight="700" fill="${st.dTx}">${esc(lbl)}</text>
-      <text x="${p.x + 8}" y="${p.y + 34}" font-size="10" fill="#6b7280">${esc(idl)}</text>
+        fill="${bg}" stroke="${sc}" stroke-width="${sw}"${glow}/>
+      <text x="${p.x + 8}" y="${p.y + 18}" font-size="11" font-weight="700" fill="${tx}">${esc(lbl)}</text>
+      <text x="${p.x + 8}" y="${p.y + 34}" font-size="10" fill="${isFuture ? '#d1d5db' : '#6b7280'}">${esc(idl)}</text>
     </g>`;
   }
 
-  wrap.innerHTML = `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
+  /* FIX 3: display:block removes the inline bottom gap that can cause spurious scrollbars
+             and ensures the SVG width drives horizontal overflow correctly */
+  wrap.innerHTML = `<svg width="${w}" height="${h}" style="display:block" xmlns="http://www.w3.org/2000/svg">
     <defs>
       <marker id="arr"   markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
         <polygon points="0 0, 8 3, 0 6" fill="#a0b8a5"/>
@@ -910,6 +1062,10 @@ function renderDag(events) {
       <marker id="arr-x" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
         <polygon points="0 0, 8 3, 0 6" fill="#94a3b8"/>
       </marker>
+      <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+        <feGaussianBlur stdDeviation="3" result="blur"/>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
     </defs>
     ${crosses}${edges}${nodes}
   </svg>`;
@@ -930,6 +1086,79 @@ function dagClick(id) {
     <div class="hint" style="margin-top:4px">id: ${esc(e.id)}</div>
     ${e.causation_id ? `<div class="hint">causation: ${esc(e.causation_id)}</div>` : ''}
     <pre style="max-height:90px;margin-top:6px">${esc(JSON.stringify(e.payload, null, 2))}</pre>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rejection log
+// ─────────────────────────────────────────────────────────────────────────────
+async function loadRejections() {
+  try {
+    const d = await fetchJson('/rejections');
+    allRejections = d.rejections || [];
+    const total   = d.total ?? allRejections.length;
+    document.getElementById('reject-total').textContent = `(${total} total this session)`;
+    // Update badge
+    const badge = document.getElementById('rejected-badge');
+    if (total > 0) { badge.textContent = total > 99 ? '99+' : total; badge.style.display = ''; }
+    else badge.style.display = 'none';
+    renderRejections();
+  } catch(_) {}
+}
+
+function renderRejections() {
+  const box    = document.getElementById('rejections-list');
+  const q      = (document.getElementById('reject-search')?.value || '').toLowerCase().trim();
+  const reason = document.getElementById('reject-reason-filter')?.value || '';
+
+  let list = allRejections;
+  if (reason) list = list.filter(r => r.reason === reason);
+  if (q) list = list.filter(r =>
+    (r.event_id   || '').toLowerCase().includes(q) ||
+    (r.event_type || '').toLowerCase().includes(q) ||
+    (r.session_id || '').toLowerCase().includes(q) ||
+    (r.detail     || '').toLowerCase().includes(q) ||
+    JSON.stringify(r.errors || '').toLowerCase().includes(q)
+  );
+
+  box.innerHTML = '';
+  if (!list.length) {
+    box.innerHTML = '<div class="empty">No rejections match the current filter.</div>';
+    return;
+  }
+
+  for (const r of list) {
+    const el = document.createElement('div');
+    el.className = 'reject-item';
+    const errText = r.errors ? JSON.stringify(r.errors, null, 2) : (r.detail || '');
+    const reasonLabel = r.reason === 'schema_invalid' ? 'Schema invalid' : 'Signature invalid';
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="reject-reason">${esc(reasonLabel)}</span>
+        ${r.event_type ? `<span class="badge">${esc(r.event_type)}</span>` : ''}
+        <span class="hint" style="margin-left:auto">${new Date(r.ts).toLocaleTimeString()}</span>
+      </div>
+      <div class="hint" style="margin-top:4px">
+        ${r.event_id   ? `event: ${esc(short(r.event_id, 24))}` : '<em>no event id</em>'}
+        ${r.session_id ? ` · session: ${esc(short(r.session_id, 20))}` : ''}
+      </div>
+      <div class="reject-detail"><pre style="margin:0;background:none;border:none;padding:0">${esc(errText)}</pre></div>
+      <div class="hint" style="margin-top:4px;font-size:11px">Click to ${el.classList.contains('expanded') ? 'hide' : 'show'} details</div>`;
+    el.onclick = () => {
+      el.classList.toggle('expanded');
+      const hint = el.querySelector('.hint:last-child');
+      if (hint) hint.textContent = `Click to ${el.classList.contains('expanded') ? 'hide' : 'show'} details`;
+    };
+    // Go-to-session shortcut
+    if (r.session_id) {
+      const goBtn = document.createElement('button');
+      goBtn.className = 'btn secondary';
+      goBtn.style.cssText = 'margin-top:6px;font-size:11px;padding:4px 8px';
+      goBtn.textContent = 'View session →';
+      goBtn.onclick = e => { e.stopPropagation(); drillSession(r.session_id); };
+      el.appendChild(goBtn);
+    }
+    box.appendChild(el);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -959,12 +1188,24 @@ async function loadAll() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Wire up search / filter
+// Wire up search / filter inputs
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Timeline search + type filter
 document.getElementById('search-input').addEventListener('input',
   debounce(() => { activeIdx = -1; loadTimeline(); }, 250));
 document.getElementById('type-filter').addEventListener('change',
   () => { activeIdx = -1; loadTimeline(); });
+
+// Session list filter
+document.getElementById('session-search').addEventListener('input',
+  debounce(e => { sessionFilter = e.target.value.trim(); renderSessions(allSessions); }, 200));
+
+// Rejection log filter
+document.getElementById('reject-search').addEventListener('input',
+  debounce(() => renderRejections(), 200));
+document.getElementById('reject-reason-filter').addEventListener('change',
+  () => renderRejections());
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Boot
