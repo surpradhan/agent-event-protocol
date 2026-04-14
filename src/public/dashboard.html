@@ -540,7 +540,7 @@ let allRejections = [];
 let activeIdx     = -1;
 let playTimer     = null;
 let sseConn       = null;
-let sessionFilter = '';
+let sessionFilter = '';        // persists across tab switches — cleared only on explicit input clear
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Event-type style config
@@ -1096,14 +1096,24 @@ function dagClick(id) {
 // Rejection log
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Single source of truth for updating the Rejected tab badge. */
+function setBadge(total) {
+  const badge = document.getElementById('rejected-badge');
+  badge.style.display = total > 0 ? '' : 'none';
+  if (total > 0) badge.textContent = total > 99 ? '99+' : String(total);
+}
+
+/** Guard: skip DOM update and network overhead when the count hasn't changed. */
+let _lastRejectionTotal = -1;
+
 /** Lightweight badge-only refresh — called on every SSE tick without a full render. */
 async function updateRejectionBadge() {
   try {
     const d = await fetchJson('/rejections?limit=1'); // only need the total
     const total = d.total ?? 0;
-    const badge = document.getElementById('rejected-badge');
-    if (total > 0) { badge.textContent = total > 99 ? '99+' : total; badge.style.display = ''; }
-    else badge.style.display = 'none';
+    if (total === _lastRejectionTotal) return; // nothing changed — skip DOM update
+    _lastRejectionTotal = total;
+    setBadge(total);
   } catch(_) {}
 }
 
@@ -1113,10 +1123,8 @@ async function loadRejections() {
     allRejections = d.rejections || [];
     const total   = d.total ?? allRejections.length;
     document.getElementById('reject-total').textContent = `(${total} total this session)`;
-    // Update badge
-    const badge = document.getElementById('rejected-badge');
-    if (total > 0) { badge.textContent = total > 99 ? '99+' : total; badge.style.display = ''; }
-    else badge.style.display = 'none';
+    _lastRejectionTotal = total; // keep guard in sync after a full load
+    setBadge(total);
     renderRejections();
   } catch(_) {}
 }
@@ -1146,7 +1154,9 @@ function renderRejections() {
     const el = document.createElement('div');
     el.className = 'reject-item';
     const errText = r.errors ? JSON.stringify(r.errors, null, 2) : (r.detail || '');
-    const reasonLabel = r.reason === 'schema_invalid' ? 'Schema invalid' : 'Signature invalid';
+    // Lookup table with a safe fallback so future reason codes render correctly
+    const REASON_LABELS = { schema_invalid: 'Schema invalid', signature_invalid: 'Signature invalid' };
+    const reasonLabel = REASON_LABELS[r.reason] ?? r.reason.replace(/_/g, ' ');
     el.innerHTML = `
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span class="reject-reason">${esc(reasonLabel)}</span>

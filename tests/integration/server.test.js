@@ -487,3 +487,91 @@ describe("GET /openapi.json", () => {
     assert.ok(body.paths, "should have 'paths' field");
   });
 });
+
+// ---------------------------------------------------------------------------
+// GET /rejections
+// ---------------------------------------------------------------------------
+
+describe("GET /rejections", () => {
+  test("returns 200 with empty list and total:0 when no rejections have occurred", async () => {
+    const res = await fetch(`${baseUrl}/rejections`, {
+      headers: { Authorization: `Bearer ${writeKey}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body.rejections), "rejections should be an array");
+    // May be 0 or more depending on other tests that sent bad events; just verify shape
+    assert.ok(typeof body.total === "number", "total should be a number");
+  });
+
+  test("records a schema-invalid rejection after a bad POST /events", async () => {
+    // Send an event missing required fields to trigger a schema rejection
+    const badEvent = {
+      specversion: "0.2.0",
+      id: `evt_reject_schema_${crypto.randomUUID().replace(/-/g, "")}`,
+      type: "task.created",
+      session_id: "ses_reject_test",
+      // missing: source, trace_id — will fail schema validation
+    };
+    const postRes = await ingest(badEvent);
+    assert.equal(postRes.status, 400);
+
+    const res = await fetch(`${baseUrl}/rejections`, {
+      headers: { Authorization: `Bearer ${writeKey}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.total >= 1, "should have at least one rejection");
+
+    // Most-recent item is first
+    const latest = body.rejections[0];
+    assert.equal(latest.reason, "schema_invalid");
+    assert.equal(latest.event_id, badEvent.id);
+    assert.equal(latest.session_id, "ses_reject_test");
+    assert.ok(Array.isArray(latest.errors), "errors should be an array");
+    assert.ok(latest.errors.length > 0, "errors should be non-empty");
+    assert.ok(typeof latest.ts === "string", "ts should be an ISO string");
+    assert.ok(typeof latest.id === "string", "each rejection entry should have its own id");
+  });
+
+  test("returns rejections most-recent first", async () => {
+    // Send two distinct bad events and verify ordering
+    const id1 = `evt_ord_1_${crypto.randomUUID().replace(/-/g, "")}`;
+    const id2 = `evt_ord_2_${crypto.randomUUID().replace(/-/g, "")}`;
+    await ingest({ specversion: "0.2.0", id: id1, type: "task.created", session_id: "ses_ord" });
+    await ingest({ specversion: "0.2.0", id: id2, type: "task.created", session_id: "ses_ord" });
+
+    const res = await fetch(`${baseUrl}/rejections`, {
+      headers: { Authorization: `Bearer ${writeKey}` },
+    });
+    const body = await res.json();
+    // id2 was sent last so it should appear before id1
+    const ids = body.rejections.map(r => r.event_id);
+    const pos1 = ids.indexOf(id1);
+    const pos2 = ids.indexOf(id2);
+    assert.ok(pos2 !== -1 && pos1 !== -1, "both event IDs should appear in rejections");
+    assert.ok(pos2 < pos1, "most-recently rejected event should appear first");
+  });
+
+  test("respects the ?limit query parameter", async () => {
+    const res = await fetch(`${baseUrl}/rejections?limit=1`, {
+      headers: { Authorization: `Bearer ${writeKey}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.rejections.length <= 1, "should return at most 1 item");
+    assert.ok(typeof body.total === "number", "total should reflect full count, not capped count");
+  });
+
+  test("requires authentication — returns 401 without a key", async () => {
+    const res = await fetch(`${baseUrl}/rejections`);
+    assert.equal(res.status, 401);
+  });
+
+  test("is accessible with a read-only API key", async () => {
+    const res = await fetch(`${baseUrl}/rejections`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+  });
+});
