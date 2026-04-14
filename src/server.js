@@ -1,5 +1,6 @@
 "use strict";
 
+const crypto  = require("crypto");
 const express = require("express");
 const path    = require("path");
 const { version: SERVER_VERSION } = require("../package.json");
@@ -20,6 +21,25 @@ const { ingestRateLimit }      = require("./middleware/rateLimit");
 
 const app  = express();
 const port = process.env.PORT || 8787;
+
+// ---------------------------------------------------------------------------
+// In-memory rejection log — last 200 rejected events (schema/signature fails)
+// ---------------------------------------------------------------------------
+const recentRejections = [];
+const MAX_REJECTIONS   = 200;
+function pushRejection({ event_id, event_type, session_id, reason, detail, errors }) {
+  recentRejections.push({
+    id:         crypto.randomUUID(),
+    ts:         new Date().toISOString(),
+    event_id:   event_id   || null,
+    event_type: event_type || null,
+    session_id: session_id || null,
+    reason,
+    detail:     detail || null,
+    errors:     errors || null
+  });
+  if (recentRejections.length > MAX_REJECTIONS) recentRejections.shift();
+}
 
 // ---------------------------------------------------------------------------
 // Global middleware
@@ -334,6 +354,14 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, (req, res) => {
     const { valid, error } = verifySignature(event, hmacSecret);
     if (!valid) {
       db.incrementCounter("rejected");
+      pushRejection({
+        event_id:   event.id,
+        event_type: event.type,
+        session_id: event.session_id,
+        reason:     "signature_invalid",
+        detail:     error,
+        errors:     null
+      });
       logger.warn(
         { event_id: event.id, session_id: event.session_id, reason: error },
         "event rejected: signature verification failed"
@@ -352,6 +380,14 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, (req, res) => {
   const { valid, errors } = validateEvent(event);
   if (!valid) {
     db.incrementCounter("rejected");
+    pushRejection({
+      event_id:   event.id,
+      event_type: event.type,
+      session_id: event.session_id,
+      reason:     "schema_invalid",
+      detail:     null,
+      errors
+    });
     logger.warn(
       { event_id: event.id, errors },
       "event rejected: schema validation failed"
@@ -400,6 +436,19 @@ function broadcastSse(eventName, data, senderTenantId) {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Routes — Rejection log
+// ---------------------------------------------------------------------------
+
+// GET /rejections — return recent rejected events (most-recent first)
+app.get("/rejections", requireReadAccess, (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 100, MAX_REJECTIONS);
+  res.json({
+    rejections: [...recentRejections].reverse().slice(0, limit),
+    total:      recentRejections.length
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Routes — Admin API (key management)
