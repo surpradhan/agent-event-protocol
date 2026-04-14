@@ -1,5 +1,6 @@
 "use strict";
 
+const crypto  = require("crypto");
 const express = require("express");
 const path    = require("path");
 const { version: SERVER_VERSION } = require("../package.json");
@@ -28,7 +29,7 @@ const recentRejections = [];
 const MAX_REJECTIONS   = 200;
 function pushRejection({ event_id, event_type, session_id, reason, detail, errors }) {
   recentRejections.push({
-    id:         require("crypto").randomUUID(),
+    id:         crypto.randomUUID(),
     ts:         new Date().toISOString(),
     event_id:   event_id   || null,
     event_type: event_type || null,

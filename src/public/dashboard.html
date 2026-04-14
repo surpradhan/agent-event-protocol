@@ -293,10 +293,6 @@
     }
     .replay-bar .hint { margin-left: auto; }
 
-    /* ── DAG ghost nodes animated on replay ── */
-    .dag-wrap svg .node-future { opacity: 0.18; }
-    .dag-wrap svg .node-current rect { filter: drop-shadow(0 0 4px #0f766e88); }
-
     /* ── Rejected full-width view ── */
     #view-rejected .reject-panel {
       max-width: 860px;
@@ -420,7 +416,10 @@
   <div id="view-rejected" style="display:none">
     <div class="card reject-panel">
       <div class="panel-header" style="margin-bottom:12px">
-        <div class="panel-title">Recent Rejections <span id="reject-total" class="hint"></span></div>
+        <div>
+          <div class="panel-title">Recent Rejections <span id="reject-total" class="hint"></span></div>
+          <div class="hint" style="font-size:11px;margin-top:2px">In-memory only — resets on server restart. Last 200 entries kept.</div>
+        </div>
         <button class="btn secondary" onclick="loadRejections()">Refresh</button>
       </div>
       <div class="reject-toolbar">
@@ -638,6 +637,8 @@ async function refreshSessions() {
     setMetric('m-sessions', d.total ?? sessions.length);
     renderSessions(sessions);
     buildWorkflowList(sessions);
+    // Keep rejection badge current without requiring a manual tab switch
+    updateRejectionBadge();
   } catch(_) {}
 }
 
@@ -700,7 +701,7 @@ function renderSessions(sessions) {
       <div class="item-sub">Updated ${ago(s.updated_at)}</div>`;
     const activate = () => {
       selSession = s.session_id; activeIdx = -1; stopPlay();
-      renderSessions(sessions);
+      renderSessions(allSessions); // use module-level allSessions, not the local snapshot
       document.getElementById('session-title').textContent = short(s.session_id, 30);
       loadTimeline();
     };
@@ -761,6 +762,8 @@ function renderWorkflowTree(wf) {
 function treeNodeHtml(node) {
   const s  = node.session;
   const ch = node.children || [];
+  // cid is safe to embed in onclick/onkeydown strings: regex strips everything
+  // except [a-z0-9], so no quotes, angle brackets, or JS-injection chars can survive.
   const cid = 'tch_' + s.session_id.replace(/[^a-z0-9]/gi, '_');
   const roleHtml = s.agent_role ? `<span class="role-tag">${esc(s.agent_role)}</span>` : '';
   /* FIX 5: toggle is keyboard-accessible with role, tabindex, aria-expanded, keydown */
@@ -897,9 +900,7 @@ function togglePlay() {
   document.getElementById('play-btn').textContent = '⏸ Pause';
   playTimer = setInterval(() => {
     if (activeIdx >= curEvents.length - 1) { stopPlay(); return; }
-    activeIdx = Math.max(0, Math.min(curEvents.length - 1, activeIdx + 1));
-    renderTimeline(curEvents);
-    if (subView === 'dag') renderDag(curEvents, activeIdx);
+    replayStep(1); // drives both Timeline highlight and DAG animation in one place
   }, 900);
 }
 function doExport(fmt) {
@@ -1028,13 +1029,16 @@ function renderDag(events, upToIdx = -1) {
     }
   }
 
+  // Build an O(1) index lookup so the node loop is O(n) not O(n²)
+  const showIdxMap = new Map(show.map((e, i) => [e.id, i]));
+
   // Nodes
   for (const [id, p] of pos) {
     const e      = eMap.get(id);
     const st     = es(e.type);
     const lbl    = e.type.length > 19 ? e.type.slice(0, 17) + '…' : e.type;
     const idl    = id.length > 16 ? id.slice(0, 14) + '…' : id;
-    const eIdx   = show.findIndex(x => x.id === id);
+    const eIdx   = showIdxMap.get(id) ?? -1;
     const isFuture  = replayMode && eIdx > upToIdx;
     const isCurrent = replayMode && eIdx === upToIdx;
     const isActive  = !replayMode && curEvents[activeIdx]?.id === id;
@@ -1091,6 +1095,18 @@ function dagClick(id) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Rejection log
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** Lightweight badge-only refresh — called on every SSE tick without a full render. */
+async function updateRejectionBadge() {
+  try {
+    const d = await fetchJson('/rejections?limit=1'); // only need the total
+    const total = d.total ?? 0;
+    const badge = document.getElementById('rejected-badge');
+    if (total > 0) { badge.textContent = total > 99 ? '99+' : total; badge.style.display = ''; }
+    else badge.style.display = 'none';
+  } catch(_) {}
+}
+
 async function loadRejections() {
   try {
     const d = await fetchJson('/rejections');
@@ -1107,8 +1123,8 @@ async function loadRejections() {
 
 function renderRejections() {
   const box    = document.getElementById('rejections-list');
-  const q      = (document.getElementById('reject-search')?.value || '').toLowerCase().trim();
-  const reason = document.getElementById('reject-reason-filter')?.value || '';
+  const q      = rejectSearchEl.value.toLowerCase().trim();
+  const reason = rejectReasonEl.value;
 
   let list = allRejections;
   if (reason) list = list.filter(r => r.reason === reason);
@@ -1142,7 +1158,7 @@ function renderRejections() {
         ${r.session_id ? ` · session: ${esc(short(r.session_id, 20))}` : ''}
       </div>
       <div class="reject-detail"><pre style="margin:0;background:none;border:none;padding:0">${esc(errText)}</pre></div>
-      <div class="hint" style="margin-top:4px;font-size:11px">Click to ${el.classList.contains('expanded') ? 'hide' : 'show'} details</div>`;
+      <div class="hint" style="margin-top:4px;font-size:11px">Click to show details</div>`;
     el.onclick = () => {
       el.classList.toggle('expanded');
       const hint = el.querySelector('.hint:last-child');
@@ -1191,6 +1207,10 @@ async function loadAll() {
 // Wire up search / filter inputs
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Cache rejection filter elements once (used by renderRejections on every render)
+const rejectSearchEl = document.getElementById('reject-search');
+const rejectReasonEl = document.getElementById('reject-reason-filter');
+
 // Timeline search + type filter
 document.getElementById('search-input').addEventListener('input',
   debounce(() => { activeIdx = -1; loadTimeline(); }, 250));
@@ -1202,10 +1222,8 @@ document.getElementById('session-search').addEventListener('input',
   debounce(e => { sessionFilter = e.target.value.trim(); renderSessions(allSessions); }, 200));
 
 // Rejection log filter
-document.getElementById('reject-search').addEventListener('input',
-  debounce(() => renderRejections(), 200));
-document.getElementById('reject-reason-filter').addEventListener('change',
-  () => renderRejections());
+rejectSearchEl.addEventListener('input', debounce(() => renderRejections(), 200));
+rejectReasonEl.addEventListener('change', () => renderRejections());
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Boot
