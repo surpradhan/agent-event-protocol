@@ -232,6 +232,50 @@
       border-left: 7px solid rgba(0,255,200,0.55);
       flex-shrink: 0;
     }
+    @media (max-width: 600px) {
+      .flow-diagram {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+        padding-top: 0;
+      }
+      .fd-connector {
+        flex-direction: column;
+        align-items: flex-start;
+        min-width: unset;
+        width: 2px;
+        height: 36px;
+        padding-left: 20px;
+      }
+      .fd-conn-label {
+        position: static;
+        transform: none;
+        padding-left: 10px;
+        margin-bottom: 2px;
+      }
+      .fd-conn-track {
+        width: 2px;
+        flex: 1;
+        background: repeating-linear-gradient(
+          180deg,
+          rgba(0,255,200,0.45) 0px, rgba(0,255,200,0.45) 6px,
+          transparent 6px, transparent 12px
+        );
+        background-size: 2px 12px;
+        animation: fd-flow-v 0.55s linear infinite;
+      }
+      .fd-conn-arrow {
+        border-left: 5px solid transparent;
+        border-right: 5px solid transparent;
+        border-top: 7px solid rgba(0,255,200,0.55);
+        border-bottom: none;
+        margin-left: -4px;
+      }
+      @keyframes fd-flow-v {
+        from { background-position: 0 0; }
+        to   { background-position: 0 12px; }
+      }
+    }
 
     /* ── how it works ── */
     .flow {
@@ -268,6 +312,12 @@
       display: grid;
       grid-template-columns: repeat(4, 1fr);
       gap: 16px;
+    }
+    @media (max-width: 700px) {
+      .features { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 420px) {
+      .features { grid-template-columns: 1fr; }
     }
     .feature-card {
       background: var(--surface);
@@ -325,7 +375,7 @@
       background: rgba(0,0,0,0.4);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 28px 28px;
+      padding: 28px;
       font-family: 'JetBrains Mono', monospace;
       font-size: 0.82rem;
       line-height: 1.8;
@@ -396,7 +446,7 @@
       <a href="#how-it-works">How it works</a>
       <a href="#features">Features</a>
       <a href="#quickstart">Quick start</a>
-      <a href="https://github.com/surabhi7pradhan/agent-event-protocol" target="_blank">GitHub</a>
+      <a href="https://github.com/surpradhan/agent-event-protocol" target="_blank" rel="noopener noreferrer">GitHub</a>
     </div>
   </div>
 </nav>
@@ -412,7 +462,7 @@
     </p>
     <div class="hero-actions">
       <a class="btn btn-primary" href="#quickstart">Get started</a>
-      <a class="btn btn-ghost" href="https://github.com/surabhi7pradhan/agent-event-protocol" target="_blank">
+      <a class="btn btn-ghost" href="https://github.com/surpradhan/agent-event-protocol" target="_blank" rel="noopener noreferrer">
         View on GitHub
       </a>
     </div>
@@ -532,14 +582,11 @@
     <p class="section-desc">Requires Node.js 20+. No external database or cloud account needed.</p>
     <div class="code-block">
       <div><span class="comment"># 1. Install dependencies</span></div>
-      <div><span class="cmd">npm install</span></div>
-      <br />
+      <div style="margin-bottom:1em"><span class="cmd">npm install</span></div>
       <div><span class="comment"># 2. Start the ingest server</span></div>
-      <div><span class="cmd">npm run ingest</span></div>
-      <br />
+      <div style="margin-bottom:1em"><span class="cmd">npm run ingest</span></div>
       <div><span class="comment"># 3. Emit a sample event</span></div>
-      <div><span class="cmd">npm run emit:example</span></div>
-      <br />
+      <div style="margin-bottom:1em"><span class="cmd">npm run emit:example</span></div>
       <div><span class="comment"># 4. Open the dashboard (default port: 8787)</span></div>
       <div><span class="cmd">open <span class="value">http://localhost:&lt;PORT&gt;/dashboard</span></span></div>
     </div>
@@ -579,7 +626,7 @@
     <div class="footer-logo">AEP</div>
     <p>
       Agent Event Protocol · Open source · MIT License ·
-      <a href="https://github.com/surabhi7pradhan/agent-event-protocol" target="_blank">GitHub</a>
+      <a href="https://github.com/surpradhan/agent-event-protocol" target="_blank" rel="noopener noreferrer">GitHub</a>
     </p>
   </div>
 </footer>
