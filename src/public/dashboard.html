@@ -4,172 +4,319 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AEP Demo Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
+    /* ═══════════════════════════════════════════════════
+       BIOLUMINESCENT CANVAS — Futuristic Dark Theme
+       ═══════════════════════════════════════════════════ */
     :root {
-      --bg: #f6f8f4;
-      --card: #ffffff;
-      --ink: #132018;
-      --muted: #4c5f52;
-      --accent: #166534;
-      --line: #d7e1d9;
-      --warn: #8a2d1f;
+      --bg:         #0b0e0c;
+      --bg2:        #0f1411;
+      --card:       rgba(255,255,255,0.038);
+      --card-hover: rgba(255,255,255,0.065);
+      --ink:        #dff0e6;
+      --muted:      #527060;
+      --accent:     #00ffc8;
+      --accent2:    #c062ff;
+      --warm:       #ffb347;
+      --warn:       #ff6b6b;
+      --line:       rgba(0,255,200,0.13);
+      --line2:      rgba(255,255,255,0.07);
+      --glow:       rgba(0,255,200,0.18);
     }
+
     * { box-sizing: border-box; }
+
+    /* ── Body + canvas texture ── */
     body {
       margin: 0;
-      font-family: "Segoe UI", "Aptos", sans-serif;
+      font-family: 'Inter', 'Segoe UI', sans-serif;
       color: var(--ink);
-      background: radial-gradient(circle at 20% -10%, #dce9de 0%, var(--bg) 40%);
+      background: var(--bg);
       min-height: 100vh;
+      position: relative;
+      overflow-x: hidden;
     }
-    .wrap { max-width: 1300px; margin: 0 auto; padding: 24px; }
+
+    /* Ambient paint-light gradient */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      pointer-events: none; z-index: 0;
+      background:
+        radial-gradient(ellipse 90% 55% at 8% 0%,   rgba(0,255,200,0.055)  0%, transparent 60%),
+        radial-gradient(ellipse 70% 50% at 92% 95%,  rgba(192,98,255,0.045) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 40% at 55% 50%,  rgba(255,179,71,0.018) 0%, transparent 70%);
+    }
+
+    /* Canvas grain texture overlay */
+    body::after {
+      content: '';
+      position: fixed; inset: 0;
+      pointer-events: none; z-index: 1;
+      opacity: 0.038;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.72' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+      background-size: 200px 200px;
+    }
+
+    .wrap {
+      max-width: 1300px; margin: 0 auto;
+      padding: 28px 24px;
+      position: relative; z-index: 2;
+    }
 
     /* ── Header ── */
     .hero {
       display: flex; justify-content: space-between;
-      align-items: flex-end; gap: 16px; margin-bottom: 16px;
+      align-items: flex-end; gap: 16px; margin-bottom: 24px;
     }
-    h1 { margin: 0; font-size: 28px; }
-    p  { margin: 6px 0 0; color: var(--muted); }
+
+    h1 {
+      margin: 0;
+      font-family: 'Syne', sans-serif;
+      font-size: 30px; font-weight: 800;
+      letter-spacing: -0.03em; color: var(--ink);
+      text-shadow: 0 0 48px rgba(0,255,200,0.22);
+    }
+
+    p { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
 
     .live-pill {
       display: flex; align-items: center; gap: 8px;
-      font-size: 13px; color: var(--muted);
+      font-size: 11px; font-weight: 700;
+      color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em;
       background: var(--card); border: 1px solid var(--line);
-      border-radius: 999px; padding: 6px 14px;
-      white-space: nowrap;
+      border-radius: 999px; padding: 7px 16px;
+      white-space: nowrap; backdrop-filter: blur(14px);
     }
+
     .live-dot {
-      width: 8px; height: 8px; border-radius: 50%; background: #d1d5db;
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #263d30; transition: background .3s, box-shadow .3s;
     }
-    .live-dot.on  { background: #22c55e; box-shadow: 0 0 0 3px #dcfce7; animation: blink 2s infinite; }
-    .live-dot.err { background: #ef4444; }
+    .live-dot.on {
+      background: var(--accent);
+      box-shadow: 0 0 0 3px rgba(0,255,200,0.14), 0 0 14px rgba(0,255,200,0.5);
+      animation: pulse-dot 2.4s ease-in-out infinite;
+    }
+    .live-dot.err { background: #ff6b6b; box-shadow: 0 0 0 3px rgba(255,107,107,0.14); }
+
+    @keyframes pulse-dot {
+      0%,100% { box-shadow: 0 0 0 3px rgba(0,255,200,0.14), 0 0 14px rgba(0,255,200,0.5); }
+      50%      { box-shadow: 0 0 0 7px rgba(0,255,200,0.06), 0 0 22px rgba(0,255,200,0.28); }
+    }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.5} }
 
     /* ── Metrics bar ── */
     .metric-grid {
       display: grid;
       grid-template-columns: repeat(5, minmax(120px, 1fr));
-      gap: 10px; margin-bottom: 16px;
+      gap: 12px; margin-bottom: 20px;
     }
+
     .card {
-      background: var(--card); border: 1px solid var(--line);
-      border-radius: 12px; padding: 12px;
+      background: var(--card); border: 1px solid var(--line2);
+      border-radius: 14px; padding: 14px 16px;
+      backdrop-filter: blur(18px);
+      transition: border-color .2s, background .2s, box-shadow .2s;
+      position: relative; overflow: hidden;
     }
-    .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
-    .v { font-size: 22px; margin-top: 6px; font-weight: 700; }
+    .card:hover {
+      border-color: rgba(0,255,200,0.22);
+      background: var(--card-hover);
+    }
+
+    /* Per-card paint-blob backing */
+    .metric-grid .card::before {
+      content: ''; position: absolute; inset: 0;
+      pointer-events: none; border-radius: 14px;
+    }
+    .metric-grid .card:nth-child(1)::before { background: radial-gradient(ellipse at 25% 55%, rgba(192,98,255,0.2)  0%, transparent 68%); }
+    .metric-grid .card:nth-child(2)::before { background: radial-gradient(ellipse at 78% 25%, rgba(0,255,200,0.16)  0%, transparent 68%); }
+    .metric-grid .card:nth-child(3)::before { background: radial-gradient(ellipse at 50% 80%, rgba(74,222,128,0.16) 0%, transparent 68%); }
+    .metric-grid .card:nth-child(4)::before { background: radial-gradient(ellipse at 80% 78%, rgba(255,107,107,0.16) 0%, transparent 68%); }
+    .metric-grid .card:nth-child(5)::before { background: radial-gradient(ellipse at 22% 22%, rgba(255,179,71,0.16) 0%, transparent 68%); }
+
+    .k {
+      color: var(--muted); font-size: 10px;
+      text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;
+    }
+    .v {
+      font-size: 26px; margin-top: 8px; font-weight: 800;
+      font-family: 'Syne', sans-serif;
+      color: var(--ink); letter-spacing: -0.02em;
+    }
 
     /* ── Main tabs ── */
     .main-tabs {
-      display: flex; gap: 4px;
-      border-bottom: 2px solid var(--line);
-      margin-bottom: 14px; padding-bottom: 0;
+      display: flex; gap: 2px;
+      border-bottom: 1px solid var(--line2);
+      margin-bottom: 16px;
     }
     .tab-btn {
       background: none; border: none;
-      border-bottom: 2px solid transparent; margin-bottom: -2px;
-      padding: 8px 20px; font-size: 14px; font-weight: 600;
-      color: var(--muted); cursor: pointer; border-radius: 6px 6px 0 0;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+      padding: 10px 22px; font-size: 13px; font-weight: 600;
+      font-family: 'Inter', sans-serif;
+      color: var(--muted); cursor: pointer;
+      border-radius: 6px 6px 0 0; letter-spacing: 0.02em;
+      transition: color .15s, background .15s;
     }
-    .tab-btn:hover { color: var(--accent); background: #f0f7f1; }
-    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-btn:hover { color: var(--accent); background: rgba(0,255,200,0.05); }
+    .tab-btn.active {
+      color: var(--accent); border-bottom-color: var(--accent);
+      text-shadow: 0 0 18px rgba(0,255,200,0.4);
+    }
 
     /* ── Layout ── */
-    .layout {
-      display: grid;
-      grid-template-columns: 340px 1fr;
-      gap: 14px;
-    }
+    .layout { display: grid; grid-template-columns: 320px 1fr; gap: 14px; }
     .panel-header {
       display: flex; justify-content: space-between;
-      align-items: center; margin-bottom: 12px; gap: 8px;
+      align-items: center; margin-bottom: 14px; gap: 8px;
     }
     .panel-title {
-      font-size: 14px; font-weight: 700; margin-bottom: 10px;
+      font-size: 10px; font-weight: 700; margin-bottom: 12px;
+      color: var(--muted); text-transform: uppercase; letter-spacing: 0.12em;
     }
-    .panel-header .panel-title { margin-bottom: 0; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .panel-header .panel-title {
+      margin-bottom: 0; flex-shrink: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: var(--ink); text-transform: none;
+      font-size: 13px; letter-spacing: 0; font-weight: 600;
+    }
 
     /* ── Sub-tabs ── */
-    .sub-tabs { display: flex; gap: 4px; flex-shrink: 0; }
+    .sub-tabs { display: flex; gap: 6px; flex-shrink: 0; }
     .sub-tab {
-      background: none; border: 1px solid var(--line); border-radius: 8px;
-      padding: 5px 12px; font-size: 12px; font-weight: 600;
+      background: none; border: 1px solid var(--line2); border-radius: 8px;
+      padding: 5px 14px; font-size: 11px; font-weight: 600;
+      font-family: 'Inter', sans-serif;
       color: var(--muted); cursor: pointer; white-space: nowrap;
+      letter-spacing: 0.04em;
+      transition: border-color .15s, color .15s, background .15s, box-shadow .15s;
     }
-    .sub-tab:hover { border-color: var(--accent); color: var(--accent); }
-    .sub-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .sub-tab:hover {
+      border-color: rgba(0,255,200,0.35); color: var(--accent);
+      background: rgba(0,255,200,0.05);
+    }
+    .sub-tab.active {
+      background: rgba(0,255,200,0.11); color: var(--accent);
+      border-color: rgba(0,255,200,0.4);
+      box-shadow: 0 0 14px rgba(0,255,200,0.1);
+    }
 
     /* ── Scrollable lists ── */
-    .item-list {
-      display: grid; gap: 7px;
-      max-height: 65vh; overflow: auto;
-    }
+    .item-list { display: grid; gap: 6px; max-height: 65vh; overflow: auto; scrollbar-width: thin; scrollbar-color: rgba(0,255,200,0.18) transparent; }
+    .item-list::-webkit-scrollbar { width: 4px; }
+    .item-list::-webkit-scrollbar-track { background: transparent; }
+    .item-list::-webkit-scrollbar-thumb { background: rgba(0,255,200,0.18); border-radius: 2px; }
+    .item-list::-webkit-scrollbar-thumb:hover { background: rgba(0,255,200,0.38); }
+
     .clickable-item {
-      border: 1px solid var(--line); border-radius: 10px;
-      padding: 10px; cursor: pointer; background: #fcfdfb;
-      transition: border-color .12s, background .12s;
+      border: 1px solid var(--line2); border-radius: 10px;
+      padding: 10px 12px; cursor: pointer;
+      background: rgba(255,255,255,0.02);
+      transition: border-color .15s, background .15s, box-shadow .15s;
     }
-    .clickable-item:hover { border-color: #86b894; background: #f5fbf6; }
-    .clickable-item.active { border-color: var(--accent); background: #eef6ef; }
+    .clickable-item:hover {
+      border-color: rgba(0,255,200,0.22); background: rgba(0,255,200,0.04);
+    }
+    .clickable-item.active {
+      border-color: rgba(0,255,200,0.45);
+      background: rgba(0,255,200,0.07);
+      box-shadow: 0 0 18px rgba(0,255,200,0.06), inset 0 0 0 1px rgba(0,255,200,0.08);
+    }
     .item-main {
-      font-weight: 600; font-size: 13px;
+      font-weight: 500; font-size: 11.5px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      color: var(--ink);
+      font-family: 'JetBrains Mono', monospace;
     }
-    .item-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+    .item-sub { font-size: 11px; color: var(--muted); margin-top: 3px; }
 
     /* ── Buttons ── */
     .btn {
-      border: 1px solid var(--accent); background: var(--accent); color: #fff;
-      border-radius: 10px; padding: 8px 12px; cursor: pointer;
-      font-weight: 600; font-size: 13px; white-space: nowrap;
+      border: 1px solid var(--accent); background: var(--accent); color: #050d08;
+      border-radius: 8px; padding: 7px 14px; cursor: pointer;
+      font-weight: 700; font-size: 12px; font-family: 'Inter', sans-serif;
+      white-space: nowrap; letter-spacing: 0.04em;
+      transition: box-shadow .15s, background .15s;
     }
-    .btn.secondary { background: #fff; color: var(--accent); }
-    .btn.secondary:hover { background: #eef6ef; }
+    .btn:hover { background: #2dffd4; box-shadow: 0 0 18px rgba(0,255,200,0.35); }
+    .btn.secondary {
+      background: rgba(0,255,200,0.07); color: var(--accent);
+      border-color: rgba(0,255,200,0.28);
+    }
+    .btn.secondary:hover {
+      background: rgba(0,255,200,0.13);
+      box-shadow: 0 0 12px rgba(0,255,200,0.14);
+    }
 
     /* ── Toolbar ── */
     .toolbar {
       display: grid; grid-template-columns: 1fr 180px auto auto;
-      gap: 8px; margin-bottom: 10px; align-items: center;
+      gap: 8px; margin-bottom: 12px; align-items: center;
     }
     input, select {
-      width: 100%; border: 1px solid var(--line); border-radius: 9px;
-      padding: 8px 10px; font-size: 13px; color: var(--ink); background: #fff;
+      width: 100%; border: 1px solid var(--line2); border-radius: 8px;
+      padding: 8px 12px; font-size: 12px;
+      font-family: 'Inter', sans-serif;
+      color: var(--ink); background: rgba(255,255,255,0.04);
+      outline: none; appearance: none;
+      transition: border-color .15s, box-shadow .15s;
     }
-    .replay {
-      display: flex; gap: 8px; align-items: center;
-      margin-bottom: 10px; flex-wrap: wrap;
+    input:focus, select:focus {
+      border-color: rgba(0,255,200,0.4);
+      box-shadow: 0 0 0 3px rgba(0,255,200,0.07);
     }
-    .hint { font-size: 12px; color: var(--muted); }
+    input::placeholder { color: var(--muted); }
+    select option { background: #111614; color: var(--ink); }
+
+    .replay { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+    .hint { font-size: 11px; color: var(--muted); font-family: 'Inter', sans-serif; }
 
     /* ── Timeline ── */
     .timeline-list { max-height: 50vh; }
     .event {
-      border: 1px solid var(--line);
-      border-left: 3px solid var(--ev-accent, var(--line));
-      border-radius: 10px; padding: 10px; background: #fff;
-      cursor: pointer; transition: border-color .12s, box-shadow .12s;
+      border: 1px solid var(--line2);
+      border-left: 3px solid var(--ev-accent, rgba(0,255,200,0.3));
+      border-radius: 10px; padding: 10px 12px;
+      background: rgba(255,255,255,0.022);
+      cursor: pointer;
+      transition: border-color .15s, box-shadow .15s, background .15s;
+      box-shadow: -3px 0 10px -5px var(--ev-accent, rgba(0,255,200,0.3));
     }
-    .event.active { border-color: #0f766e; border-left-color: #0f766e; box-shadow: 0 0 0 2px #d5f3ef; }
+    .event:hover { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.1); }
+    .event.active {
+      border-color: rgba(0,255,200,0.35);
+      border-left-color: var(--ev-accent, var(--accent));
+      background: rgba(0,255,200,0.05);
+      box-shadow: -3px 0 16px -4px var(--ev-accent, var(--accent)), 0 0 0 1px rgba(0,255,200,0.12);
+    }
     .event-top { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
-    .event-type { font-weight: 700; font-size: 13px; }
+    .event-type { font-weight: 700; font-size: 12px; color: var(--ink); }
 
-    /* ── Badges ── */
+    /* ── Badges — neon dark-mode variants ── */
     .badge {
-      font-size: 11px; border: 1px solid #bfd2c2; color: #1f4e31;
-      border-radius: 999px; padding: 2px 8px; white-space: nowrap; background: #f0f7f1;
+      font-size: 10px; border: 1px solid rgba(0,255,200,0.25); color: var(--accent);
+      border-radius: 999px; padding: 2px 8px; white-space: nowrap;
+      background: rgba(0,255,200,0.08);
+      font-weight: 600; font-family: 'Inter', sans-serif; letter-spacing: 0.04em;
     }
-    .b-task-created    { background:#dbeafe; color:#1e40af; border-color:#93c5fd; }
-    .b-task-updated    { background:#eff6ff; color:#1e40af; border-color:#bfdbfe; }
-    .b-task-completed  { background:#dcfce7; color:#166534; border-color:#86efac; }
-    .b-task-failed     { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
-    .b-tool-called     { background:#f3e8ff; color:#6b21a8; border-color:#d8b4fe; }
-    .b-tool-result     { background:#faf5ff; color:#6b21a8; border-color:#e9d5ff; }
-    .b-memory-read     { background:#fff7ed; color:#9a3412; border-color:#fdba74; }
-    .b-memory-write    { background:#ffedd5; color:#9a3412; border-color:#fb923c; }
-    .b-handoff-started    { background:#ccfbf1; color:#0f766e; border-color:#5eead4; }
-    .b-handoff-completed  { background:#f0fdfa; color:#0f766e; border-color:#99f6e4; }
-    .b-policy-blocked  { background:#fff4f2; color:#8a2d1f; border-color:#e7c2ba; }
-    .b-error-raised    { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+    .b-task-created    { background:rgba(59,130,246,0.14);   color:#93c5fd; border-color:rgba(59,130,246,0.38); }
+    .b-task-updated    { background:rgba(147,197,253,0.1);   color:#bfdbfe; border-color:rgba(147,197,253,0.28); }
+    .b-task-completed  { background:rgba(34,197,94,0.14);    color:#86efac; border-color:rgba(34,197,94,0.38); }
+    .b-task-failed     { background:rgba(239,68,68,0.14);    color:#fca5a5; border-color:rgba(239,68,68,0.38); }
+    .b-tool-called     { background:rgba(168,85,247,0.14);   color:#d8b4fe; border-color:rgba(168,85,247,0.38); }
+    .b-tool-result     { background:rgba(216,180,254,0.1);   color:#e9d5ff; border-color:rgba(216,180,254,0.3); }
+    .b-memory-read     { background:rgba(251,146,60,0.14);   color:#fdba74; border-color:rgba(251,146,60,0.38); }
+    .b-memory-write    { background:rgba(249,115,22,0.14);   color:#fb923c; border-color:rgba(249,115,22,0.38); }
+    .b-handoff-started   { background:rgba(20,184,166,0.14); color:#5eead4; border-color:rgba(20,184,166,0.38); }
+    .b-handoff-completed { background:rgba(94,234,212,0.1);  color:#99f6e4; border-color:rgba(94,234,212,0.3); }
+    .b-policy-blocked  { background:rgba(220,38,38,0.14);    color:#fca5a5; border-color:rgba(220,38,38,0.38); }
+    .b-error-raised    { background:rgba(239,68,68,0.14);    color:#fca5a5; border-color:rgba(239,68,68,0.38); }
 
     /* event left-border accent colors */
     .ea-task-created    { --ev-accent:#3b82f6; }
@@ -186,127 +333,143 @@
     .ea-error-raised    { --ev-accent:#ef4444; }
 
     pre {
-      margin: 8px 0 0; background: #f7faf7;
-      border-radius: 8px; border: 1px solid #e5ece6;
-      padding: 8px; white-space: pre-wrap; font-size: 11px;
+      margin: 8px 0 0;
+      background: rgba(0,0,0,0.32);
+      border-radius: 8px; border: 1px solid rgba(0,255,200,0.08);
+      padding: 8px 10px; white-space: pre-wrap; font-size: 11px;
       max-height: 110px; overflow: auto;
+      font-family: 'JetBrains Mono', monospace;
+      color: #7fffd4; line-height: 1.55;
     }
+    pre::-webkit-scrollbar { width: 4px; height: 4px; }
+    pre::-webkit-scrollbar-track { background: transparent; }
+    pre::-webkit-scrollbar-thumb { background: rgba(0,255,200,0.18); border-radius: 2px; }
 
     /* ── Causation DAG ── */
-    /* FIX 2: flex column so detail panel is always visible below the graph */
-    /* FIX 3: webkit scrollbar styles make horizontal scrolling discoverable */
     #sv-dag {
       display: flex; flex-direction: column; gap: 8px;
-      height: 60vh; max-height: 60vh; overflow: hidden;
+      height: clamp(320px, 70vh, 900px); overflow: hidden;
     }
     .dag-wrap {
-      border: 1px solid var(--line); border-radius: 10px;
-      background: #f9fbf9; overflow: auto;
-      flex: 1 1 0; min-height: 80px;
+      border: 1px solid var(--line2); border-radius: 12px;
+      /* Dark ground + dot-grid */
+      background-color: #070908;
+      background-image: radial-gradient(circle, rgba(0,255,200,0.07) 1px, transparent 1px);
+      background-size: 22px 22px;
+      overflow: auto; flex: 1 1 0; min-height: 80px;
+      scrollbar-width: thin; scrollbar-color: rgba(0,255,200,0.18) transparent;
     }
     .dag-wrap::-webkit-scrollbar { width: 6px; height: 6px; }
-    .dag-wrap::-webkit-scrollbar-track { background: #f0f7f1; border-radius: 3px; }
-    .dag-wrap::-webkit-scrollbar-thumb { background: #86b894; border-radius: 3px; }
-    .dag-wrap::-webkit-scrollbar-thumb:hover { background: #166534; }
+    .dag-wrap::-webkit-scrollbar-track { background: rgba(0,255,200,0.03); border-radius: 3px; }
+    .dag-wrap::-webkit-scrollbar-thumb { background: rgba(0,255,200,0.18); border-radius: 3px; }
+    .dag-wrap::-webkit-scrollbar-thumb:hover { background: rgba(0,255,200,0.38); }
     .dag-detail {
-      flex: 0 0 auto; padding: 10px 12px;
-      background: #f0f7f1; border: 1px solid var(--line); border-radius: 10px;
-      font-size: 12px; max-height: 140px; overflow-y: auto;
+      flex: 0 0 auto; padding: 10px 14px;
+      background: rgba(0,255,200,0.04); border: 1px solid rgba(0,255,200,0.12);
+      border-radius: 10px; font-size: 12px; max-height: 140px; overflow-y: auto;
     }
 
     /* ── Workflow tree ── */
-    .workflow-tree { max-height: 65vh; overflow: auto; }
+    .workflow-tree { max-height: 65vh; overflow: auto; scrollbar-width: thin; scrollbar-color: rgba(0,255,200,0.18) transparent; }
     .tree-node { margin: 0; padding: 0; }
     .tree-row {
       display: flex; align-items: flex-start; gap: 6px;
-      padding: 8px 10px; margin: 2px 0;
-      border: 1px solid var(--line); border-radius: 9px;
-      background: #fcfdfb; cursor: pointer;
+      padding: 8px 12px; margin: 3px 0;
+      border: 1px solid var(--line2); border-radius: 9px;
+      background: rgba(255,255,255,0.02); cursor: pointer;
       transition: background .12s, border-color .12s;
     }
-    .tree-row:hover { background: #eef6ef; border-color: #86b894; }
-    .tree-row.has-ch { border-left: 3px solid var(--accent); }
+    .tree-row:hover { background: rgba(0,255,200,0.04); border-color: rgba(0,255,200,0.2); }
+    .tree-row.has-ch { border-left: 3px solid rgba(0,255,200,0.38); }
     .tree-toggle {
-      font-size: 11px; color: var(--accent); min-width: 14px;
+      font-size: 10px; color: var(--accent); min-width: 14px;
       cursor: pointer; user-select: none; padding-top: 2px; flex-shrink: 0;
     }
     .tree-toggle-gap { min-width: 14px; flex-shrink: 0; }
     .tree-content { flex: 1; min-width: 0; }
     .tree-sid {
-      font-weight: 600; font-size: 13px;
+      font-weight: 500; font-size: 11.5px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      color: var(--ink); font-family: 'JetBrains Mono', monospace;
     }
     .tree-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
     .tree-children {
       padding-left: 20px; margin-left: 10px;
-      border-left: 1px dashed var(--line);
+      border-left: 1px dashed rgba(0,255,200,0.14);
     }
     .role-tag {
       font-size: 10px; padding: 1px 7px; border-radius: 999px;
-      border: 1px solid #bfd2c2; color: var(--accent);
-      background: #f0f7f1; white-space: nowrap; margin-right: 4px;
+      border: 1px solid rgba(0,255,200,0.25); color: var(--accent);
+      background: rgba(0,255,200,0.08); white-space: nowrap;
+      margin-right: 4px; font-weight: 600;
     }
 
     /* ── Empty state ── */
-    .empty { font-size: 13px; color: var(--muted); padding: 28px; text-align: center; }
+    .empty { font-size: 12px; color: var(--muted); padding: 32px; text-align: center; letter-spacing: 0.02em; }
+
+    /* ── Screen-reader-only utility ── */
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 
     /* ── Session search ── */
-    .session-search-wrap { margin-bottom: 9px; position: relative; }
+    .session-search-wrap { margin-bottom: 10px; position: relative; }
     .session-search-wrap input { padding-left: 30px; }
     .session-search-icon {
-      position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
-      font-size: 13px; color: var(--muted); pointer-events: none;
+      position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+      font-size: 12px; color: var(--muted); pointer-events: none;
     }
 
     /* ── Rejection items ── */
     .reject-item {
-      border: 1px solid #fca5a5; border-left: 3px solid #ef4444;
-      border-radius: 10px; padding: 10px 12px; background: #fff;
-      cursor: pointer; transition: background .12s;
+      border: 1px solid rgba(239,68,68,0.18);
+      border-left: 3px solid rgba(239,68,68,0.55);
+      border-radius: 10px; padding: 10px 14px;
+      background: rgba(239,68,68,0.04); cursor: pointer;
+      transition: background .12s;
+      box-shadow: -2px 0 10px -5px rgba(239,68,68,0.35);
     }
-    .reject-item:hover { background: #fff5f5; }
+    .reject-item:hover { background: rgba(239,68,68,0.07); }
     .reject-item.expanded .reject-detail { display: block; }
     .reject-detail {
       display: none; margin-top: 8px;
-      background: #fef2f2; border: 1px solid #fecaca;
-      border-radius: 8px; padding: 8px; font-size: 11px;
+      background: rgba(0,0,0,0.3); border: 1px solid rgba(239,68,68,0.14);
+      border-radius: 8px; padding: 8px 10px; font-size: 11px;
       white-space: pre-wrap; max-height: 140px; overflow-y: auto;
+      font-family: 'JetBrains Mono', monospace; color: #fca5a5;
     }
     .reject-reason {
-      display: inline-block; font-size: 11px; font-weight: 700;
+      display: inline-block; font-size: 10px; font-weight: 700;
       padding: 2px 8px; border-radius: 999px;
-      background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5;
+      background: rgba(239,68,68,0.14); color: #fca5a5;
+      border: 1px solid rgba(239,68,68,0.38); letter-spacing: 0.04em;
     }
     .tab-badge {
-      display: inline-block; font-size: 10px; font-weight: 700;
+      display: inline-block; font-size: 9px; font-weight: 700;
       background: #ef4444; color: #fff; border-radius: 999px;
       padding: 1px 6px; margin-left: 5px; vertical-align: middle;
-      line-height: 1.4;
+      line-height: 1.4; box-shadow: 0 0 8px rgba(239,68,68,0.5);
     }
 
-    /* ── Replay bar (always-visible above sub-views) ── */
+    /* ── Replay bar ── */
     .replay-bar {
       display: flex; gap: 8px; align-items: center;
-      margin-bottom: 10px; flex-wrap: wrap;
-      padding: 6px 10px; background: #f7faf7;
-      border: 1px solid var(--line); border-radius: 10px;
+      margin-bottom: 12px; flex-wrap: wrap;
+      padding: 8px 12px;
+      background: rgba(0,255,200,0.03); border: 1px solid var(--line);
+      border-radius: 10px;
     }
     .replay-bar .hint { margin-left: auto; }
 
     /* ── Rejected full-width view ── */
-    #view-rejected .reject-panel {
-      max-width: 860px;
-    }
-    .reject-toolbar {
-      display: flex; gap: 8px; align-items: center; margin-bottom: 12px;
-    }
+    #view-rejected .reject-panel { max-width: 860px; }
+    .reject-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
     .reject-toolbar input { flex: 1; }
 
     /* ── Responsive ── */
     @media (max-width: 980px) {
-      .metric-grid { grid-template-columns: repeat(3, minmax(100px, 1fr)); }
+      .metric-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
       .layout { grid-template-columns: 1fr; }
       .toolbar { grid-template-columns: 1fr 1fr; }
+      .toolbar .btn { width: 100%; }
     }
   </style>
 </head>
@@ -327,11 +490,11 @@
 
   <!-- Metrics -->
   <div class="metric-grid">
-    <div class="card"><div class="k">Sessions</div><div id="m-sessions" class="v">0</div></div>
-    <div class="card"><div class="k">Events Received</div><div id="m-received" class="v">0</div></div>
-    <div class="card"><div class="k">Accepted</div><div id="m-accepted" class="v">0</div></div>
-    <div class="card"><div class="k">Rejected</div><div id="m-rejected" class="v">0</div></div>
-    <div class="card"><div class="k">Workflows</div><div id="m-workflows" class="v">0</div></div>
+    <div class="card"><div class="k">Sessions</div><div id="m-sessions" class="v" aria-live="polite" aria-atomic="true">0</div></div>
+    <div class="card"><div class="k">Events Received</div><div id="m-received" class="v" aria-live="polite" aria-atomic="true">0</div></div>
+    <div class="card"><div class="k">Accepted</div><div id="m-accepted" class="v" aria-live="polite" aria-atomic="true">0</div></div>
+    <div class="card"><div class="k">Rejected</div><div id="m-rejected" class="v" aria-live="polite" aria-atomic="true">0</div></div>
+    <div class="card"><div class="k">Workflows</div><div id="m-workflows" class="v" aria-live="polite" aria-atomic="true">0</div></div>
   </div>
 
   <!-- Main tabs -->
@@ -348,6 +511,7 @@
       <div class="panel-title">Sessions</div>
       <div class="session-search-wrap">
         <span class="session-search-icon">🔍</span>
+        <label class="sr-only" for="session-search">Filter sessions</label>
         <input id="session-search" type="text" placeholder="Filter by ID or source…" autocomplete="off" />
       </div>
       <div id="sessions-list" class="item-list">
@@ -375,7 +539,9 @@
       <!-- Timeline sub-view -->
       <div id="sv-timeline">
         <div class="toolbar">
+          <label class="sr-only" for="search-input">Search events</label>
           <input id="search-input" type="text" placeholder="Search event id, type, causation id, payload…" />
+          <label class="sr-only" for="type-filter">Filter by event type</label>
           <select id="type-filter"><option value="">All event types</option></select>
           <button class="btn secondary" onclick="doExport('json')">Export JSON</button>
           <button class="btn secondary" onclick="doExport('csv')">Export CSV</button>
@@ -470,28 +636,32 @@ function showAuthOverlay(message) {
     overlay.id = 'auth-overlay';
     overlay.style.cssText = [
       'position:fixed;inset:0;z-index:9999',
-      'background:rgba(246,248,244,.96)',
-      'display:flex;align-items:center;justify-content:center'
+      'background:rgba(11,14,12,0.96)',
+      'display:flex;align-items:center;justify-content:center',
+      'backdrop-filter:blur(8px)'
     ].join(';');
     overlay.innerHTML = `
-      <div style="background:#fff;border:1px solid #d7e1d9;border-radius:16px;
+      <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(0,255,200,0.18);border-radius:16px;
                   padding:40px 36px;max-width:360px;width:100%;
-                  box-shadow:0 4px 24px rgba(0,0,0,.08);text-align:left">
-        <h2 style="margin:0 0 8px;font-size:22px;color:#132018">AEP Dashboard</h2>
-        <p id="auth-msg" style="margin:0 0 20px;font-size:14px;color:#4c5f52">
+                  box-shadow:0 0 60px rgba(0,255,200,0.06);text-align:left;backdrop-filter:blur(20px)">
+        <h2 style="margin:0 0 8px;font-size:22px;color:#dff0e6;font-family:'Syne',sans-serif;font-weight:800;letter-spacing:-0.02em">AEP Dashboard</h2>
+        <p id="auth-msg" style="margin:0 0 20px;font-size:14px;color:#527060;font-family:'Inter',sans-serif">
           Enter your dashboard token to continue.
         </p>
         <input id="auth-input" type="password" placeholder="Dashboard token"
                autocomplete="current-password"
-               style="width:100%;box-sizing:border-box;border:1px solid #d7e1d9;
-                      border-radius:9px;padding:10px 12px;font-size:14px;color:#132018;outline:none"/>
+               style="width:100%;box-sizing:border-box;border:1px solid rgba(255,255,255,0.08);
+                      border-radius:8px;padding:10px 12px;font-size:14px;color:#dff0e6;
+                      background:rgba(255,255,255,0.05);outline:none;font-family:'Inter',sans-serif;
+                      transition:border-color .15s"/>
         <button onclick="submitAuthToken()"
                 style="margin-top:14px;width:100%;padding:11px;border:none;
-                       border-radius:9px;background:#166534;color:#fff;
-                       font-size:15px;font-weight:600;cursor:pointer">
+                       border-radius:8px;background:#00ffc8;color:#050d08;
+                       font-size:15px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;
+                       letter-spacing:0.04em;transition:box-shadow .15s">
           Sign in
         </button>
-        <div id="auth-err" style="color:#8a2d1f;font-size:13px;margin-top:10px;display:none">
+        <div id="auth-err" style="color:#ff6b6b;font-size:13px;margin-top:10px;display:none;font-family:'Inter',sans-serif">
           Invalid token — please try again.
         </div>
       </div>`;
@@ -543,23 +713,23 @@ let sseConn       = null;
 let sessionFilter = '';        // persists across tab switches — cleared only on explicit input clear
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Event-type style config
+// Event-type style config — dark-mode neon palette for DAG nodes
 // ─────────────────────────────────────────────────────────────────────────────
 const ESTYLES = {
-  'task.created':      { b:'b-task-created',    ea:'ea-task-created',    dBg:'#dbeafe', dBd:'#3b82f6', dTx:'#1e40af' },
-  'task.updated':      { b:'b-task-updated',    ea:'ea-task-updated',    dBg:'#eff6ff', dBd:'#93c5fd', dTx:'#1e40af' },
-  'task.completed':    { b:'b-task-completed',  ea:'ea-task-completed',  dBg:'#dcfce7', dBd:'#22c55e', dTx:'#166534' },
-  'task.failed':       { b:'b-task-failed',     ea:'ea-task-failed',     dBg:'#fee2e2', dBd:'#ef4444', dTx:'#991b1b' },
-  'tool.called':       { b:'b-tool-called',     ea:'ea-tool-called',     dBg:'#f3e8ff', dBd:'#a855f7', dTx:'#6b21a8' },
-  'tool.result':       { b:'b-tool-result',     ea:'ea-tool-result',     dBg:'#faf5ff', dBd:'#d8b4fe', dTx:'#6b21a8' },
-  'memory.read':       { b:'b-memory-read',     ea:'ea-memory-read',     dBg:'#fff7ed', dBd:'#fb923c', dTx:'#9a3412' },
-  'memory.write':      { b:'b-memory-write',    ea:'ea-memory-write',    dBg:'#ffedd5', dBd:'#f97316', dTx:'#9a3412' },
-  'handoff.started':   { b:'b-handoff-started', ea:'ea-handoff-started', dBg:'#ccfbf1', dBd:'#14b8a6', dTx:'#0f766e' },
-  'handoff.completed': { b:'b-handoff-completed',ea:'ea-handoff-completed',dBg:'#f0fdfa',dBd:'#5eead4',dTx:'#0f766e'},
-  'policy.blocked':    { b:'b-policy-blocked',  ea:'ea-policy-blocked',  dBg:'#fff4f2', dBd:'#dc2626', dTx:'#8a2d1f' },
-  'error.raised':      { b:'b-error-raised',    ea:'ea-error-raised',    dBg:'#fee2e2', dBd:'#ef4444', dTx:'#991b1b' },
+  'task.created':      { b:'b-task-created',      ea:'ea-task-created',      dBg:'rgba(59,130,246,0.13)',   dBd:'#60a5fa', dTx:'#93c5fd' },
+  'task.updated':      { b:'b-task-updated',      ea:'ea-task-updated',      dBg:'rgba(147,197,253,0.1)',   dBd:'#93c5fd', dTx:'#bfdbfe' },
+  'task.completed':    { b:'b-task-completed',    ea:'ea-task-completed',    dBg:'rgba(34,197,94,0.13)',    dBd:'#4ade80', dTx:'#86efac' },
+  'task.failed':       { b:'b-task-failed',       ea:'ea-task-failed',       dBg:'rgba(239,68,68,0.13)',    dBd:'#f87171', dTx:'#fca5a5' },
+  'tool.called':       { b:'b-tool-called',       ea:'ea-tool-called',       dBg:'rgba(168,85,247,0.13)',   dBd:'#c084fc', dTx:'#d8b4fe' },
+  'tool.result':       { b:'b-tool-result',       ea:'ea-tool-result',       dBg:'rgba(216,180,254,0.1)',   dBd:'#d8b4fe', dTx:'#e9d5ff' },
+  'memory.read':       { b:'b-memory-read',       ea:'ea-memory-read',       dBg:'rgba(251,146,60,0.13)',   dBd:'#fb923c', dTx:'#fdba74' },
+  'memory.write':      { b:'b-memory-write',      ea:'ea-memory-write',      dBg:'rgba(249,115,22,0.13)',   dBd:'#f97316', dTx:'#fb923c' },
+  'handoff.started':   { b:'b-handoff-started',   ea:'ea-handoff-started',   dBg:'rgba(20,184,166,0.13)',   dBd:'#2dd4bf', dTx:'#5eead4' },
+  'handoff.completed': { b:'b-handoff-completed', ea:'ea-handoff-completed', dBg:'rgba(94,234,212,0.1)',    dBd:'#5eead4', dTx:'#99f6e4' },
+  'policy.blocked':    { b:'b-policy-blocked',    ea:'ea-policy-blocked',    dBg:'rgba(220,38,38,0.13)',    dBd:'#f87171', dTx:'#fca5a5' },
+  'error.raised':      { b:'b-error-raised',      ea:'ea-error-raised',      dBg:'rgba(239,68,68,0.13)',    dBd:'#ef4444', dTx:'#fca5a5' },
 };
-const DFLT_STYLE = { b:'badge', ea:'', dBg:'#f7faf7', dBd:'#a0b8a5', dTx:'#132018' };
+const DFLT_STYLE = { b:'badge', ea:'', dBg:'rgba(0,255,200,0.08)', dBd:'#00ffc8', dTx:'#7fffd4' };
 function es(type) { return ESTYLES[type] || DFLT_STYLE; }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -593,6 +763,7 @@ function ago(iso) {
 const debounce = (fn, ms) => {
   let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 };
+const debouncedRefreshSessions = debounce(() => refreshSessions(), 600);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SSE / Real-time
@@ -616,8 +787,8 @@ function initSSE() {
       nudge('m-accepted');
       // If viewing the affected session, refresh timeline
       if (ev.session_id === selSession) loadTimeline();
-      // Refresh session list (to update event counts, timestamps)
-      refreshSessions();
+      // Refresh session list debounced — avoid 2 fetches per SSE tick at high frequency
+      debouncedRefreshSessions();
     } catch(_) {}
   });
 }
@@ -701,7 +872,9 @@ function renderSessions(sessions) {
       <div class="item-sub">Updated ${ago(s.updated_at)}</div>`;
     const activate = () => {
       selSession = s.session_id; activeIdx = -1; stopPlay();
-      renderSessions(allSessions); // use module-level allSessions, not the local snapshot
+      // Update active class in-place — avoid full DOM rebuild to preserve scroll position
+      document.querySelectorAll('#sessions-list .clickable-item')
+        .forEach(item => item.classList.toggle('active', item === el));
       document.getElementById('session-title').textContent = short(s.session_id, 30);
       loadTimeline();
     };
@@ -771,15 +944,15 @@ function treeNodeHtml(node) {
     ? `<span class="tree-toggle"
           role="button" tabindex="0"
           aria-expanded="true" aria-label="Collapse session children"
-          onclick="event.stopPropagation(); toggleTree('${esc(cid)}', this)"
-          onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();toggleTree('${esc(cid)}',this)}">▼</span>`
+          data-cid="${esc(cid)}" onclick="event.stopPropagation(); toggleTree(this.dataset.cid, this)"
+          onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();toggleTree(this.dataset.cid,this)}">▼</span>`
     : `<span class="tree-toggle-gap" aria-hidden="true"></span>`;
   const childrenHtml = ch.length
     ? `<div class="tree-children" id="${esc(cid)}">${ch.map(treeNodeHtml).join('')}</div>`
     : '';
   return `
     <div class="tree-node">
-      <div class="tree-row ${ch.length ? 'has-ch' : ''}" onclick="drillSession('${esc(s.session_id)}')">
+      <div class="tree-row ${ch.length ? 'has-ch' : ''}" data-sid="${esc(s.session_id)}" onclick="drillSession(this.dataset.sid)">
         ${toggle}
         <div class="tree-content">
           <div class="tree-sid">${roleHtml}${esc(short(s.session_id, 28))}</div>
@@ -919,7 +1092,10 @@ function doExport(fmt) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Causation DAG
 // ─────────────────────────────────────────────────────────────────────────────
-const NW = 162, NH = 48, HG = 50, VG = 14, PAD = 18;
+// NW/NH = node width/height  HG = horiz gap between siblings
+// VD = vertical gap between depth levels  VS = vertical gap between wrapped siblings
+// MAX_COLS = max siblings per row before wrapping
+const NW = 162, NH = 52, HG = 12, VD = 72, VS = 10, PAD = 20, MAX_COLS = 4;
 
 function dagLayout(events) {
   const eMap = new Map(events.map(e => [e.id, e]));
@@ -934,7 +1110,7 @@ function dagLayout(events) {
     }
   }
 
-  // Longest-path depth (Kahn's topological sort)
+  // Assign longest-path depth via BFS with max-relaxation (Kahn's-style)
   const depths = new Map(events.map(e => [e.id, 0]));
   const rem    = new Map(indeg);
   const q      = [];
@@ -959,12 +1135,24 @@ function dagLayout(events) {
   }
   for (const arr of byDepth.values()) arr.sort((a, b) => new Date(a.time) - new Date(b.time));
 
-  // Assign pixel positions
+  // VERTICAL layout: depth flows downward (Y), siblings spread horizontally (X).
+  // Siblings wrap after MAX_COLS columns so wide-but-shallow graphs don't overflow.
   const pos = new Map();
-  for (const [depth, arr] of byDepth) {
-    for (let row = 0; row < arr.length; row++) {
-      pos.set(arr[row].id, { x: PAD + depth * (NW + HG), y: PAD + row * (NH + VG) });
+  let curY = PAD;
+  const sortedDepths = [...byDepth.keys()].sort((a, b) => a - b);
+
+  for (const depth of sortedDepths) {
+    const arr  = byDepth.get(depth);
+    const rows = Math.ceil(arr.length / MAX_COLS);
+    for (let i = 0; i < arr.length; i++) {
+      const col     = i % MAX_COLS;
+      const wrapRow = Math.floor(i / MAX_COLS);
+      pos.set(arr[i].id, {
+        x: PAD + col * (NW + HG),
+        y: curY + wrapRow * (NH + VS)
+      });
     }
+    curY += rows * (NH + VS) - VS + VD;
   }
 
   let maxX = 0, maxY = 0;
@@ -972,7 +1160,7 @@ function dagLayout(events) {
     maxX = Math.max(maxX, p.x + NW + PAD);
     maxY = Math.max(maxY, p.y + NH + PAD);
   }
-  return { eMap, kids, pos, w: Math.max(maxX, 280), h: Math.max(maxY, 100) };
+  return { eMap, kids, pos, w: Math.max(maxX, NW + 2 * PAD), h: Math.max(maxY, NH + 2 * PAD) };
 }
 
 function renderDag(events, upToIdx = -1) {
@@ -995,38 +1183,38 @@ function renderDag(events, upToIdx = -1) {
   } else if (replayMode) {
     hintEl.textContent = `Replay: step ${upToIdx + 1} of ${events.length} — greyed nodes are upcoming.`;
   } else {
-    hintEl.textContent = `${events.length} event${events.length !== 1 ? 's' : ''}. Click a node for details.`;
+    const sessionLabel = selSession ? ` · ${short(selSession, 22)}` : '';
+    hintEl.textContent = `${events.length} event${events.length !== 1 ? 's' : ''}${sessionLabel}. Click a node for details.`;
   }
 
   const { eMap, kids, pos, w, h } = dagLayout(show);
 
   let edges = '', crosses = '', nodes = '';
 
-  // Standard edges
+  // Vertical bezier edges: parent bottom-centre → child top-centre
   for (const [pid, cids] of kids) {
     const p = pos.get(pid); if (!p) continue;
     for (const cid of cids) {
       const c = pos.get(cid); if (!c) continue;
-      const x1 = p.x + NW, y1 = p.y + NH / 2;
-      const x2 = c.x,      y2 = c.y + NH / 2;
-      const mx = (x1 + x2) / 2;
-      edges += `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"
-        fill="none" stroke="#a0b8a5" stroke-width="1.5" marker-end="url(#arr)"/>`;
+      const x1 = p.x + NW / 2, y1 = p.y + NH;   // bottom-centre of parent
+      const x2 = c.x + NW / 2, y2 = c.y;         // top-centre of child
+      const my = (y1 + y2) / 2;
+      edges += `<path d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}"
+        fill="none" stroke="rgba(0,255,200,0.35)" stroke-width="1.5" marker-end="url(#arr)"/>`;
     }
   }
 
-  // Cross-session stubs (causation_id points outside this session's events)
+  // Cross-session stubs: short dashed line dropping in from above
   for (const e of show) {
     if (!e.causation_id || eMap.has(e.causation_id)) continue;
     const p = pos.get(e.id); if (!p) continue;
-    const x2 = p.x, y2 = p.y + NH / 2;
-    const x1 = Math.max(4, x2 - 36);
-    crosses += `<line x1="${x1}" y1="${y2}" x2="${x2}" y2="${y2}"
-      stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr-x)"/>`;
-    if (x1 > 30) {
-      crosses += `<text x="${x1 - 3}" y="${y2 + 4}" text-anchor="end"
-        font-size="9" fill="#94a3b8">↗ cross-session</text>`;
-    }
+    const cx = p.x + NW / 2;
+    const y2 = p.y;
+    const y1 = Math.max(PAD / 2, y2 - 30);
+    crosses += `<line x1="${cx}" y1="${y1}" x2="${cx}" y2="${y2}"
+      stroke="rgba(192,98,255,0.45)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr-x)"/>`;
+    crosses += `<text x="${cx}" y="${y1 - 4}" text-anchor="middle"
+      font-size="9" fill="rgba(192,98,255,0.65)">↓ cross-session</text>`;
   }
 
   // Build an O(1) index lookup so the node loop is O(n) not O(n²)
@@ -1042,32 +1230,39 @@ function renderDag(events, upToIdx = -1) {
     const isFuture  = replayMode && eIdx > upToIdx;
     const isCurrent = replayMode && eIdx === upToIdx;
     const isActive  = !replayMode && curEvents[activeIdx]?.id === id;
-    const opacity   = isFuture ? '0.2' : '1';
-    const sw = (isCurrent || isActive) ? '2.5' : '1.5';
-    const sc = isCurrent ? '#0f766e' : (isActive ? '#0f766e' : (isFuture ? '#d1d5db' : st.dBd));
-    const bg = isFuture ? '#f3f4f6' : st.dBg;
-    const tx = isFuture ? '#9ca3af' : st.dTx;
-    const glow = isCurrent ? ` filter="url(#glow)"` : '';
-    nodes += `<g style="cursor:pointer" opacity="${opacity}" onclick="dagClick('${esc(id)}')">
+    const opacity   = isFuture ? '0.18' : '1';
+    const sw = (isCurrent || isActive) ? '2' : '1.5';
+    const sc = isCurrent ? '#00ffc8' : (isActive ? '#00ffc8' : (isFuture ? 'rgba(255,255,255,0.1)' : st.dBd));
+    const bg = isFuture ? 'rgba(255,255,255,0.03)' : st.dBg;
+    const tx = isFuture ? 'rgba(255,255,255,0.18)' : st.dTx;
+    const idTx = isFuture ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.35)';
+    const glow = (isCurrent || isActive) ? ` filter="url(#glow)"` : '';
+    nodes += `<g role="button" tabindex="0" aria-label="${esc(lbl)}" data-eid="${esc(id)}" style="cursor:pointer;outline:none" opacity="${opacity}">
       <rect x="${p.x}" y="${p.y}" width="${NW}" height="${NH}" rx="8"
         fill="${bg}" stroke="${sc}" stroke-width="${sw}"${glow}/>
-      <text x="${p.x + 8}" y="${p.y + 18}" font-size="11" font-weight="700" fill="${tx}">${esc(lbl)}</text>
-      <text x="${p.x + 8}" y="${p.y + 34}" font-size="10" fill="${isFuture ? '#d1d5db' : '#6b7280'}">${esc(idl)}</text>
+      <text x="${p.x + 8}" y="${p.y + 19}" font-size="11" font-weight="700" fill="${tx}" font-family="Inter,sans-serif">${esc(lbl)}</text>
+      <text x="${p.x + 8}" y="${p.y + 36}" font-size="10" fill="${idTx}" font-family="JetBrains Mono,monospace">${esc(idl)}</text>
     </g>`;
   }
 
-  /* FIX 3: display:block removes the inline bottom gap that can cause spurious scrollbars
-             and ensures the SVG width drives horizontal overflow correctly */
-  wrap.innerHTML = `<svg width="${w}" height="${h}" style="display:block" xmlns="http://www.w3.org/2000/svg">
+  // Auto-fit: if SVG is narrower than the container render at native size;
+  // if wider, scale to fit container width (preserving aspect ratio → vertical scroll for height).
+  const containerW = (wrap.clientWidth || 800) - 4;
+  const scale  = w > containerW ? containerW / w : 1;
+  const dispW  = Math.round(w * scale);
+  const dispH  = Math.round(h * scale);
+  const vbAttr = `viewBox="0 0 ${w} ${h}"`;
+
+  wrap.innerHTML = `<svg width="${dispW}" height="${dispH}" ${vbAttr} style="display:block" xmlns="http://www.w3.org/2000/svg">
     <defs>
-      <marker id="arr"   markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-        <polygon points="0 0, 8 3, 0 6" fill="#a0b8a5"/>
+      <marker id="arr"   markerWidth="8" markerHeight="6" refX="4" refY="3" orient="auto">
+        <polygon points="0 0, 8 3, 0 6" fill="rgba(0,255,200,0.55)"/>
       </marker>
-      <marker id="arr-x" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-        <polygon points="0 0, 8 3, 0 6" fill="#94a3b8"/>
+      <marker id="arr-x" markerWidth="8" markerHeight="6" refX="4" refY="3" orient="auto">
+        <polygon points="0 0, 8 3, 0 6" fill="rgba(192,98,255,0.65)"/>
       </marker>
-      <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-        <feGaussianBlur stdDeviation="3" result="blur"/>
+      <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+        <feGaussianBlur stdDeviation="4" result="blur"/>
         <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
       </filter>
     </defs>
@@ -1192,12 +1387,14 @@ function renderRejections() {
 // Full load
 // ─────────────────────────────────────────────────────────────────────────────
 async function loadAll() {
+  // Show loading state while fetching
+  document.querySelectorAll('.metric-grid .v').forEach(el => { el.style.opacity = '0.35'; el.style.transition = 'opacity .3s'; });
   try {
     const [metrics, sd] = await Promise.all([fetchJson('/metrics'), fetchJson('/sessions')]);
     setMetric('m-sessions',  metrics.session_count || 0);
     setMetric('m-received',  metrics.received      || 0);
-    setMetric('m-accepted',  metrics.accepted      || 0);
-    setMetric('m-rejected',  metrics.rejected      || 0);
+    setMetric('m-accepted',  metrics.accepted       || 0);
+    setMetric('m-rejected',  metrics.rejected       || 0);
     setMetric('m-workflows', metrics.workflow_count || 0);
 
     const sessions = sd.sessions || [];
@@ -1212,6 +1409,13 @@ async function loadAll() {
       await loadTimeline();
     }
   } catch(e) { console.error('loadAll:', e); }
+  finally {
+    document.querySelectorAll('.metric-grid .v').forEach(el => {
+      el.style.opacity = '';
+      // Clear the transition after it completes so it doesn't linger on the element
+      setTimeout(() => { el.style.transition = ''; }, 350);
+    });
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1235,6 +1439,18 @@ document.getElementById('session-search').addEventListener('input',
 // Rejection log filter
 rejectSearchEl.addEventListener('input', debounce(() => renderRejections(), 200));
 rejectReasonEl.addEventListener('change', () => renderRejections());
+
+// Delegate DAG node interaction — set once; works across all SVG rebuilds
+document.getElementById('dag-wrap').addEventListener('click', e => {
+  const g = e.target.closest('g[data-eid]');
+  if (g) dagClick(g.dataset.eid);
+});
+document.getElementById('dag-wrap').addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    const g = e.target.closest('g[data-eid]');
+    if (g) { e.preventDefault(); dagClick(g.dataset.eid); }
+  }
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Boot
