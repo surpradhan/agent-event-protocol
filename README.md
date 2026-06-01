@@ -1,13 +1,13 @@
 # 🤖 Agent Event Protocol (AEP)
 
-> Structured observability for AI agent systems — capture, trace, and debug agent workflows in real time.
+> Structured observability for AI agent systems: capture, trace, and debug agent workflows in real time.
 
 [![GitHub](https://img.shields.io/badge/GitHub-surpradhan/agent--event--protocol-blue?logo=github)](https://github.com/surpradhan/agent-event-protocol)
 [![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Tests: 92/92](https://img.shields.io/badge/tests-92%2F92-brightgreen)](#testing)
 
-**Stop flying blind with AI agents.** AEP is a lightweight, structured observability framework for multi-agent systems. Capture causation chains, debug orchestration logic, visualize agent workflows — all in real time.
+**Stop flying blind with AI agents.** AEP is a lightweight, structured observability framework for multi-agent systems. Capture causation chains, debug orchestration logic, visualize agent workflows: all in real time.
 
 Perfect for:
 - 🎯 **Orchestrators** managing multiple agents and sub-agents
@@ -133,8 +133,8 @@ Copy `.env.example` to `.env`. Key variables:
 |---|---|---|---|
 | `PORT` | `8787` | Same port | Same port (behind reverse proxy with TLS) |
 | `DATABASE_PATH` | `./data/aep.db` | Local SQLite | Should use durable storage + backups |
-| `DASHBOARD_TOKEN` | *(unset)* | Dashboard open (no auth) | **REQUIRED** — 503 if unset |
-| `ADMIN_TOKEN` | *(unset)* | `/admin/*` disabled | **REQUIRED** — 503 if unset |
+| `DASHBOARD_TOKEN` | *(unset)* | Dashboard open (no auth) | **REQUIRED**: 503 if unset |
+| `ADMIN_TOKEN` | *(unset)* | `/admin/*` disabled | **REQUIRED**: 503 if unset |
 | `NODE_ENV` | *(unset)* | Optional | Set to `production` for structured logging |
 
 **Development mode** (all tokens unset):
@@ -204,11 +204,11 @@ docker compose up -d
 ```
 
 **Key Guarantees:**
-- ✅ **Causation chains** — trace_id + parent_session_id preserve call hierarchy
-- ✅ **Deduplication** — event UUID + timestamp prevent double-processing
-- ✅ **Authenticity** — HMAC signatures verify event origin
-- ✅ **Tenant isolation** — API keys scoped to tenants; cross-tenant access rejected
-- ✅ **Real-time visibility** — SSE updates push to dashboard instantly
+- ✅ **Causation chains**: trace_id + parent_session_id preserve call hierarchy
+- ✅ **Deduplication**: event UUID + timestamp prevent double-processing
+- ✅ **Authenticity**: HMAC signatures verify event origin
+- ✅ **Tenant isolation**: API keys scoped to tenants; cross-tenant access rejected
+- ✅ **Real-time visibility**: SSE updates push to dashboard instantly
 
 ---
 
@@ -266,7 +266,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed guidelines.
 
 ## 📄 License
 
-MIT License — see [LICENSE](./LICENSE) for details.
+MIT License: see [LICENSE](./LICENSE) for details.
 
 ---
 
