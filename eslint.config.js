@@ -1,13 +1,13 @@
-import js from "@eslint/js";
+const js = require("@eslint/js");
 
-export default [
+module.exports = [
   {
     ignores: ["node_modules/", "data/", "dist/", ".claude/"]
   },
   {
     files: ["src/**/*.js", "tests/**/*.js"],
     languageOptions: {
-      ecmaVersion: 2020,
+      ecmaVersion: 2021,
       sourceType: "commonjs",
       globals: {
         // Node.js globals
@@ -43,14 +43,15 @@ export default [
         "warn",
         {
           argsIgnorePattern: "^_",
-          caughtErrorsIgnorePattern: "^_"
+          caughtErrorsIgnorePattern: "^_",
+          varsIgnorePattern: "^_"
         }
       ],
       "no-trailing-spaces": "warn",
       "eqeqeq": ["warn", "always"],
       "no-var": "warn",
       "prefer-const": "warn",
-      "no-empty": "warn"
+      "no-empty": ["warn", { allowEmptyCatch: true }]
     }
   },
   {

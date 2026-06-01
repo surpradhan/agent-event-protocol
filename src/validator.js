@@ -124,12 +124,6 @@ function validateEvent(event) {
     }
   }
 
-  // A warning-only payload.$schema miss should not mark the event invalid
-  const payloadWarnOnly =
-    payloadSchemaRef &&
-    !resolvePayloadSchema(payloadSchemaRef) &&
-    errors.some((e) => e.startsWith("[warn]"));
-
   const valid =
     schemaOk &&
     typeOk &&

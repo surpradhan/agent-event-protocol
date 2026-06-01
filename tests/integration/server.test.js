@@ -9,7 +9,7 @@
  * then shut down in the after() hook.
  */
 
-const { test, describe, before, after, beforeEach } = require("node:test");
+const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("crypto");
 const os = require("os");

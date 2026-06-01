@@ -14,8 +14,6 @@
  * - session_id and trace_id in path: must be UUID v4 format
  */
 
-const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 /**
  * Validate that a string is a valid base64url cursor.
  * Base64url uses A-Z, a-z, 0-9, -, and _
@@ -53,13 +51,6 @@ function isSafePathParam(str) {
 
   // Allow UUIDs, test IDs (with underscores/hyphens), and alphanumeric strings
   return /^[a-zA-Z0-9_-]+$/.test(str);
-}
-
-/**
- * Validate that a string matches UUID v4 format (strict check).
- */
-function isValidUuid(str) {
-  return UUID_V4_REGEX.test(str);
 }
 
 /**

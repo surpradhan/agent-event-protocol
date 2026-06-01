@@ -849,7 +849,7 @@ function getPaginatedEvents(sessionId, { type = "", q = "", tenantId = null, lim
     pageSize + 1                        // fetch one extra to detect the next page
   ];
 
-  let rows = db.prepare(sql).all(...params);
+  const rows = db.prepare(sql).all(...params);
 
   let next_cursor = null;
   if (rows.length > pageSize) {

@@ -23,7 +23,8 @@ const { validateEvent } = require("../../src/validator");
  */
 function readJson(filePath) {
   const raw = fs.readFileSync(filePath, "utf8");
-  const sanitized = raw.replace(/^﻿/, "");
+  // Remove UTF-8 BOM if present
+  const sanitized = raw.replace(/^\uFEFF/, "");
   return JSON.parse(sanitized);
 }
 
