@@ -40,7 +40,7 @@ This Code of Conduct applies to:
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported by:
 - Opening an issue with the label `code-of-conduct`
-- Emailing conduct@surpradhan.dev
+- Emailing surabhi7pradhan@gmail.com (please include "[CONDUCT]" in subject)
 - Contacting a maintainer directly
 
 All complaints will be reviewed and investigated. We guarantee confidentiality of the reporter.

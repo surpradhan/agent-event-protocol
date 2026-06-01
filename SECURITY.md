@@ -4,7 +4,7 @@
 
 **Please do not open public issues for security vulnerabilities.** Instead, please report them responsibly to:
 
-📧 **Email:** security@surpradhan.dev
+📧 **Email:** surabhi7pradhan@gmail.com (please include "[SECURITY]" in subject)
 
 Include:
 - Description of the vulnerability
@@ -14,6 +14,12 @@ Include:
 - Suggested fix (if you have one)
 
 We will acknowledge receipt within 48 hours and provide an initial assessment within 7 days.
+
+**💡 Tip:** If using Gmail, create labels `security-reports` and `conduct-reports` with filters:
+- Filter: `subject:[SECURITY]` → Apply label `security-reports`
+- Filter: `subject:[CONDUCT]` → Apply label `conduct-reports`
+
+This automatically organizes reports for quick triage.
 
 ---
 
@@ -203,8 +209,8 @@ Our coordinated disclosure timeline:
 
 | Role | Contact |
 |------|---------|
-| Security Lead | Surabhi Pradhan (security@surpradhan.dev) |
-| Maintainer | Surabhi Pradhan (surabhi@surpradhan.dev) |
+| Security Lead | Surabhi Pradhan (surabhi7pradhan@gmail.com) |
+| Maintainer | Surabhi Pradhan (surabhi7pradhan@gmail.com) |
 
 ---
 
