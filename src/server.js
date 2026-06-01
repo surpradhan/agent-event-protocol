@@ -263,6 +263,12 @@ app.use(express.static(path.join(__dirname, "public")));
 app.get("/sessions", requireReadAccess, validateQueryParams, (req, res) => {
   const { limit, cursor } = req.query;
   const result = db.getPaginatedSessions(req.tenant_id, { limit, cursor });
+
+  // Validate tenant ownership of returned sessions (defense-in-depth)
+  if (!validateTenantOwnership(result.sessions, req.tenant_id, "sessions_list")) {
+    return res.status(403).json({ error: "Forbidden", message: "You do not have access to these sessions" });
+  }
+
   res.json({ sessions: result.sessions, next_cursor: result.next_cursor });
 });
 
@@ -286,6 +292,12 @@ app.get("/sessions/:sessionId/events", requireReadAccess, validatePathParams, va
   const result = db.getPaginatedEvents(req.params.sessionId, {
     type, q, tenantId: req.tenant_id, limit, cursor
   });
+
+  // Validate tenant ownership of returned events (defense-in-depth against SQL injection)
+  if (!validateTenantOwnership(result.events, req.tenant_id, "session_events")) {
+    return res.status(403).json({ error: "Forbidden", message: "You do not have access to this session" });
+  }
+
   res.json({
     session_id:  req.params.sessionId,
     events:      result.events,
@@ -394,6 +406,7 @@ app.get("/stream", requireReadAccess, (req, res) => {
       { tenant_id: tenantId, global_connections: globalConnectionCount, max: MAX_SSE_CONNECTIONS },
       "SSE connection limit exceeded (global)"
     );
+    res.setHeader("Retry-After", "60");
     return res.status(429).json({
       error: "Too Many Requests",
       message: "Server has reached maximum concurrent SSE connections"
@@ -411,6 +424,7 @@ app.get("/stream", requireReadAccess, (req, res) => {
       { tenant_id: tenantId, tenant_connections: tenantConnectionCount, max: MAX_SSE_PER_TENANT },
       "SSE connection limit exceeded (per-tenant)"
     );
+    res.setHeader("Retry-After", "60");
     return res.status(429).json({
       error: "Too Many Requests",
       message: `This tenant has reached its maximum concurrent SSE connections (${MAX_SSE_PER_TENANT})`
