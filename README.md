@@ -21,6 +21,8 @@ Perfect for:
 
 **Requirements:** Node.js 20+
 
+### Local Development (No Auth)
+
 ```bash
 # 1. Clone & install
 git clone https://github.com/surpradhan/agent-event-protocol.git
@@ -33,7 +35,7 @@ npm run ingest
 # 3. In another terminal: emit a sample event
 npm run emit:example
 
-# 4. Open the live dashboard
+# 4. Open the live dashboard (no auth required in dev mode)
 open http://localhost:8787/dashboard
 ```
 
@@ -44,6 +46,26 @@ npm run demo:itops       # 🛠️ IT ops incident response
 npm run demo:research    # 🔬 Research & synthesis
 npm run demo:subagent    # 🌳 Orchestrator + 3 parallel sub-agents
 ```
+
+### Production Deployment (With Auth)
+
+```bash
+# Set required security tokens
+export DASHBOARD_TOKEN=$(openssl rand -hex 32)
+export ADMIN_TOKEN=$(openssl rand -hex 32)
+
+# Start the server
+PORT=8787 npm run ingest
+
+# Deploy behind TLS reverse proxy (nginx, ELB, CloudFront)
+# See SECURITY.md for complete production checklist
+```
+
+**Key differences from dev mode:**
+- ✅ `DASHBOARD_TOKEN` & `ADMIN_TOKEN` **required** (not set = 503 Service Unavailable)
+- ✅ **TLS/HTTPS** via reverse proxy (no direct exposure)
+- ✅ Network isolation (VPC, security groups, firewall rules)
+- 🔒 See [SECURITY.md](./SECURITY.md) for complete hardening guide
 
 ---
 
@@ -107,14 +129,26 @@ aep validate events.json
 
 Copy `.env.example` to `.env`. Key variables:
 
-| Variable | Default | Description |
-|---|---|---|
-| `PORT` | `8787` | Server port |
-| `DATABASE_PATH` | `./data/aep.db` | SQLite path |
-| `ADMIN_TOKEN` | *(unset)* | Enables `/admin/*` key management |
-| `DASHBOARD_TOKEN` | *(unset)* | Secures dashboard (dev mode if unset) |
+| Variable | Default | Dev Behavior | Prod Behavior |
+|---|---|---|---|
+| `PORT` | `8787` | Same port | Same port (behind reverse proxy with TLS) |
+| `DATABASE_PATH` | `./data/aep.db` | Local SQLite | Should use durable storage + backups |
+| `DASHBOARD_TOKEN` | *(unset)* | Dashboard open (no auth) | **REQUIRED** — 503 if unset |
+| `ADMIN_TOKEN` | *(unset)* | `/admin/*` disabled | **REQUIRED** — 503 if unset |
+| `NODE_ENV` | *(unset)* | Optional | Set to `production` for structured logging |
 
-See [AUTH.md](./AUTH.md) for auth setup and [CHANGELOG.md](./CHANGELOG.md) for version history.
+**Development mode** (all tokens unset):
+- Dashboard and read endpoints are open
+- Good for rapid iteration and demos
+- NOT suitable for shared/untrusted networks
+
+**Production mode** (all tokens set):
+- Dashboard requires authentication
+- Admin endpoints require authentication
+- Must deploy behind TLS reverse proxy
+- Must configure strong tokens (use `openssl rand -hex 32`)
+
+See [AUTH.md](./AUTH.md) for auth setup, [SECURITY.md](./SECURITY.md) for production hardening, and [CHANGELOG.md](./CHANGELOG.md) for version history.
 
 ---
 
