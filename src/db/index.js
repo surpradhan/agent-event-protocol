@@ -432,10 +432,11 @@ function getSessionCount(tenantId = null) {
  * @returns {{ received, accepted, rejected, duplicates, byType, session_count }}
  */
 function getMetrics(tenantId = null) {
-  // Server-wide request counters are not per-tenant.
-  const received   = stmts.getCounter.get("received")?.value   ?? 0;
-  const rejected   = stmts.getCounter.get("rejected")?.value   ?? 0;
-  const duplicates = stmts.getCounter.get("duplicates")?.value ?? 0;
+  // Server-wide request counters are only meaningful for admin (tenantId=null).
+  // For tenant-scoped requests, set to 0 to prevent data leakage about other tenants.
+  const received   = !tenantId ? (stmts.getCounter.get("received")?.value   ?? 0) : 0;
+  const rejected   = !tenantId ? (stmts.getCounter.get("rejected")?.value   ?? 0) : 0;
+  const duplicates = !tenantId ? (stmts.getCounter.get("duplicates")?.value ?? 0) : 0;
 
   const accepted = tenantId
     ? stmts.getAcceptedCountTenant.get(tenantId).n
@@ -563,10 +564,27 @@ function computeMaxDepth(rows) {
     byParent[parent].push(row.session_id);
   }
 
-  function depthOf(id) {
+  // Use memoization and iterative approach to avoid stack overflow.
+  // Depth limit of 1000 to catch infinite loops from DB corruption.
+  const memo = {};
+  function depthOf(id, visited = new Set()) {
+    if (memo[id] !== undefined) return memo[id];
+    if (visited.has(id)) return 1; // Cycle detected
+    if (visited.size > 1000) return 1; // Depth limit exceeded
+
     const children = byParent[id] || [];
-    if (children.length === 0) return 1;
-    return 1 + Math.max(...children.map(depthOf));
+    if (children.length === 0) {
+      memo[id] = 1;
+      return 1;
+    }
+
+    visited.add(id);
+    const childDepths = children.map(child => depthOf(child, visited));
+    visited.delete(id);
+
+    const depth = 1 + Math.max(...childDepths);
+    memo[id] = depth;
+    return depth;
   }
 
   const roots = rows.filter(
@@ -739,31 +757,27 @@ function getPaginatedSessions(tenantId = null, { limit = 50, cursor = null } = {
   const pageSize = Math.min(Math.max(1, parseInt(limit, 10) || 50), 500);
   const decoded  = decodeCursor(cursor);
 
-  const conditions = [];
-  const params     = [];
-
-  if (tenantId) {
-    conditions.push("tenant_id = ?");
-    params.push(tenantId);
-  }
-
-  if (decoded && decoded.updated_at && decoded.session_id) {
-    conditions.push(
-      "(updated_at < ? OR (updated_at = ? AND session_id < ?))"
-    );
-    params.push(decoded.updated_at, decoded.updated_at, decoded.session_id);
-  }
-
-  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  // Use a fixed SQL query with parameterized WHERE conditions to ensure
+  // the statement is always the same (enabling SQLite's prepared statement cache).
   const sql = `
     SELECT session_id, trace_id, source, parent_session_id, agent_role,
            event_count, started_at, updated_at
     FROM   sessions
-    ${where}
+    WHERE  (? IS NULL OR tenant_id = ?)
+      AND  (? IS NULL OR updated_at < ? OR (updated_at = ? AND session_id < ?))
     ORDER  BY updated_at DESC, session_id DESC
     LIMIT  ?
   `;
-  params.push(pageSize + 1); // fetch one extra to detect the next page
+
+  const params = [
+    tenantId,                         // Check 1: tenant_id filter
+    tenantId,                         // Used if tenant filter is active
+    decoded?.updated_at,              // Check 2: cursor filter
+    decoded?.updated_at,              // Used if cursor filter is active
+    decoded?.updated_at,              // Used if cursor filter AND same timestamp
+    decoded?.session_id,              // Used if cursor filter AND same timestamp
+    pageSize + 1                      // fetch one extra to detect the next page
+  ];
 
   const rows = db.prepare(sql).all(...params);
 
@@ -809,32 +823,31 @@ function getPaginatedEvents(sessionId, { type = "", q = "", tenantId = null, lim
   const pageSize = Math.min(Math.max(1, parseInt(limit, 10) || 100), 1000);
   const decoded  = decodeCursor(cursor);
 
-  const conditions = ["session_id = ?"];
-  const params     = [sessionId];
-
-  if (tenantId) {
-    conditions.push("tenant_id = ?");
-    params.push(tenantId);
-  }
-
-  if (type) {
-    conditions.push("type = ?");
-    params.push(type);
-  }
-
-  if (decoded && decoded.time && decoded.id) {
-    conditions.push("(time > ? OR (time = ? AND id > ?))");
-    params.push(decoded.time, decoded.time, decoded.id);
-  }
-
+  // Use a fixed SQL query with parameterized WHERE conditions to ensure
+  // the statement is always the same (enabling SQLite's prepared statement cache).
   const sql = `
     SELECT raw_payload
     FROM   events
-    WHERE  ${conditions.join(" AND ")}
+    WHERE  session_id = ?
+      AND  (? IS NULL OR tenant_id = ?)
+      AND  (? = '' OR type = ?)
+      AND  (? IS NULL OR time > ? OR (time = ? AND id > ?))
     ORDER  BY time ASC, id ASC
     LIMIT  ?
   `;
-  params.push(pageSize + 1);
+
+  const params = [
+    sessionId,                          // session_id = ?
+    tenantId,                           // tenant check: filter or NULL
+    tenantId,                           // used if tenant filter is active
+    type || "",                         // type check: value or empty string
+    type,                               // used if type filter is active
+    decoded?.time,                      // cursor check: filter or NULL
+    decoded?.time,                      // used if cursor filter is active (time >)
+    decoded?.time,                      // used if cursor filter AND same time (time =)
+    decoded?.id,                        // used if cursor filter AND same time (id >)
+    pageSize + 1                        // fetch one extra to detect the next page
+  ];
 
   let rows = db.prepare(sql).all(...params);
 

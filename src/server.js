@@ -27,13 +27,14 @@ const port = process.env.PORT || 8787;
 // ---------------------------------------------------------------------------
 const recentRejections = [];
 const MAX_REJECTIONS   = 200;
-function pushRejection({ event_id, event_type, session_id, reason, detail, errors }) {
+function pushRejection({ event_id, event_type, session_id, reason, detail, errors, tenant_id }) {
   recentRejections.push({
     id:         crypto.randomUUID(),
     ts:         new Date().toISOString(),
     event_id:   event_id   || null,
     event_type: event_type || null,
     session_id: session_id || null,
+    tenant_id:  tenant_id  || "default",
     reason,
     detail:     detail || null,
     errors:     errors || null
@@ -360,7 +361,8 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, (req, res) => {
         session_id: event.session_id,
         reason:     "signature_invalid",
         detail:     error,
-        errors:     null
+        errors:     null,
+        tenant_id:  req.tenant_id
       });
       logger.warn(
         { event_id: event.id, session_id: event.session_id, reason: error },
@@ -386,7 +388,8 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, (req, res) => {
       session_id: event.session_id,
       reason:     "schema_invalid",
       detail:     null,
-      errors
+      errors,
+      tenant_id:  req.tenant_id
     });
     logger.warn(
       { event_id: event.id, errors },
@@ -441,12 +444,16 @@ function broadcastSse(eventName, data, senderTenantId) {
 // Routes — Rejection log
 // ---------------------------------------------------------------------------
 
-// GET /rejections — return recent rejected events (most-recent first)
+// GET /rejections — return recent rejected events (most-recent first, tenant-scoped)
 app.get("/rejections", requireReadAccess, (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 100, MAX_REJECTIONS);
+  // Filter to this tenant's rejections if a specific tenant, or all if admin/dashboard
+  const filtered = req.tenant_id
+    ? recentRejections.filter(r => r.tenant_id === req.tenant_id)
+    : recentRejections;
   res.json({
-    rejections: [...recentRejections].reverse().slice(0, limit),
-    total:      recentRejections.length
+    rejections: [...filtered].reverse().slice(0, limit),
+    total:      filtered.length
   });
 });
 
