@@ -122,4 +122,4 @@ function verifySignature(event, secret) {
 // Exports
 // ---------------------------------------------------------------------------
 
-module.exports = { canonicalize, verifySignature };
+module.exports = { verifySignature };

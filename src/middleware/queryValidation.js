@@ -147,8 +147,5 @@ function validatePathParams(req, res, next) {
 
 module.exports = {
   validateQueryParams,
-  validatePathParams,
-  isValidUuid,
-  isValidBase64Url,
-  isSafePathParam
+  validatePathParams
 };

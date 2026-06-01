@@ -387,7 +387,6 @@ function loginPageHtml() {
 // ---------------------------------------------------------------------------
 
 module.exports = {
-  hashKey,
   generateApiKey,
   requireApiKey,
   requireReadAccess,

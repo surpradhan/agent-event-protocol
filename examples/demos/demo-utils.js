@@ -4,9 +4,14 @@ const { validateEvent } = require("../../src/validator");
 async function postEvent(baseUrl, event) {
   let response;
   try {
+    const headers = { "content-type": "application/json" };
+    const apiKey = process.env.AEP_API_KEY;
+    if (apiKey) {
+      headers["X-API-Key"] = apiKey;
+    }
     response = await fetch(`${baseUrl}/events`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers,
       body: JSON.stringify(event)
     });
   } catch (err) {
