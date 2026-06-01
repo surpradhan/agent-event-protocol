@@ -49,8 +49,10 @@ jobs:
         run: npm install
 
       - name: Verify build
-        run: node src/server.js &
-        continue-on-error: true
+        run: |
+          node src/server.js &
+          sleep 2
+          curl -f http://localhost:8787/health || exit 1
 
   docker:
     runs-on: ubuntu-latest

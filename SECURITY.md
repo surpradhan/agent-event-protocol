@@ -4,7 +4,7 @@
 
 **Please do not open public issues for security vulnerabilities.** Instead, please report them responsibly to:
 
-📧 **Email:** [TODO: security@example.com]
+📧 **Email:** security@surpradhan.dev
 
 Include:
 - Description of the vulnerability
@@ -57,10 +57,26 @@ AEP provides the following security properties:
 ## Known Limitations
 
 ### Not In Scope
-- **TLS/Encryption in Transit** — Deploy behind TLS terminator (nginx, CloudFront, etc.)
-- **At-Rest Encryption** — SQLite data not encrypted (handle via disk encryption)
-- **Access Control Lists** — No per-resource ACLs (use API keys with different scopes)
-- **Audit Trail Immutability** — SQLite can be modified (use backups/archival)
+
+**TLS/Encryption in Transit**
+- **Limitation:** AEP does not handle TLS; connections are unencrypted by default
+- **Why it matters:** Attackers on the network path can intercept events and API keys
+- **Workaround:** Deploy behind TLS terminator (nginx with SSL, AWS ELB with HTTPS, CloudFront)
+
+**At-Rest Encryption**
+- **Limitation:** SQLite data is stored unencrypted on disk
+- **Why it matters:** If attacker gains disk access, they can read all events and agent activities
+- **Workaround:** Enable full-disk encryption (LUKS on Linux, BitLocker on Windows, FileVault2 on macOS)
+
+**Access Control Lists (ACLs)**
+- **Limitation:** No per-resource ACLs; scoping is at API key level only
+- **Why it matters:** All API key holders see all sessions/events for their tenant
+- **Workaround:** Use separate API keys for different teams; revoke key access to audit old sessions manually
+
+**Audit Trail Immutability**
+- **Limitation:** SQLite database can be modified; events are not immutable
+- **Why it matters:** Rogue admins could delete/edit events to cover tracks
+- **Workaround:** Enable database backups and WAL mode; archive to append-only storage (S3 with object lock)
 
 ### Secure Defaults
 - **Dev Mode** — Dashboard accessible without token (dev convenience only)
@@ -168,11 +184,18 @@ Our coordinated disclosure timeline:
 | Day | Action |
 |-----|--------|
 | 0 | Vulnerability reported to us |
+| **0-1** | **Critical vulnerabilities (CVSS ≥ 9.0) escalated to urgent process** |
 | 1 | We acknowledge receipt |
 | 7 | We provide initial assessment |
-| 14-21 | We develop fix and test |
-| 30 | We release patched version |
+| **7 (critical) / 14-21 (regular)** | **We develop fix and test** |
+| **14 (critical) / 30 (regular)** | **We release patched version** |
 | 35 | We publish security advisory |
+
+**Critical Vulnerability Definition:** CVSS score ≥ 9.0, or any vulnerability allowing:
+- Unauthorized data access across tenants
+- Remote code execution
+- Denial of service affecting all users
+- Credential compromise
 
 ---
 
@@ -180,8 +203,8 @@ Our coordinated disclosure timeline:
 
 | Role | Contact |
 |------|---------|
-| Security Lead | [TODO: name/email] |
-| Maintainer | [TODO: name/email] |
+| Security Lead | Surabhi Pradhan (security@surpradhan.dev) |
+| Maintainer | Surabhi Pradhan (surabhi@surpradhan.dev) |
 
 ---
 

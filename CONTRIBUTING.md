@@ -159,24 +159,26 @@ Related to #456
 
 ## 🎯 Areas We're Looking For Help
 
-### High Priority
-- **Python SDK** — Port core logic to Python (pip install aep)
-- **Go SDK** — Lightweight Go client library
-- **Kubernetes Operator** — Auto-instrumentation for K8s workloads
-- **OTEL Bridge** — OpenTelemetry integration
+### High Priority (Incremental Improvements)
+- **Advanced Analytics** — Add query builder and time-series analysis to dashboard
+- **Webhooks** — Implement alert & notification integrations for key events
+- **S3 Export** — Enable long-term storage via cloud providers (S3, GCS, Azure Blob)
+- **Mobile Dashboard** — React Native version for iOS/Android viewing
 
-### Medium Priority
-- **Mobile Dashboard** — React Native version for iOS/Android
-- **Advanced Analytics** — Query builder, time-series analysis
-- **Webhooks** — Alert & notification integrations
-- **S3 Export** — Long-term storage integration
+### Greenfield Projects (Starting from Scratch)
+These are larger initiatives requiring new repositories and core implementation work:
+- **Python SDK** — Port core logic to Python (pip install aep) — requires new repo and multiprocess architecture
+- **Go SDK** — Lightweight Go client library — requires new repo and concurrent design
+- **Kubernetes Operator** — Auto-instrumentation for K8s workloads — requires K8s API expertise
+- **OTEL Bridge** — OpenTelemetry integration — requires new package following OTEL standards
 
-### Good First Issues
-- Documentation improvements
-- Error message clarity
-- Test coverage gaps
-- Example scenarios
-- TypeScript definitions
+### Good First Issues (For New Contributors)
+Look for issues tagged with `good-first-issue` label on GitHub:
+- Documentation improvements (README, API docs, examples)
+- Error message clarity (making error messages more helpful)
+- Test coverage gaps (adding tests for uncovered code paths)
+- Example scenarios (creating new demo scripts)
+- TypeScript definitions (adding .d.ts types for public API)
 
 ---
 
