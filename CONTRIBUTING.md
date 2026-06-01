@@ -1,6 +1,6 @@
 # Contributing to Agent Event Protocol
 
-Thank you for your interest in contributing to AEP! We welcome contributions from everyone — whether it's bug fixes, features, documentation, or ideas.
+Thank you for your interest in contributing to AEP! We welcome contributions from everyone: whether it's bug fixes, features, documentation, or ideas.
 
 ## 🚀 Getting Started
 
@@ -57,11 +57,11 @@ git checkout -b fix/issue-number-brief-description
 ```
 
 **Branch naming conventions:**
-- `feature/` — new features
-- `fix/` — bug fixes
-- `docs/` — documentation
-- `refactor/` — code improvements
-- `test/` — test additions
+- `feature/`: new features
+- `fix/`: bug fixes
+- `docs/`: documentation
+- `refactor/`: code improvements
+- `test/`: test additions
 
 ### 2. Make Your Changes
 
@@ -90,14 +90,14 @@ refactor(db): simplify query builder
 ```
 
 **Types:**
-- `feat` — new feature
-- `fix` — bug fix
-- `docs` — documentation
-- `test` — tests
-- `refactor` — code refactoring
-- `perf` — performance improvement
-- `style` — code style (formatting, semicolons, etc.)
-- `chore` — dependencies, build, CI/CD
+- `feat`: new feature
+- `fix`: bug fix
+- `docs`: documentation
+- `test`: tests
+- `refactor`: code refactoring
+- `perf`: performance improvement
+- `style`: code style (formatting, semicolons, etc.)
+- `chore`: dependencies, build, CI/CD
 
 ### 4. Push & Create Pull Request
 
@@ -160,17 +160,17 @@ Related to #456
 ## 🎯 Areas We're Looking For Help
 
 ### High Priority (Incremental Improvements)
-- **Advanced Analytics** — Add query builder and time-series analysis to dashboard
-- **Webhooks** — Implement alert & notification integrations for key events
-- **S3 Export** — Enable long-term storage via cloud providers (S3, GCS, Azure Blob)
-- **Mobile Dashboard** — React Native version for iOS/Android viewing
+- **Advanced Analytics**: Add query builder and time-series analysis to dashboard
+- **Webhooks**: Implement alert & notification integrations for key events
+- **S3 Export**: Enable long-term storage via cloud providers (S3, GCS, Azure Blob)
+- **Mobile Dashboard**: React Native version for iOS/Android viewing
 
 ### Greenfield Projects (Starting from Scratch)
 These are larger initiatives requiring new repositories and core implementation work:
-- **Python SDK** — Port core logic to Python (pip install aep) — requires new repo and multiprocess architecture
-- **Go SDK** — Lightweight Go client library — requires new repo and concurrent design
-- **Kubernetes Operator** — Auto-instrumentation for K8s workloads — requires K8s API expertise
-- **OTEL Bridge** — OpenTelemetry integration — requires new package following OTEL standards
+- **Python SDK**: Port core logic to Python (pip install aep): requires new repo and multiprocess architecture
+- **Go SDK**: Lightweight Go client library: requires new repo and concurrent design
+- **Kubernetes Operator**: Auto-instrumentation for K8s workloads: requires K8s API expertise
+- **OTEL Bridge**: OpenTelemetry integration: requires new package following OTEL standards
 
 ### Good First Issues (For New Contributors)
 Look for issues tagged with `good-first-issue` label on GitHub:
@@ -229,12 +229,12 @@ agent-event-protocol/
 
 When reporting bugs, include:
 
-1. **Description** — What went wrong?
-2. **Reproduction steps** — How to reproduce?
-3. **Expected behavior** — What should happen?
-4. **Actual behavior** — What happened instead?
-5. **Environment** — Node version, OS, Docker, etc.
-6. **Logs** — Error messages, stack traces
+1. **Description**: What went wrong?
+2. **Reproduction steps**: How to reproduce?
+3. **Expected behavior**: What should happen?
+4. **Actual behavior**: What happened instead?
+5. **Environment**: Node version, OS, Docker, etc.
+6. **Logs**: Error messages, stack traces
 
 **Example:**
 ```
@@ -270,20 +270,20 @@ Have questions about the codebase?
 
 ## 📚 Useful Resources
 
-- **[README.md](./README.md)** — Project overview & quick start
-- **[AUTH.md](./AUTH.md)** — Authentication, key management, HMAC signing
-- **[CHANGELOG.md](./CHANGELOG.md)** — Version history & breaking changes
-- **[SETUP.md](./SETUP.md)** — Detailed installation & troubleshooting
-- **[OpenAPI Docs](http://localhost:8787/docs)** — Interactive API reference
+- **[README.md](./README.md)**: Project overview & quick start
+- **[AUTH.md](./AUTH.md)**: Authentication, key management, HMAC signing
+- **[CHANGELOG.md](./CHANGELOG.md)**: Version history & breaking changes
+- **[SETUP.md](./SETUP.md)**: Detailed installation & troubleshooting
+- **[OpenAPI Docs](http://localhost:8787/docs)**: Interactive API reference
 
 ---
 
 ## 🔄 Code Review Process
 
 All PRs require:
-1. **Automated checks** — Tests pass, linting passes
-2. **Code review** — At least one approval from maintainers
-3. **Feedback integration** — Address comments & re-request review
+1. **Automated checks**: Tests pass, linting passes
+2. **Code review**: At least one approval from maintainers
+3. **Feedback integration**: Address comments & re-request review
 
 Maintainers aim to review PRs within 48 hours.
 
@@ -340,20 +340,20 @@ test("validateEvent rejects null input", () => {
 - [Demo scenarios](./examples/demos/)
 
 ### Technologies Used
-- **Express.js** — Web framework
-- **SQLite** — Database (better-sqlite3)
-- **AJV** — JSON Schema validation
-- **Pino** — Structured logging
-- **node:test** — Testing framework
+- **Express.js**: Web framework
+- **SQLite**: Database (better-sqlite3)
+- **AJV**: JSON Schema validation
+- **Pino**: Structured logging
+- **node:test**: Testing framework
 
 ---
 
 ## 🤝 Community
 
-- **Discussions** — Ideas, questions, announcements
-- **Issues** — Bug reports, feature requests
-- **Pull Requests** — Code contributions
-- **Email** — [TODO: contact email for partnerships]
+- **Discussions**: Ideas, questions, announcements
+- **Issues**: Bug reports, feature requests
+- **Pull Requests**: Code contributions
+- **Email**: [TODO: contact email for partnerships]
 
 ---
 

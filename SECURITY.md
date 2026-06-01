@@ -28,35 +28,35 @@ This automatically organizes reports for quick triage.
 AEP provides the following security properties:
 
 ### ✅ Authentication
-- **API Key Authentication** — All requests require Bearer token in `Authorization` header
-- **Key Management** — Keys tied to `tenant_id` via SHA-256 hashing
-- **Key Revocation** — Revoked keys are immediately rejected
+- **API Key Authentication**: All requests require Bearer token in `Authorization` header
+- **Key Management**: Keys tied to `tenant_id` via SHA-256 hashing
+- **Key Revocation**: Revoked keys are immediately rejected
 
 ### ✅ Authorization
-- **Tenant Isolation** — Requests scoped to authenticated `tenant_id`
-- **Cross-Tenant Rejection** — Access to other tenants' data returns 403
-- **Per-Endpoint Scopes** — Different endpoints enforce `read` vs `write` permissions
+- **Tenant Isolation**: Requests scoped to authenticated `tenant_id`
+- **Cross-Tenant Rejection**: Access to other tenants' data returns 403
+- **Per-Endpoint Scopes**: Different endpoints enforce `read` vs `write` permissions
 
 ### ✅ Data Integrity
-- **HMAC-SHA256 Signing** — Optional event signature verification
-- **Timing-Safe Comparison** — Prevents timing attacks on signatures
-- **Deduplication** — Duplicate events detected by UUID + timestamp
+- **HMAC-SHA256 Signing**: Optional event signature verification
+- **Timing-Safe Comparison**: Prevents timing attacks on signatures
+- **Deduplication**: Duplicate events detected by UUID + timestamp
 
 ### ✅ Input Validation
-- **JSON Schema Validation** — All event fields validated with AJV
-- **Type Checking** — Strict type enforcement (no type coercion)
-- **Length Limits** — Query parameters bounded (max 200 chars)
-- **Path Traversal Prevention** — Session/trace IDs validated against UUID format
+- **JSON Schema Validation**: All event fields validated with AJV
+- **Type Checking**: Strict type enforcement (no type coercion)
+- **Length Limits**: Query parameters bounded (max 200 chars)
+- **Path Traversal Prevention**: Session/trace IDs validated against UUID format
 
 ### ✅ Rate Limiting
-- **Per-Tenant Rate Limiting** — Prevents abuse by single tenant
-- **Connection Limits** — Maximum 100 concurrent SSE connections
-- **Rejection Logging** — Failed events logged with reasons
+- **Per-Tenant Rate Limiting**: Prevents abuse by single tenant
+- **Connection Limits**: Maximum 100 concurrent SSE connections
+- **Rejection Logging**: Failed events logged with reasons
 
 ### ✅ Transport Security
-- **HTTPS Support** — Configured via Docker / reverse proxy
-- **CORS Protection** — Dashboard access protected by origin validation (dev mode optional)
-- **No Sensitive Data in Logs** — API keys never logged (hashed only)
+- **HTTPS Support**: Configured via Docker / reverse proxy
+- **CORS Protection**: Dashboard access protected by origin validation (dev mode optional)
+- **No Sensitive Data in Logs**: API keys never logged (hashed only)
 
 ---
 
@@ -85,9 +85,9 @@ AEP provides the following security properties:
 - **Workaround:** Enable database backups and WAL mode; archive to append-only storage (S3 with object lock)
 
 ### Secure Defaults
-- **Dev Mode** — Dashboard accessible without token (dev convenience only)
-- **Admin Token** — Admin endpoints disabled if not configured
-- **HMAC Secrets** — Optional (only required for strict event verification)
+- **Dev Mode**: Dashboard accessible without token (dev convenience only)
+- **Admin Token**: Admin endpoints disabled if not configured
+- **HMAC Secrets**: Optional (only required for strict event verification)
 
 ---
 

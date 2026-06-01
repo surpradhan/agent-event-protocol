@@ -2,7 +2,7 @@
 
 ## Our Pledge
 
-We are committed to providing a welcoming and inspiring community for all. We pledge that everyone who participates in the Agent Event Protocol community — through contributing, collaborating, or using AEP — will experience a harassment-free environment.
+We are committed to providing a welcoming and inspiring community for all. We pledge that everyone who participates in the Agent Event Protocol community: through contributing, collaborating, or using AEP: will experience a harassment-free environment.
 
 ## Our Standards
 
