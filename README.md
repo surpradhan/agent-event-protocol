@@ -134,8 +134,11 @@ docker compose up -d
 | **[OpenAPI Docs](http://localhost:8787/docs)** | Interactive API reference (Swagger UI) |
 | **[openapi.json](http://localhost:8787/openapi.json)** | Machine-readable OpenAPI 3.1 spec |
 | **[AUTH.md](./AUTH.md)** | API key management, tenant scoping, HMAC signing |
+| **[CONTRIBUTING.md](./CONTRIBUTING.md)** | Development setup, code style, contribution workflow |
+| **[SECURITY.md](./SECURITY.md)** | Security guarantees, vulnerability disclosure, deployment checklist |
 | **[CHANGELOG.md](./CHANGELOG.md)** | Version history and breaking changes |
 | **[SETUP.md](./SETUP.md)** | Detailed installation, configuration, troubleshooting |
+| **[CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)** | Community standards and expectations |
 
 ---
 
@@ -213,16 +216,17 @@ We welcome contributions! Here's how:
 - 🐳 Kubernetes operator
 - 📚 Docs & tutorials
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed guidelines (coming soon).
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed guidelines.
 
 ---
 
 ## ❓ Getting Help
 
-- **Questions?** Open an [issue](https://github.com/surpradhan/agent-event-protocol/issues) with the `question` label
+- **Questions?** Open an [issue](https://github.com/surpradhan/agent-event-protocol/issues) with the `question` label or start a [discussion](https://github.com/surpradhan/agent-event-protocol/discussions)
 - **Found a bug?** Submit an [issue](https://github.com/surpradhan/agent-event-protocol/issues) with steps to reproduce
-- **Have an idea?** Start a [discussion](https://github.com/surpradhan/agent-event-protocol/discussions)
-- **Need enterprise support?** Contact us at [TODO: email]
+- **Security issue?** See [SECURITY.md](./SECURITY.md) for responsible disclosure
+- **Have an idea?** Start a [discussion](https://github.com/surpradhan/agent-event-protocol/discussions) or open a feature request
+- **Community standards?** Check out our [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
 
 ---
 
