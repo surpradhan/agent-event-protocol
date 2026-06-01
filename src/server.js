@@ -20,6 +20,28 @@ const { metricsMiddleware, getPrometheusText } = require("./metrics");
 const { ingestRateLimit }      = require("./middleware/rateLimit");
 const { validateQueryParams, validatePathParams } = require("./middleware/queryValidation");
 
+// ============================================================================
+// Security helpers
+// ============================================================================
+
+/**
+ * Sanitize user input for safe inclusion in logging and responses.
+ * Truncates to 100 chars to prevent unbounded memory use in logs.
+ *
+ * @param {any} input
+ * @returns {string}
+ */
+function sanitizeInput(input) {
+  try {
+    const str = typeof input === "string" ? input : JSON.stringify(input);
+    // Truncate to 100 characters to prevent excessively long log entries
+    return str.slice(0, 100);
+  } catch (_) {
+    // If JSON.stringify fails, just convert to string
+    return String(input || "").slice(0, 100);
+  }
+}
+
 const app  = express();
 const port = process.env.PORT || 8787;
 
@@ -33,7 +55,7 @@ const MAX_SSE_PER_TENANT = parseInt(process.env.MAX_SSE_PER_TENANT || '100', 10)
 // In-memory rejection log — last 200 rejected events (schema/signature fails)
 // ---------------------------------------------------------------------------
 const recentRejections = [];
-const MAX_REJECTIONS   = 200;
+const MAX_REJECTIONS   = 1000; // Cap in-memory rejection log to prevent unbounded memory growth
 function pushRejection({ event_id, event_type, session_id, reason, detail, errors, tenant_id }) {
   recentRejections.push({
     id:         crypto.randomUUID(),
@@ -269,7 +291,7 @@ app.get("/sessions/:sessionId/tree", requireReadAccess, validatePathParams, (req
 });
 
 // GET /sessions/:sessionId/export — download as JSON or CSV
-app.get("/sessions/:sessionId/export", requireReadAccess, (req, res) => {
+app.get("/sessions/:sessionId/export", requireReadAccess, validatePathParams, (req, res) => {
   const sessionId = req.params.sessionId;
   const format    = (req.query.format || "json").toLowerCase();
   const { type = "", q = "" } = req.query;
@@ -321,7 +343,8 @@ app.get("/metrics/prometheus", (_req, res) => {
 app.get("/stream", requireReadAccess, (req, res) => {
   const tenantId = req.tenant_id || "default";
 
-  // Check global connection limit
+  // Recheck and add connection atomically (before setup operations)
+  // This prevents TOCTOU (time-of-check, time-of-use) race conditions
   const globalConnectionCount = Array.from(sseClients.values()).reduce((sum, map) => sum + map.size, 0);
   if (globalConnectionCount >= MAX_SSE_CONNECTIONS) {
     logger.warn(
@@ -334,9 +357,14 @@ app.get("/stream", requireReadAccess, (req, res) => {
     });
   }
 
+  // Ensure tenant map exists for per-tenant limit check
+  if (!sseClients.has(tenantId)) {
+    sseClients.set(tenantId, new Map());
+  }
+  const tenantMap = sseClients.get(tenantId);
+  const tenantConnectionCount = tenantMap.size;
+
   // Check per-tenant connection limit
-  const tenantConnections = sseClients.get(tenantId);
-  const tenantConnectionCount = tenantConnections ? tenantConnections.size : 0;
   if (tenantConnectionCount >= MAX_SSE_PER_TENANT) {
     logger.warn(
       { tenant_id: tenantId, tenant_connections: tenantConnectionCount, max: MAX_SSE_PER_TENANT },
@@ -356,6 +384,11 @@ app.get("/stream", requireReadAccess, (req, res) => {
     );
   }
 
+  // ATOMIC: Create connection ID and add to map BEFORE setup
+  // This ensures we hold the slot and prevent other concurrent requests from taking it
+  const connectionId = crypto.randomUUID();
+  tenantMap.set(connectionId, res);
+
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -364,32 +397,52 @@ app.get("/stream", requireReadAccess, (req, res) => {
 
   res.write(`event: connected\ndata: ${JSON.stringify({ ok: true })}\n\n`);
 
-  const connectionId = crypto.randomUUID();
+  // Track whether cleanup has been done to prevent double-free
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    const clientMap = sseClients.get(tenantId);
+    if (clientMap) {
+      clientMap.delete(connectionId);
+      if (clientMap.size === 0) sseClients.delete(tenantId);
+    }
+  };
+
+  // Track last activity for timeout detection (90 seconds of inactivity)
+  let lastActivityAt = Date.now();
+  const IDLE_TIMEOUT_MS = 90_000;
+
   const heartbeat = setInterval(() => {
-    try { res.write(": heartbeat\n\n"); } catch (_) {
+    try {
+      res.write(": heartbeat\n\n");
+      lastActivityAt = Date.now();
+    } catch (_) {
       clearInterval(heartbeat);
-      const clientMap = sseClients.get(tenantId);
-      if (clientMap) clientMap.delete(connectionId);
-      if (!clientMap || clientMap.size === 0) sseClients.delete(tenantId);
+      clearTimeout(idleTimer);
+      cleanup();
+    }
+  }, 15000);
+
+  // Timeout to close connections with no activity for 90 seconds
+  const idleTimer = setInterval(() => {
+    const idleMs = Date.now() - lastActivityAt;
+    if (idleMs >= IDLE_TIMEOUT_MS) {
+      try { res.end(); } catch (_) {}
+      clearInterval(heartbeat);
+      clearInterval(idleTimer);
+      cleanup();
+      logger.debug({ tenant_id: tenantId, connection_id: connectionId }, "SSE connection closed due to idle timeout");
     }
   }, 15000);
 
   res.aepTenantId = tenantId;
   res.aepConnectionId = connectionId;
 
-  // Add to tenant's connection map
-  if (!sseClients.has(tenantId)) {
-    sseClients.set(tenantId, new Map());
-  }
-  sseClients.get(tenantId).set(connectionId, res);
-
   req.on("close", () => {
     clearInterval(heartbeat);
-    const clientMap = sseClients.get(tenantId);
-    if (clientMap) {
-      clientMap.delete(connectionId);
-      if (clientMap.size === 0) sseClients.delete(tenantId);
-    }
+    clearInterval(idleTimer);
+    cleanup();
     logger.debug({ tenant_id: tenantId, connection_id: connectionId }, "SSE client disconnected");
   });
 
@@ -420,15 +473,15 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, (req, res) => {
       db.incrementCounter("rejected");
       pushRejection({
         event_id:   event.id,
-        event_type: event.type,
-        session_id: event.session_id,
+        event_type: sanitizeInput(event.type),
+        session_id: sanitizeInput(event.session_id),
         reason:     "signature_invalid",
-        detail:     error,
+        detail:     sanitizeInput(error),
         errors:     null,
         tenant_id:  req.tenant_id
       });
       logger.warn(
-        { event_id: event.id, session_id: event.session_id, reason: error },
+        { event_id: event.id, session_id: event.session_id, reason: sanitizeInput(error) },
         "event rejected: signature verification failed"
       );
       return res.status(401).json({
@@ -447,11 +500,11 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, (req, res) => {
     db.incrementCounter("rejected");
     pushRejection({
       event_id:   event.id,
-      event_type: event.type,
-      session_id: event.session_id,
+      event_type: sanitizeInput(event.type),
+      session_id: sanitizeInput(event.session_id),
       reason:     "schema_invalid",
       detail:     null,
-      errors,
+      errors:     errors.map(sanitizeInput),
       tenant_id:  req.tenant_id
     });
     logger.warn(
@@ -493,10 +546,16 @@ function broadcastSse(eventName, data, senderTenantId) {
   if (!sseClients.size) return;
   const payload = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
 
-  // Broadcast to admin clients (no tenant filter) and same-tenant clients
-  for (const [tenantId, clientMap] of sseClients) {
-    const shouldBroadcast = !tenantId || tenantId === senderTenantId || tenantId === "default";
-    if (!shouldBroadcast) continue;
+  // Determine which tenants should receive this broadcast
+  // - If senderTenantId is null: broadcast to ALL tenants (admin event)
+  // - If senderTenantId is specified: broadcast only to that tenant's clients
+  const targetTenants = senderTenantId === null || senderTenantId === undefined
+    ? Array.from(sseClients.keys())
+    : [senderTenantId];
+
+  for (const tenantId of targetTenants) {
+    const clientMap = sseClients.get(tenantId);
+    if (!clientMap) continue;
 
     for (const [connectionId, client] of clientMap) {
       try {
