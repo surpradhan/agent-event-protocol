@@ -4,6 +4,27 @@ const Ajv2020 = require("ajv/dist/2020");
 const addFormats = require("ajv-formats");
 const { CORE_EVENT_TYPES } = require("./coreEventTypes");
 
+/**
+ * Sanitize user input for safe inclusion in error messages.
+ * Truncates to 100 chars and escapes JSON-special characters to prevent injection.
+ *
+ * @param {string} input
+ * @returns {string}
+ */
+function sanitizeInput(input) {
+  if (typeof input !== "string") return String(input || "");
+  // Truncate to 100 characters
+  let sanitized = input.slice(0, 100);
+  // Escape JSON-special characters to prevent breaking out of strings
+  sanitized = sanitized
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t");
+  return sanitized;
+}
+
 function readJson(filePath) {
   const raw = fs.readFileSync(filePath, "utf8");
   const sanitized = raw.replace(/^\uFEFF/, "");
@@ -79,7 +100,7 @@ function validateEvent(event) {
   }
 
   if (!typeOk) {
-    errors.push(`type must be one of core v0.2 types; received '${event?.type}'`);
+    errors.push(`type must be one of core v0.2 types; received '${sanitizeInput(event?.type)}'`);
   }
 
   // Payload schema validation: if payload carries a $schema reference, validate against it.
@@ -91,14 +112,14 @@ function validateEvent(event) {
       if (!payloadOk) {
         errors.push(
           ...(validatePayload.errors || []).map(
-            (e) => `payload${e.instancePath || ""} ${e.message} (from $schema: ${payloadSchemaRef})`
+            (e) => `payload${e.instancePath || ""} ${e.message} (from $schema: ${sanitizeInput(payloadSchemaRef)})`
           )
         );
       }
     } else {
       // Unknown schema reference — warn but do not fail (accept-any fallback preserved)
       errors.push(
-        `[warn] payload.$schema '${payloadSchemaRef}' could not be resolved; payload accepted as-is`
+        `[warn] payload.$schema '${sanitizeInput(payloadSchemaRef)}' could not be resolved; payload accepted as-is`
       );
     }
   }

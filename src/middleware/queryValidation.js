@@ -20,11 +20,21 @@ const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[
  * Validate that a string is a valid base64url cursor.
  * Base64url uses A-Z, a-z, 0-9, -, and _
  * Length should be reasonable (typically 50-200 chars when base64url encoded)
+ *
+ * Also verifies the string can be decoded as base64url without errors.
  */
 function isValidBase64Url(str) {
   if (typeof str !== 'string' || str.length === 0) return false;
   if (str.length > 1000) return false; // Prevent excessively long cursors
-  return /^[A-Za-z0-9_-]+$/.test(str);
+  if (!/^[A-Za-z0-9_-]+$/.test(str)) return false;
+
+  // Verify it can actually be decoded
+  try {
+    Buffer.from(str, 'base64url');
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 /**
@@ -93,10 +103,10 @@ function validateQueryParams(req, res, next) {
   // Validate ?limit (pagination limit)
   if (req.query.limit !== undefined) {
     const limit = parseInt(req.query.limit, 10);
-    if (isNaN(limit) || limit < 1) {
+    if (isNaN(limit) || limit < 1 || limit > 1000) {
       return res.status(400).json({
         error: "Bad Request",
-        message: "Query parameter 'limit' must be a positive integer"
+        message: "Query parameter 'limit' must be a positive integer between 1 and 1000"
       });
     }
   }

@@ -4,9 +4,23 @@
  * Public SDK API for the Agent Event Protocol (AEP).
  * Use this module to validate events, query sessions, and manage workflow data.
  *
+ * ## validateEvent
+ *
+ * Validates an event envelope against the AEP v0.2 specification.
+ *
+ * Returns { valid: boolean, errors: string[] } where:
+ * - `valid: true` means the event is ready to ingest
+ * - `errors` is an array of validation messages
+ * - Messages starting with "[warn]" are non-blocking warnings (e.g., schema resolution failures)
+ * - Other messages are blocking errors that prevent ingestion
+ *
  * @example
  * const aep = require('agent-event-protocol');
- * const { isValid, errors } = aep.validateEvent(eventEnvelope);
+ * const { valid, errors } = aep.validateEvent(eventEnvelope);
+ * if (!valid) {
+ *   const blockingErrors = errors.filter(e => !e.startsWith("[warn]"));
+ *   console.error("Validation failed:", blockingErrors);
+ * }
  * const sessions = aep.getAllSessions();
  */
 
@@ -15,6 +29,27 @@ const { validateEvent, CORE_EVENT_TYPES } = require("./src/validator");
 
 // Database Query API
 const db = require("./src/db");
+
+// Logger for error reporting
+const logger = require("./src/logger");
+
+// ============================================================================
+// Validation Helpers
+// ============================================================================
+
+/**
+ * Validate that a session ID or string parameter is in safe format.
+ * Prevents path traversal and injection attacks.
+ *
+ * @param {string} value
+ * @returns {boolean}
+ */
+function isSafeId(value) {
+  if (typeof value !== "string" || value.length === 0) return false;
+  if (value.length > 256) return false;
+  if (value.includes("..") || value.includes("/") || value.includes("\\")) return false;
+  return /^[a-zA-Z0-9_-]+$/.test(value);
+}
 
 // ============================================================================
 // Public API - Validation
@@ -33,7 +68,15 @@ const db = require("./src/db");
  * @returns {Array<{session_id, trace_id, source, event_count, started_at, updated_at}>}
  */
 function getAllSessions(tenantId = null) {
-  return db.getAllSessions(tenantId);
+  try {
+    if (tenantId !== null && !isSafeId(tenantId)) {
+      throw new Error("Invalid tenantId format");
+    }
+    return db.getAllSessions(tenantId) || [];
+  } catch (err) {
+    logger.error({ err, tenantId }, "failed to get all sessions");
+    return [];
+  }
 }
 
 /**
@@ -44,7 +87,18 @@ function getAllSessions(tenantId = null) {
  * @returns {object|null}
  */
 function getSession(sessionId, tenantId = null) {
-  return db.getSession(sessionId, tenantId);
+  try {
+    if (!sessionId || !isSafeId(sessionId)) {
+      throw new Error("Invalid sessionId format");
+    }
+    if (tenantId !== null && !isSafeId(tenantId)) {
+      throw new Error("Invalid tenantId format");
+    }
+    return db.getSession(sessionId, tenantId);
+  } catch (err) {
+    logger.error({ err, sessionId, tenantId }, "failed to get session");
+    return null;
+  }
 }
 
 /**
@@ -54,7 +108,15 @@ function getSession(sessionId, tenantId = null) {
  * @returns {number}
  */
 function getSessionCount(tenantId = null) {
-  return db.getSessionCount(tenantId);
+  try {
+    if (tenantId !== null && !isSafeId(tenantId)) {
+      throw new Error("Invalid tenantId format");
+    }
+    return db.getSessionCount(tenantId) || 0;
+  } catch (err) {
+    logger.error({ err, tenantId }, "failed to get session count");
+    return 0;
+  }
 }
 
 /**
@@ -65,7 +127,18 @@ function getSessionCount(tenantId = null) {
  * @returns {object[]}
  */
 function getSessionEvents(sessionId, opts = {}) {
-  return db.getSessionEvents(sessionId, opts);
+  try {
+    if (!sessionId || !isSafeId(sessionId)) {
+      throw new Error("Invalid sessionId format");
+    }
+    if (opts.tenantId !== undefined && opts.tenantId !== null && !isSafeId(opts.tenantId)) {
+      throw new Error("Invalid tenantId format");
+    }
+    return db.getSessionEvents(sessionId, opts) || [];
+  } catch (err) {
+    logger.error({ err, sessionId, tenantId: opts.tenantId }, "failed to get session events");
+    return [];
+  }
 }
 
 /**
@@ -76,7 +149,18 @@ function getSessionEvents(sessionId, opts = {}) {
  * @returns {{ session: object, children: object[] } | null}
  */
 function getSessionTree(sessionId, tenantId = null) {
-  return db.getSessionTree(sessionId, tenantId);
+  try {
+    if (!sessionId || !isSafeId(sessionId)) {
+      throw new Error("Invalid sessionId format");
+    }
+    if (tenantId !== null && !isSafeId(tenantId)) {
+      throw new Error("Invalid tenantId format");
+    }
+    return db.getSessionTree(sessionId, tenantId);
+  } catch (err) {
+    logger.error({ err, sessionId, tenantId }, "failed to get session tree");
+    return null;
+  }
 }
 
 /**
@@ -87,7 +171,18 @@ function getSessionTree(sessionId, tenantId = null) {
  * @returns {{ trace_id: string, session_count: number, tree: object[] } | null}
  */
 function getWorkflow(traceId, tenantId = null) {
-  return db.getWorkflow(traceId, tenantId);
+  try {
+    if (!traceId || !isSafeId(traceId)) {
+      throw new Error("Invalid traceId format");
+    }
+    if (tenantId !== null && !isSafeId(tenantId)) {
+      throw new Error("Invalid tenantId format");
+    }
+    return db.getWorkflow(traceId, tenantId);
+  } catch (err) {
+    logger.error({ err, traceId, tenantId }, "failed to get workflow");
+    return null;
+  }
 }
 
 /**
@@ -98,7 +193,15 @@ function getWorkflow(traceId, tenantId = null) {
  * @returns {{ sessions: object[], next_cursor: string|null }}
  */
 function getPaginatedSessions(tenantId = null, opts = {}) {
-  return db.getPaginatedSessions(tenantId, opts);
+  try {
+    if (tenantId !== null && !isSafeId(tenantId)) {
+      throw new Error("Invalid tenantId format");
+    }
+    return db.getPaginatedSessions(tenantId, opts) || { sessions: [], next_cursor: null };
+  } catch (err) {
+    logger.error({ err, tenantId }, "failed to get paginated sessions");
+    return { sessions: [], next_cursor: null };
+  }
 }
 
 /**
@@ -109,7 +212,18 @@ function getPaginatedSessions(tenantId = null, opts = {}) {
  * @returns {{ events: object[], next_cursor: string|null }}
  */
 function getPaginatedEvents(sessionId, opts = {}) {
-  return db.getPaginatedEvents(sessionId, opts);
+  try {
+    if (!sessionId || !isSafeId(sessionId)) {
+      throw new Error("Invalid sessionId format");
+    }
+    if (opts.tenantId !== undefined && opts.tenantId !== null && !isSafeId(opts.tenantId)) {
+      throw new Error("Invalid tenantId format");
+    }
+    return db.getPaginatedEvents(sessionId, opts) || { events: [], next_cursor: null };
+  } catch (err) {
+    logger.error({ err, sessionId, tenantId: opts.tenantId }, "failed to get paginated events");
+    return { events: [], next_cursor: null };
+  }
 }
 
 // ============================================================================
@@ -123,7 +237,15 @@ function getPaginatedEvents(sessionId, opts = {}) {
  * @returns {{ received, accepted, rejected, duplicates, byType, session_count, workflow_count, subagent_session_count, max_tree_depth }}
  */
 function getMetrics(tenantId = null) {
-  return db.getMetrics(tenantId);
+  try {
+    if (tenantId !== null && !isSafeId(tenantId)) {
+      throw new Error("Invalid tenantId format");
+    }
+    return db.getMetrics(tenantId) || {};
+  } catch (err) {
+    logger.error({ err, tenantId }, "failed to get metrics");
+    return {};
+  }
 }
 
 // ============================================================================
@@ -137,7 +259,15 @@ function getMetrics(tenantId = null) {
  * @returns {object|null}
  */
 function getApiKeyByHash(keyHash) {
-  return db.getApiKeyByHash(keyHash);
+  try {
+    if (!keyHash || typeof keyHash !== "string") {
+      throw new Error("Invalid keyHash");
+    }
+    return db.getApiKeyByHash(keyHash);
+  } catch (err) {
+    logger.error({ err }, "failed to get API key by hash");
+    return null;
+  }
 }
 
 /**
@@ -146,12 +276,26 @@ function getApiKeyByHash(keyHash) {
  * @returns {object[]}
  */
 function listApiKeys() {
-  return db.listApiKeys();
+  try {
+    return db.listApiKeys() || [];
+  } catch (err) {
+    logger.error({ err }, "failed to list API keys");
+    return [];
+  }
 }
 
 // ============================================================================
 // Exports
 // ============================================================================
+
+// Version (with fallback)
+let version = "1.0.0";
+try {
+  version = require("./package.json").version;
+} catch (_) {
+  // Fallback if package.json cannot be read
+  logger.warn("Unable to read version from package.json, using fallback");
+}
 
 module.exports = {
   // Validation
@@ -175,9 +319,6 @@ module.exports = {
   getApiKeyByHash,
   listApiKeys,
 
-  // Advanced: direct db access for power users
-  db,
-
-  // Version (from package.json)
-  version: require("./package.json").version
+  // Version (from package.json with fallback)
+  version
 };
