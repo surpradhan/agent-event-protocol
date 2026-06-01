@@ -1,3 +1,11 @@
+/**
+ * Logging Demo: Log Spike Investigation
+ *
+ * Demonstrates how to emit structured events for a real-world scenario:
+ * A checkout service experiencing an error spike after deployment.
+ * Shows the event flow from alert → investigation → resolution,
+ * including tool calls and error handling.
+ */
 const { createEvent, emitScenario, scenarioEnvelope, wait } = require("./demo-utils");
 
 async function main() {
