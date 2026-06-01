@@ -18,9 +18,16 @@ const {
 const logger                   = require("./logger");
 const { metricsMiddleware, getPrometheusText } = require("./metrics");
 const { ingestRateLimit }      = require("./middleware/rateLimit");
+const { validateQueryParams, validatePathParams } = require("./middleware/queryValidation");
 
 const app  = express();
 const port = process.env.PORT || 8787;
+
+// ---------------------------------------------------------------------------
+// SSE connection limits
+// ---------------------------------------------------------------------------
+const MAX_SSE_CONNECTIONS = parseInt(process.env.MAX_SSE_CONNECTIONS || '1000', 10);
+const MAX_SSE_PER_TENANT = parseInt(process.env.MAX_SSE_PER_TENANT || '100', 10);
 
 // ---------------------------------------------------------------------------
 // In-memory rejection log — last 200 rejected events (schema/signature fails)
@@ -69,9 +76,11 @@ app.use((req, res, next) => {
 
 // ---------------------------------------------------------------------------
 // Server-Sent Events — real-time push to dashboard clients
+// Tracks: Map<tenantId, Map<connectionId, response>>
+// Enforces per-tenant and global connection limits
 // ---------------------------------------------------------------------------
 
-const sseClients = new Set();
+const sseClients = new Map(); // Map<tenantId, Map<connectionId, response>>
 
 // ---------------------------------------------------------------------------
 // Helpers (pure, no I/O)
@@ -217,7 +226,7 @@ app.use(express.static(path.join(__dirname, "public")));
  *
  * Response: { sessions: [...], next_cursor: string|null }
  */
-app.get("/sessions", requireReadAccess, (req, res) => {
+app.get("/sessions", requireReadAccess, validateQueryParams, (req, res) => {
   const { limit, cursor } = req.query;
   const result = db.getPaginatedSessions(req.tenant_id, { limit, cursor });
   res.json({ sessions: result.sessions, next_cursor: result.next_cursor });
@@ -238,7 +247,7 @@ app.get("/sessions", requireReadAccess, (req, res) => {
  * applied after the cursor window, so a page may contain fewer than `limit`
  * items; iterate until next_cursor is null.
  */
-app.get("/sessions/:sessionId/events", requireReadAccess, (req, res) => {
+app.get("/sessions/:sessionId/events", requireReadAccess, validatePathParams, validateQueryParams, (req, res) => {
   const { type = "", q = "", limit, cursor } = req.query;
   const result = db.getPaginatedEvents(req.params.sessionId, {
     type, q, tenantId: req.tenant_id, limit, cursor
@@ -251,7 +260,7 @@ app.get("/sessions/:sessionId/events", requireReadAccess, (req, res) => {
 });
 
 // GET /sessions/:sessionId/tree — session and all descendants as a recursive tree
-app.get("/sessions/:sessionId/tree", requireReadAccess, (req, res) => {
+app.get("/sessions/:sessionId/tree", requireReadAccess, validatePathParams, (req, res) => {
   const tree = db.getSessionTree(req.params.sessionId, req.tenant_id);
   if (!tree) {
     return res.status(404).json({ error: "Session not found", session_id: req.params.sessionId });
@@ -277,7 +286,7 @@ app.get("/sessions/:sessionId/export", requireReadAccess, (req, res) => {
 });
 
 // GET /workflows/:traceId — all sessions sharing a trace_id assembled into a tree
-app.get("/workflows/:traceId", requireReadAccess, (req, res) => {
+app.get("/workflows/:traceId", requireReadAccess, validatePathParams, (req, res) => {
   const workflow = db.getWorkflow(req.params.traceId, req.tenant_id);
   if (!workflow) {
     return res.status(404).json({ error: "Workflow not found", trace_id: req.params.traceId });
@@ -308,7 +317,45 @@ app.get("/metrics/prometheus", (_req, res) => {
 });
 
 // GET /stream — Server-Sent Events endpoint for real-time dashboard updates
+// Enforces connection limits: global and per-tenant
 app.get("/stream", requireReadAccess, (req, res) => {
+  const tenantId = req.tenant_id || "default";
+
+  // Check global connection limit
+  const globalConnectionCount = Array.from(sseClients.values()).reduce((sum, map) => sum + map.size, 0);
+  if (globalConnectionCount >= MAX_SSE_CONNECTIONS) {
+    logger.warn(
+      { tenant_id: tenantId, global_connections: globalConnectionCount, max: MAX_SSE_CONNECTIONS },
+      "SSE connection limit exceeded (global)"
+    );
+    return res.status(429).json({
+      error: "Too Many Requests",
+      message: "Server has reached maximum concurrent SSE connections"
+    });
+  }
+
+  // Check per-tenant connection limit
+  const tenantConnections = sseClients.get(tenantId);
+  const tenantConnectionCount = tenantConnections ? tenantConnections.size : 0;
+  if (tenantConnectionCount >= MAX_SSE_PER_TENANT) {
+    logger.warn(
+      { tenant_id: tenantId, tenant_connections: tenantConnectionCount, max: MAX_SSE_PER_TENANT },
+      "SSE connection limit exceeded (per-tenant)"
+    );
+    return res.status(429).json({
+      error: "Too Many Requests",
+      message: `This tenant has reached its maximum concurrent SSE connections (${MAX_SSE_PER_TENANT})`
+    });
+  }
+
+  // Log warning if approaching capacity (at 80%)
+  if (tenantConnectionCount >= Math.floor(MAX_SSE_PER_TENANT * 0.8)) {
+    logger.warn(
+      { tenant_id: tenantId, tenant_connections: tenantConnectionCount, max: MAX_SSE_PER_TENANT },
+      "SSE tenant connection usage at 80%"
+    );
+  }
+
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -317,23 +364,39 @@ app.get("/stream", requireReadAccess, (req, res) => {
 
   res.write(`event: connected\ndata: ${JSON.stringify({ ok: true })}\n\n`);
 
+  const connectionId = crypto.randomUUID();
   const heartbeat = setInterval(() => {
     try { res.write(": heartbeat\n\n"); } catch (_) {
       clearInterval(heartbeat);
-      sseClients.delete(res);
+      const clientMap = sseClients.get(tenantId);
+      if (clientMap) clientMap.delete(connectionId);
+      if (!clientMap || clientMap.size === 0) sseClients.delete(tenantId);
     }
   }, 15000);
 
-  res.aepTenantId = req.tenant_id;
+  res.aepTenantId = tenantId;
+  res.aepConnectionId = connectionId;
 
-  sseClients.add(res);
+  // Add to tenant's connection map
+  if (!sseClients.has(tenantId)) {
+    sseClients.set(tenantId, new Map());
+  }
+  sseClients.get(tenantId).set(connectionId, res);
+
   req.on("close", () => {
     clearInterval(heartbeat);
-    sseClients.delete(res);
-    logger.debug({ tenant_id: req.tenant_id }, "SSE client disconnected");
+    const clientMap = sseClients.get(tenantId);
+    if (clientMap) {
+      clientMap.delete(connectionId);
+      if (clientMap.size === 0) sseClients.delete(tenantId);
+    }
+    logger.debug({ tenant_id: tenantId, connection_id: connectionId }, "SSE client disconnected");
   });
 
-  logger.debug({ tenant_id: req.tenant_id }, "SSE client connected");
+  logger.debug(
+    { tenant_id: tenantId, connection_id: connectionId, tenant_connections: tenantConnectionCount + 1 },
+    "SSE client connected"
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -429,13 +492,23 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, (req, res) => {
 function broadcastSse(eventName, data, senderTenantId) {
   if (!sseClients.size) return;
   const payload = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
-  for (const client of sseClients) {
-    try {
-      if (!client.aepTenantId || client.aepTenantId === senderTenantId) {
+
+  // Broadcast to admin clients (no tenant filter) and same-tenant clients
+  for (const [tenantId, clientMap] of sseClients) {
+    const shouldBroadcast = !tenantId || tenantId === senderTenantId || tenantId === "default";
+    if (!shouldBroadcast) continue;
+
+    for (const [connectionId, client] of clientMap) {
+      try {
         client.write(payload);
+      } catch (_) {
+        clientMap.delete(connectionId);
       }
-    } catch (_) {
-      sseClients.delete(client);
+    }
+
+    // Clean up empty tenant entries
+    if (clientMap.size === 0) {
+      sseClients.delete(tenantId);
     }
   }
 }

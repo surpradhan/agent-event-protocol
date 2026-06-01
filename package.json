@@ -13,6 +13,8 @@
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "node --test tests/unit/*.test.js",
     "test:integration": "node --test tests/integration/server.test.js",
+    "lint": "eslint src tests",
+    "lint:fix": "eslint src tests --fix",
     "validate": "node src/cli-validate.js",
     "ingest": "node src/server.js",
     "dev": "nodemon src/server.js",
@@ -28,6 +30,7 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "eslint": "^9.0.0",
     "nodemon": "^3.1.14"
   },
   "dependencies": {
