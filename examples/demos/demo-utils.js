@@ -7,7 +7,7 @@ async function postEvent(baseUrl, event) {
     const headers = { "content-type": "application/json" };
     const apiKey = process.env.AEP_API_KEY;
     if (apiKey) {
-      headers["X-API-Key"] = apiKey;
+      headers["Authorization"] = `Bearer ${apiKey}`;
     }
     response = await fetch(`${baseUrl}/events`, {
       method: "POST",

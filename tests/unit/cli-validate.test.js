@@ -13,6 +13,14 @@ const { validateEvent } = require("../../src/validator");
 // Helper functions from cli-validate.js (extracted for testing)
 // ---------------------------------------------------------------------------
 
+/**
+ * Read and parse a JSON file, handling BOM (Byte Order Mark) characters.
+ * BOM is automatically removed before JSON parsing.
+ *
+ * @param {string} filePath - Path to the JSON file to read
+ * @returns {object|array} - Parsed JSON content
+ * @throws {Error} - If file cannot be read or JSON is invalid
+ */
 function readJson(filePath) {
   const raw = fs.readFileSync(filePath, "utf8");
   const sanitized = raw.replace(/^﻿/, "");
