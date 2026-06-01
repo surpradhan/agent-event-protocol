@@ -43,6 +43,7 @@ npm run demo:support     # 📞 Support ticket triage agent
 npm run demo:itops       # 🛠️ IT ops incident response
 npm run demo:research    # 🔬 Research & synthesis
 npm run demo:subagent    # 🌳 Orchestrator + 3 parallel sub-agents
+npm run demo:logging     # 📋 Log spike investigation
 ```
 
 ---
