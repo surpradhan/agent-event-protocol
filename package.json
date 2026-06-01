@@ -1,7 +1,7 @@
 {
-  "name": "aep-mvp",
+  "name": "agent-event-protocol",
   "version": "1.0.0",
-  "description": "Agent Event Protocol — ingest server, CLI, and SDK",
+  "description": "Structured observability for AI agent systems. Capture, trace, and debug multi-agent workflows in real time.",
   "main": "index.js",
   "bin": {
     "aep": "./src/cli.js"
@@ -26,9 +26,30 @@
     "demo:all": "npm run demo:support && npm run demo:itops && npm run demo:research && npm run demo:subagent",
     "postinstall": "npm rebuild better-sqlite3"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "agent",
+    "agentic-ai",
+    "observability",
+    "monitoring",
+    "multi-agent",
+    "distributed-tracing",
+    "event-protocol",
+    "debugging",
+    "structured-logging",
+    "dashboard",
+    "orchestration",
+    "workflow-tracing"
+  ],
+  "author": "Surabhi Pradhan",
+  "license": "MIT",
+  "homepage": "https://github.com/surpradhan/agent-event-protocol#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/surpradhan/agent-event-protocol.git"
+  },
+  "bugs": {
+    "url": "https://github.com/surpradhan/agent-event-protocol/issues"
+  },
   "devDependencies": {
     "eslint": "^9.0.0",
     "nodemon": "^3.1.14"

@@ -1,0 +1,370 @@
+# Contributing to Agent Event Protocol
+
+Thank you for your interest in contributing to AEP! We welcome contributions from everyone — whether it's bug fixes, features, documentation, or ideas.
+
+## 🚀 Getting Started
+
+### Prerequisites
+- Node.js 20+
+- npm 10+
+- Git
+- Basic understanding of Express.js and SQLite
+
+### Development Setup
+
+```bash
+# 1. Fork the repository on GitHub
+# 2. Clone your fork
+git clone https://github.com/YOUR-USERNAME/agent-event-protocol.git
+cd agent-event-protocol
+
+# 3. Add upstream remote
+git remote add upstream https://github.com/surpradhan/agent-event-protocol.git
+
+# 4. Install dependencies
+npm install
+
+# 5. Start development server
+npm run dev
+```
+
+### Running Tests & Linting
+
+```bash
+# Run all tests
+npm test
+
+# Run tests in watch mode
+npm run test:unit -- --watch
+
+# Run linting
+npm run lint
+
+# Fix linting issues
+npm run lint:fix
+```
+
+---
+
+## 📝 Development Workflow
+
+### 1. Create a Feature Branch
+
+```bash
+git checkout -b feature/your-feature-name
+# or
+git checkout -b fix/issue-number-brief-description
+```
+
+**Branch naming conventions:**
+- `feature/` — new features
+- `fix/` — bug fixes
+- `docs/` — documentation
+- `refactor/` — code improvements
+- `test/` — test additions
+
+### 2. Make Your Changes
+
+- Keep commits atomic and focused
+- Write clear commit messages (see below)
+- Add tests for new functionality
+- Update documentation if needed
+
+### 3. Commit Message Format
+
+```
+type(scope): subject
+
+body (optional)
+
+footer (optional)
+```
+
+**Examples:**
+```
+feat(cli): add --dry-run flag to emit command
+fix(auth): prevent race condition in token validation
+docs(readme): clarify multi-tenant setup
+test(validation): add edge case tests for event schema
+refactor(db): simplify query builder
+```
+
+**Types:**
+- `feat` — new feature
+- `fix` — bug fix
+- `docs` — documentation
+- `test` — tests
+- `refactor` — code refactoring
+- `perf` — performance improvement
+- `style` — code style (formatting, semicolons, etc.)
+- `chore` — dependencies, build, CI/CD
+
+### 4. Push & Create Pull Request
+
+```bash
+git push origin feature/your-feature-name
+```
+
+Then open a PR on GitHub with a clear title and description.
+
+---
+
+## ✅ Pull Request Checklist
+
+Before submitting a PR, ensure:
+
+- [ ] Code follows project style (run `npm run lint:fix`)
+- [ ] Tests pass (`npm test`)
+- [ ] New tests added for new functionality
+- [ ] Documentation updated (README, JSDoc, etc.)
+- [ ] Commit messages follow the format above
+- [ ] Branch is up to date with `main`
+- [ ] No breaking changes (or clearly documented)
+
+**PR Title Format:**
+```
+[type] Short description
+
+Example:
+[feat] Add --format flag to export command
+[fix] Resolve race condition in SSE connection limiting
+[docs] Update contributing guidelines
+```
+
+**PR Description Template:**
+```markdown
+## What does this PR do?
+Brief description of the changes.
+
+## Why?
+Explain the motivation behind the change.
+
+## How to test?
+Step-by-step instructions or demo commands.
+
+## Screenshots / Demos (if applicable)
+Add screenshots, GIFs, or dashboards showing the change.
+
+## Related Issues
+Closes #123
+Related to #456
+
+## Checklist
+- [ ] Tests pass
+- [ ] Documentation updated
+- [ ] No breaking changes
+```
+
+---
+
+## 🎯 Areas We're Looking For Help
+
+### High Priority
+- **Python SDK** — Port core logic to Python (pip install aep)
+- **Go SDK** — Lightweight Go client library
+- **Kubernetes Operator** — Auto-instrumentation for K8s workloads
+- **OTEL Bridge** — OpenTelemetry integration
+
+### Medium Priority
+- **Mobile Dashboard** — React Native version for iOS/Android
+- **Advanced Analytics** — Query builder, time-series analysis
+- **Webhooks** — Alert & notification integrations
+- **S3 Export** — Long-term storage integration
+
+### Good First Issues
+- Documentation improvements
+- Error message clarity
+- Test coverage gaps
+- Example scenarios
+- TypeScript definitions
+
+---
+
+## 🏗️ Architecture Overview
+
+### Key Files
+```
+agent-event-protocol/
+├── src/
+│   ├── server.js           # Express app & routes
+│   ├── auth.js             # Authentication middleware
+│   ├── db.js               # SQLite wrapper
+│   ├── validator.js        # Event schema validation
+│   ├── signature.js        # HMAC signing
+│   ├── cli.js              # CLI entry point
+│   └── middleware/         # Middleware modules
+├── tests/
+│   ├── unit/               # 87 unit tests
+│   └── integration/        # 5 integration tests
+├── examples/               # Demo scenarios
+└── dashboard/              # Frontend (HTML/CSS/JS)
+```
+
+### Key Concepts
+
+**Event Flow:**
+1. Agent emits event via HTTP POST or CLI
+2. Middleware authenticates with API key
+3. Validator checks against JSON Schema
+4. Deduplicator prevents duplicates
+5. HMAC verifier checks signature (if configured)
+6. SQLite stores event
+7. SSE broadcasts to dashboard in real-time
+
+**Multi-Tenancy:**
+- Each API key bound to a `tenant_id`
+- All queries scoped to `req.tenant_id`
+- Cross-tenant access rejected at middleware
+
+**Testing Strategy:**
+- Unit tests validate individual functions
+- Integration tests verify HTTP flow
+- Fixtures provide valid/invalid event examples
+
+---
+
+## 🐛 Reporting Bugs
+
+When reporting bugs, include:
+
+1. **Description** — What went wrong?
+2. **Reproduction steps** — How to reproduce?
+3. **Expected behavior** — What should happen?
+4. **Actual behavior** — What happened instead?
+5. **Environment** — Node version, OS, Docker, etc.
+6. **Logs** — Error messages, stack traces
+
+**Example:**
+```
+Title: Dashboard shows blank events list when filtering by unknown type
+
+Description:
+When I filter events by a non-existent event type, the dashboard 
+shows an empty list instead of "no events matching filter".
+
+Steps to reproduce:
+1. Start server: npm run ingest
+2. Emit an event: npm run emit:example
+3. Open dashboard: http://localhost:8787/dashboard
+4. Filter by type: "unknown.type"
+5. See blank area instead of "no results" message
+
+Expected: Show "No events matching filter" message
+Actual: Shows blank white area
+Environment: Node 20.11, macOS 14.3
+```
+
+---
+
+## 💬 Asking Questions
+
+Have questions about the codebase?
+
+1. Check existing [discussions](https://github.com/surpradhan/agent-event-protocol/discussions)
+2. Open a [new discussion](https://github.com/surpradhan/agent-event-protocol/discussions/new) with label `question`
+3. Read [AUTH.md](./AUTH.md) and [SETUP.md](./SETUP.md) for common topics
+
+---
+
+## 📚 Useful Resources
+
+- **[README.md](./README.md)** — Project overview & quick start
+- **[AUTH.md](./AUTH.md)** — Authentication, key management, HMAC signing
+- **[CHANGELOG.md](./CHANGELOG.md)** — Version history & breaking changes
+- **[SETUP.md](./SETUP.md)** — Detailed installation & troubleshooting
+- **[OpenAPI Docs](http://localhost:8787/docs)** — Interactive API reference
+
+---
+
+## 🔄 Code Review Process
+
+All PRs require:
+1. **Automated checks** — Tests pass, linting passes
+2. **Code review** — At least one approval from maintainers
+3. **Feedback integration** — Address comments & re-request review
+
+Maintainers aim to review PRs within 48 hours.
+
+---
+
+## 📋 Code Style
+
+### JavaScript Style Guide
+- Use **strict mode** (`"use strict"`)
+- Use **const/let** (never var)
+- Use **async/await** over promises
+- Add **JSDoc comments** for public functions
+- Keep functions under 50 lines
+- No trailing whitespace
+
+**Example:**
+```javascript
+/**
+ * Validate an event against the AEP schema.
+ *
+ * @param {object} event - The event to validate
+ * @returns {{ valid: boolean, errors: string[] }}
+ */
+function validateEvent(event) {
+  if (!event || typeof event !== "object") {
+    return { valid: false, errors: ["Event must be an object"] };
+  }
+  // ... validation logic
+  return { valid: true, errors: [] };
+}
+```
+
+### Testing Style
+- Use Node.js built-in `node:test` module
+- Use `assert/strict` for assertions
+- Test both success and failure cases
+- Use descriptive test names
+
+```javascript
+test("validateEvent rejects null input", () => {
+  const result = validateEvent(null);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.length > 0);
+});
+```
+
+---
+
+## 🎓 Learning Resources
+
+### Understanding AEP
+- [Agent Event Protocol specification](./AEP_PRD.md)
+- [Setup guide with examples](./SETUP.md)
+- [Demo scenarios](./examples/demos/)
+
+### Technologies Used
+- **Express.js** — Web framework
+- **SQLite** — Database (better-sqlite3)
+- **AJV** — JSON Schema validation
+- **Pino** — Structured logging
+- **node:test** — Testing framework
+
+---
+
+## 🤝 Community
+
+- **Discussions** — Ideas, questions, announcements
+- **Issues** — Bug reports, feature requests
+- **Pull Requests** — Code contributions
+- **Email** — [TODO: contact email for partnerships]
+
+---
+
+## 📄 License
+
+By contributing, you agree that your contributions will be licensed under the [MIT License](./LICENSE).
+
+---
+
+## ❤️ Thank You!
+
+We appreciate your contributions, no matter how small. You're helping build better observability for AI agents!
+
+---
+
+**Questions?** Open an [issue](https://github.com/surpradhan/agent-event-protocol/issues) or [discussion](https://github.com/surpradhan/agent-event-protocol/discussions).
