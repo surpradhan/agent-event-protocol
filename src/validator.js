@@ -132,4 +132,4 @@ function validateEvent(event) {
   return { valid, errors };
 }
 
-module.exports = { validateEvent, CORE_EVENT_TYPES };
+module.exports = { validateEvent, CORE_EVENT_TYPES, sanitizeInput };

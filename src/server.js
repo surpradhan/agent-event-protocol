@@ -5,7 +5,7 @@ const express = require("express");
 const path    = require("path");
 const { version: SERVER_VERSION } = require("../package.json");
 
-const { validateEvent }        = require("./validator");
+const { validateEvent, sanitizeInput }        = require("./validator");
 const db                       = require("./db");
 const { verifySignature }      = require("./signature");
 const {
@@ -23,23 +23,41 @@ const { validateQueryParams, validatePathParams } = require("./middleware/queryV
 // ============================================================================
 // Security helpers
 // ============================================================================
+// sanitizeInput is imported from validator.js above
 
 /**
- * Sanitize user input for safe inclusion in logging and responses.
- * Truncates to 100 chars to prevent unbounded memory use in logs.
+ * Validate that returned data belongs to the requesting tenant.
+ * Defense-in-depth security check to prevent SQL injection or logic errors from exposing cross-tenant data.
  *
- * @param {any} input
- * @returns {string}
+ * Array items without a tenant_id field are treated as safe (unscoped/system data).
+ * Array items WITH a tenant_id field MUST match the requesting tenant.
+ * Object data with tenant_id MUST match the requesting tenant.
+ *
+ * @param {object|null} data — the returned data from a database query
+ * @param {string} requestedTenantId — the tenant making the request
+ * @param {string} dataType — the type of data (for logging/errors)
+ * @returns {boolean} true if data belongs to the tenant, false otherwise
  */
-function sanitizeInput(input) {
-  try {
-    const str = typeof input === "string" ? input : JSON.stringify(input);
-    // Truncate to 100 characters to prevent excessively long log entries
-    return str.slice(0, 100);
-  } catch (_) {
-    // If JSON.stringify fails, just convert to string
-    return String(input || "").slice(0, 100);
+function validateTenantOwnership(data, requestedTenantId, dataType = "object") {
+  if (!data) return true; // null/undefined is safe (will be 404'd by caller)
+
+  // For collections (arrays), validate each item
+  // Items without tenant_id are assumed to be system/unscoped data (safe)
+  // Items WITH tenant_id must match the requesting tenant
+  if (Array.isArray(data)) {
+    return data.every(item => !item.tenant_id || item.tenant_id === requestedTenantId);
   }
+
+  // For objects, check tenant_id field exists and matches
+  if (data.tenant_id && data.tenant_id !== requestedTenantId) {
+    logger.error(
+      { requested_tenant: requestedTenantId, data_tenant: data.tenant_id, data_type: dataType },
+      "SECURITY: Tenant isolation violation detected — returned data belongs to different tenant"
+    );
+    return false;
+  }
+
+  return true;
 }
 
 const app  = express();
@@ -251,6 +269,12 @@ app.use(express.static(path.join(__dirname, "public")));
 app.get("/sessions", requireReadAccess, validateQueryParams, (req, res) => {
   const { limit, cursor } = req.query;
   const result = db.getPaginatedSessions(req.tenant_id, { limit, cursor });
+
+  // Validate tenant ownership of returned sessions (defense-in-depth)
+  if (!validateTenantOwnership(result.sessions, req.tenant_id, "sessions_list")) {
+    return res.status(403).json({ error: "Forbidden", message: "You do not have access to these sessions" });
+  }
+
   res.json({ sessions: result.sessions, next_cursor: result.next_cursor });
 });
 
@@ -274,6 +298,12 @@ app.get("/sessions/:sessionId/events", requireReadAccess, validatePathParams, va
   const result = db.getPaginatedEvents(req.params.sessionId, {
     type, q, tenantId: req.tenant_id, limit, cursor
   });
+
+  // Validate tenant ownership of returned events (defense-in-depth against SQL injection)
+  if (!validateTenantOwnership(result.events, req.tenant_id, "session_events")) {
+    return res.status(403).json({ error: "Forbidden", message: "You do not have access to this session" });
+  }
+
   res.json({
     session_id:  req.params.sessionId,
     events:      result.events,
@@ -287,6 +317,12 @@ app.get("/sessions/:sessionId/tree", requireReadAccess, validatePathParams, (req
   if (!tree) {
     return res.status(404).json({ error: "Session not found", session_id: req.params.sessionId });
   }
+
+  // Validate tenant ownership (defense-in-depth against SQL injection or logic errors)
+  if (!validateTenantOwnership(tree, req.tenant_id, "session_tree")) {
+    return res.status(403).json({ error: "Forbidden", message: "You do not have access to this session" });
+  }
+
   res.json(tree);
 });
 
@@ -296,6 +332,11 @@ app.get("/sessions/:sessionId/export", requireReadAccess, validatePathParams, (r
   const format    = (req.query.format || "json").toLowerCase();
   const { type = "", q = "" } = req.query;
   const events = db.getSessionEvents(sessionId, { type, q, tenantId: req.tenant_id });
+
+  // Validate tenant ownership of events (defense-in-depth against SQL injection)
+  if (!validateTenantOwnership(events, req.tenant_id, "session_events")) {
+    return res.status(403).json({ error: "Forbidden", message: "You do not have access to this session" });
+  }
 
   if (format === "csv") {
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -313,6 +354,12 @@ app.get("/workflows/:traceId", requireReadAccess, validatePathParams, (req, res)
   if (!workflow) {
     return res.status(404).json({ error: "Workflow not found", trace_id: req.params.traceId });
   }
+
+  // Validate tenant ownership (defense-in-depth against SQL injection or logic errors)
+  if (!validateTenantOwnership(workflow, req.tenant_id, "workflow")) {
+    return res.status(403).json({ error: "Forbidden", message: "You do not have access to this workflow" });
+  }
+
   res.json(workflow);
 });
 
@@ -343,33 +390,47 @@ app.get("/metrics/prometheus", (_req, res) => {
 app.get("/stream", requireReadAccess, (req, res) => {
   const tenantId = req.tenant_id || "default";
 
-  // Recheck and add connection atomically (before setup operations)
-  // This prevents TOCTOU (time-of-check, time-of-use) race conditions
+  // ATOMIC: Create connection ID and reserve slot BEFORE any limit checks
+  // This prevents TOCTOU (time-of-check, time-of-use) race conditions by ensuring
+  // limit checks are performed AFTER incrementing counters, not before.
+  if (!sseClients.has(tenantId)) {
+    sseClients.set(tenantId, new Map());
+  }
+  const tenantMap = sseClients.get(tenantId);
+  const connectionId = crypto.randomUUID();
+  tenantMap.set(connectionId, res);
+
+  // NOW check limits after reserving the slot
+  // If we exceed limits, we'll rollback by deleting the connection
   const globalConnectionCount = Array.from(sseClients.values()).reduce((sum, map) => sum + map.size, 0);
-  if (globalConnectionCount >= MAX_SSE_CONNECTIONS) {
+  if (globalConnectionCount > MAX_SSE_CONNECTIONS) {
+    // Rollback: remove the connection we just added
+    tenantMap.delete(connectionId);
+    if (tenantMap.size === 0) sseClients.delete(tenantId);
+
     logger.warn(
       { tenant_id: tenantId, global_connections: globalConnectionCount, max: MAX_SSE_CONNECTIONS },
       "SSE connection limit exceeded (global)"
     );
+    res.setHeader("Retry-After", "60");
     return res.status(429).json({
       error: "Too Many Requests",
       message: "Server has reached maximum concurrent SSE connections"
     });
   }
 
-  // Ensure tenant map exists for per-tenant limit check
-  if (!sseClients.has(tenantId)) {
-    sseClients.set(tenantId, new Map());
-  }
-  const tenantMap = sseClients.get(tenantId);
+  // Check per-tenant connection limit (after increment)
   const tenantConnectionCount = tenantMap.size;
+  if (tenantConnectionCount > MAX_SSE_PER_TENANT) {
+    // Rollback: remove the connection we just added
+    tenantMap.delete(connectionId);
+    if (tenantMap.size === 0) sseClients.delete(tenantId);
 
-  // Check per-tenant connection limit
-  if (tenantConnectionCount >= MAX_SSE_PER_TENANT) {
     logger.warn(
       { tenant_id: tenantId, tenant_connections: tenantConnectionCount, max: MAX_SSE_PER_TENANT },
       "SSE connection limit exceeded (per-tenant)"
     );
+    res.setHeader("Retry-After", "60");
     return res.status(429).json({
       error: "Too Many Requests",
       message: `This tenant has reached its maximum concurrent SSE connections (${MAX_SSE_PER_TENANT})`
@@ -383,11 +444,6 @@ app.get("/stream", requireReadAccess, (req, res) => {
       "SSE tenant connection usage at 80%"
     );
   }
-
-  // ATOMIC: Create connection ID and add to map BEFORE setup
-  // This ensures we hold the slot and prevent other concurrent requests from taking it
-  const connectionId = crypto.randomUUID();
-  tenantMap.set(connectionId, res);
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -487,7 +543,7 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, (req, res) => {
       return res.status(401).json({
         accepted: false,
         error:    "Signature verification failed",
-        detail:   error
+        detail:   sanitizeInput(error)
       });
     }
   }
@@ -631,7 +687,7 @@ app.post("/admin/keys", requireAdminAuth, (req, res) => {
     });
   } catch (err) {
     logger.error({ err }, "failed to create API key");
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: sanitizeInput(err.message) });
   }
 });
 
