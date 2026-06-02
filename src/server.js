@@ -27,17 +27,23 @@ const { validateQueryParams, validatePathParams } = require("./middleware/queryV
 
 /**
  * Validate that returned data belongs to the requesting tenant.
- * Security check to prevent SQL injection or logic errors from exposing cross-tenant data.
+ * Defense-in-depth security check to prevent SQL injection or logic errors from exposing cross-tenant data.
+ *
+ * Array items without a tenant_id field are treated as safe (unscoped/system data).
+ * Array items WITH a tenant_id field MUST match the requesting tenant.
+ * Object data with tenant_id MUST match the requesting tenant.
  *
  * @param {object|null} data — the returned data from a database query
  * @param {string} requestedTenantId — the tenant making the request
- * @param {string} dataType — the type of data (for logging)
+ * @param {string} dataType — the type of data (for logging/errors)
  * @returns {boolean} true if data belongs to the tenant, false otherwise
  */
 function validateTenantOwnership(data, requestedTenantId, dataType = "object") {
   if (!data) return true; // null/undefined is safe (will be 404'd by caller)
 
   // For collections (arrays), validate each item
+  // Items without tenant_id are assumed to be system/unscoped data (safe)
+  // Items WITH tenant_id must match the requesting tenant
   if (Array.isArray(data)) {
     return data.every(item => !item.tenant_id || item.tenant_id === requestedTenantId);
   }
