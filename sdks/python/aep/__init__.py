@@ -28,6 +28,7 @@ from aep.exceptions import (
     AEPError,
     AEPNotFoundError,
     AEPRateLimitError,
+    AEPServerError,
     AEPValidationError,
 )
 
@@ -41,6 +42,7 @@ __all__ = [
     "AEPError",
     "AEPNotFoundError",
     "AEPRateLimitError",
+    "AEPServerError",
     "AEPValidationError",
     "AsyncAEPClient",
     "CORE_EVENT_TYPES",

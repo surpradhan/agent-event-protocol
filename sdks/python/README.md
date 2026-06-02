@@ -126,10 +126,10 @@ with AEPClient() as client:
 
 ### `AEPClient` (sync) / `AsyncAEPClient` (async)
 
-| Method | Description |
-|--------|-------------|
-| `emit(event)` | POST `/events` — returns response body |
-| `emit_batch(events)` | Emit multiple events sequentially |
+| Method | `AEPClient` (sync) | `AsyncAEPClient` (async) |
+|--------|--------------------|--------------------------|
+| `emit(event)` | POST `/events` — returns response body | same, `await`-able |
+| `emit_batch(events)` | Emit sequentially; raises on first error | Emit concurrently via `asyncio.gather`; all requests complete before raising |
 | `get_sessions(*, limit, cursor)` | GET `/sessions` — paginated list |
 | `get_session_events(session_id, *, type, q, limit, cursor)` | GET `/sessions/{id}/events` |
 | `get_session_tree(session_id)` | GET `/sessions/{id}/tree` |
@@ -181,6 +181,7 @@ result = validate_event(event)
 | `AEPAuthError` | HTTP 401/403 — bad API key or insufficient scope |
 | `AEPRateLimitError` | HTTP 429 — rate limit hit; has `.retry_after: int` |
 | `AEPNotFoundError` | HTTP 404 — session or workflow not found |
+| `AEPServerError` | HTTP 5xx — server-side error; has `.status_code: int` |
 | `AEPConnectionError` | Network error reaching the server |
 
 ---

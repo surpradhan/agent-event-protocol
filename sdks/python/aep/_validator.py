@@ -36,12 +36,26 @@ def _get_envelope_validator() -> Draft202012Validator:
 
 
 def _resolve_payload_validator(schema_ref: str) -> Draft202012Validator | None:
+    # Fast path: check cache without lock (GIL-safe on CPython for dict reads).
     if schema_ref in _payload_schema_cache:
         return _payload_schema_cache[schema_ref]
 
+    with _validator_lock:
+        # Double-checked locking: another thread may have populated the cache
+        # between the fast-path check above and acquiring the lock.
+        if schema_ref in _payload_schema_cache:
+            return _payload_schema_cache[schema_ref]
+
+        # Resolve and write to cache while holding the lock so concurrent
+        # callers for the same ref don't each do redundant I/O.
+        result = _load_payload_schema(schema_ref)
+        _payload_schema_cache[schema_ref] = result
+        return result
+
+
+def _load_payload_schema(schema_ref: str) -> Draft202012Validator | None:
+    """Resolve *schema_ref* to a validator. Returns ``None`` if unresolvable."""
     if not _PAYLOAD_SCHEMAS_DIR.exists():
-        with _validator_lock:
-            _payload_schema_cache[schema_ref] = None
         return None
 
     basename = schema_ref.split("/")[-1]
@@ -50,20 +64,13 @@ def _resolve_payload_validator(schema_ref: str) -> Draft202012Validator | None:
         if not basename.endswith(".schema.json"):
             candidate = _PAYLOAD_SCHEMAS_DIR / (basename + ".schema.json")
         if not candidate.exists():
-            with _validator_lock:
-                _payload_schema_cache[schema_ref] = None
             return None
 
     try:
         with open(candidate, encoding="utf-8") as fh:
             schema = json.load(fh)
-        validator = Draft202012Validator(schema)
-        with _validator_lock:
-            _payload_schema_cache[schema_ref] = validator
-        return validator
+        return Draft202012Validator(schema)
     except (OSError, SchemaError, ValueError):
-        with _validator_lock:
-            _payload_schema_cache[schema_ref] = None
         return None
 
 

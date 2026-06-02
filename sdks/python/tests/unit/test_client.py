@@ -6,7 +6,14 @@ import respx
 
 from aep import create_event
 from aep.client import AEPClient
-from aep.exceptions import AEPAuthError, AEPNotFoundError, AEPRateLimitError, AEPValidationError
+from aep.exceptions import (
+    AEPAuthError,
+    AEPConnectionError,
+    AEPNotFoundError,
+    AEPRateLimitError,
+    AEPServerError,
+    AEPValidationError,
+)
 
 _BASE = "http://test-server:8787"
 
@@ -155,6 +162,40 @@ def test_health():
     with AEPClient(server_url=_BASE) as client:
         result = client.health()
     assert result["ok"] is True
+
+
+# ── server errors & connection errors ─────────────────────────────────────────
+
+@respx.mock
+def test_emit_server_error_500():
+    respx.post(f"{_BASE}/events").mock(
+        return_value=httpx.Response(500, json={"error": "Internal server error"})
+    )
+    with AEPClient(server_url=_BASE) as client:
+        with pytest.raises(AEPServerError) as exc_info:
+            client.emit(_event())
+    assert exc_info.value.status_code == 500
+    assert "Internal server error" in str(exc_info.value)
+
+
+@respx.mock
+def test_emit_server_error_503():
+    respx.post(f"{_BASE}/events").mock(
+        return_value=httpx.Response(503, json={"error": "Service unavailable"})
+    )
+    with AEPClient(server_url=_BASE) as client:
+        with pytest.raises(AEPServerError) as exc_info:
+            client.emit(_event())
+    assert exc_info.value.status_code == 503
+
+
+@respx.mock
+def test_emit_connection_error():
+    """ConnectError → AEPConnectionError."""
+    respx.post(f"{_BASE}/events").mock(side_effect=httpx.ConnectError("Connection refused"))
+    with AEPClient(server_url=_BASE) as client:
+        with pytest.raises(AEPConnectionError, match="Cannot reach AEP server"):
+            client.emit(_event())
 
 
 # ── api key in header ──────────────────────────────────────────────────────────

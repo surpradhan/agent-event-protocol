@@ -7,11 +7,10 @@ from typing import Any
 
 import httpx
 
+from ._constants import DEFAULT_SERVER_URL
 from ._signature import sign_event
 from .client import _handle_response
 from .exceptions import AEPConnectionError
-
-_DEFAULT_SERVER_URL = "http://localhost:8787"
 
 
 class AsyncAEPClient:
@@ -31,7 +30,7 @@ class AsyncAEPClient:
         timeout: float = 10.0,
     ) -> None:
         self._server_url = (
-            server_url or os.environ.get("AEP_INGEST_URL") or _DEFAULT_SERVER_URL
+            server_url or os.environ.get("AEP_INGEST_URL") or DEFAULT_SERVER_URL
         ).rstrip("/")
         self._api_key = api_key or os.environ.get("AEP_API_KEY")
         self._hmac_secret = hmac_secret
@@ -47,6 +46,14 @@ class AsyncAEPClient:
 
     async def aclose(self) -> None:
         await self._http.aclose()
+
+    def __repr__(self) -> str:
+        key_hint = f"{self._api_key[:7]}***" if self._api_key else None
+        return (
+            f"AsyncAEPClient(server_url={self._server_url!r}, "
+            f"api_key={key_hint!r}, "
+            f"hmac_secret={'<set>' if self._hmac_secret else None})"
+        )
 
     def __del__(self) -> None:
         if not self._http.is_closed:
@@ -66,8 +73,25 @@ class AsyncAEPClient:
         return await self._post("/events", event)
 
     async def emit_batch(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Emit multiple events concurrently via asyncio.gather."""
-        return list(await asyncio.gather(*[self.emit(e) for e in events]))
+        """Emit multiple events concurrently via asyncio.gather.
+
+        All events are dispatched concurrently and all results are awaited
+        before returning. If any emit raises, the first exception is re-raised
+        after all requests have completed — no in-flight requests are silently
+        dropped. Raises the same exceptions as :meth:`emit`.
+        """
+        raw = await asyncio.gather(*[self.emit(e) for e in events], return_exceptions=True)
+        first_exc: BaseException | None = None
+        results: list[dict[str, Any]] = []
+        for r in raw:
+            if isinstance(r, BaseException):
+                if first_exc is None:
+                    first_exc = r
+            else:
+                results.append(r)
+        if first_exc is not None:
+            raise first_exc
+        return results
 
     # ── sessions ──────────────────────────────────────────────────────────────
 

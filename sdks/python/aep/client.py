@@ -6,16 +6,16 @@ from typing import Any
 
 import httpx
 
+from ._constants import DEFAULT_SERVER_URL
 from ._signature import sign_event
 from .exceptions import (
     AEPAuthError,
     AEPConnectionError,
     AEPNotFoundError,
     AEPRateLimitError,
+    AEPServerError,
     AEPValidationError,
 )
-
-_DEFAULT_SERVER_URL = "http://localhost:8787"
 
 
 class AEPClient:
@@ -35,7 +35,7 @@ class AEPClient:
         timeout: float = 10.0,
     ) -> None:
         self._server_url = (
-            server_url or os.environ.get("AEP_INGEST_URL") or _DEFAULT_SERVER_URL
+            server_url or os.environ.get("AEP_INGEST_URL") or DEFAULT_SERVER_URL
         ).rstrip("/")
         self._api_key = api_key or os.environ.get("AEP_API_KEY")
         self._hmac_secret = hmac_secret
@@ -51,6 +51,14 @@ class AEPClient:
 
     def close(self) -> None:
         self._http.close()
+
+    def __repr__(self) -> str:
+        key_hint = f"{self._api_key[:7]}***" if self._api_key else None
+        return (
+            f"AEPClient(server_url={self._server_url!r}, "
+            f"api_key={key_hint!r}, "
+            f"hmac_secret={'<set>' if self._hmac_secret else None})"
+        )
 
     def __del__(self) -> None:
         if not self._http.is_closed:
@@ -184,6 +192,12 @@ def _handle_response(resp: httpx.Response) -> dict[str, Any]:
         body = _safe_json(resp)
         retry_after = _parse_retry_after(resp.headers.get("Retry-After", "0"))
         raise AEPRateLimitError(body.get("error", "Rate limit exceeded"), retry_after=retry_after)
+    if resp.status_code >= 500:
+        body = _safe_json(resp)
+        raise AEPServerError(
+            body.get("error", f"Server error {resp.status_code}"),
+            status_code=resp.status_code,
+        )
     resp.raise_for_status()
     return resp.json()
 

@@ -31,3 +31,8 @@ aep = ["schemas/*.json", "schemas/payloads/*.json"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.ruff.lint]
+# AEP field names (type, id, format) intentionally match Python builtins to
+# mirror the JS SDK and JSON schema property names. Suppress A002 globally.
+ignore = ["A002"]

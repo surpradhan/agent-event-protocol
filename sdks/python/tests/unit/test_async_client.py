@@ -10,8 +10,10 @@ from aep import create_event
 from aep.async_client import AsyncAEPClient
 from aep.exceptions import (
     AEPAuthError,
+    AEPConnectionError,
     AEPNotFoundError,
     AEPRateLimitError,
+    AEPServerError,
     AEPValidationError,
 )
 
@@ -130,6 +132,31 @@ async def test_emit_rate_limit_negative_retry_after():
     assert exc_info.value.retry_after == 0  # clamped, not -5
 
 
+# ── server errors & connection errors ─────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_emit_server_error_500():
+    respx.post(f"{_BASE}/events").mock(
+        return_value=httpx.Response(500, json={"error": "Internal server error"})
+    )
+    async with AsyncAEPClient(server_url=_BASE) as client:
+        with pytest.raises(AEPServerError) as exc_info:
+            await client.emit(_event())
+    assert exc_info.value.status_code == 500
+    assert "Internal server error" in str(exc_info.value)
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_emit_connection_error():
+    """ConnectError → AEPConnectionError."""
+    respx.post(f"{_BASE}/events").mock(side_effect=httpx.ConnectError("Connection refused"))
+    async with AsyncAEPClient(server_url=_BASE) as client:
+        with pytest.raises(AEPConnectionError, match="Cannot reach AEP server"):
+            await client.emit(_event())
+
+
 # ── emit_batch concurrent ─────────────────────────────────────────────────────
 
 @respx.mock
@@ -156,6 +183,28 @@ async def test_emit_batch_uses_gather():
     async with AsyncAEPClient(server_url=_BASE) as client:
         await client.emit_batch(events)
     assert route.call_count == 5
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_emit_batch_raises_after_all_complete():
+    """emit_batch waits for all requests before raising the first exception."""
+    events = [_event() for _ in range(3)]
+    call_count = 0
+
+    async def side_effect(req: httpx.Request):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            return httpx.Response(401, json={"error": "Unauthorized"})
+        return httpx.Response(202, json={"accepted": True, "duplicate": False, "id": "x"})
+
+    respx.post(f"{_BASE}/events").mock(side_effect=side_effect)
+    async with AsyncAEPClient(server_url=_BASE) as client:
+        with pytest.raises(AEPAuthError):
+            await client.emit_batch(events)
+    # All 3 requests were dispatched even though one failed
+    assert call_count == 3
 
 
 # ── sessions ──────────────────────────────────────────────────────────────────

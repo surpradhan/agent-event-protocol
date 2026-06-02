@@ -28,3 +28,11 @@ class AEPNotFoundError(AEPError):
 
 class AEPConnectionError(AEPError):
     """Cannot connect to the AEP ingest server."""
+
+
+class AEPServerError(AEPError):
+    """Server-side error (HTTP 5xx) from the AEP ingest server."""
+
+    def __init__(self, message: str, status_code: int = 500) -> None:
+        super().__init__(message)
+        self.status_code = status_code
