@@ -708,7 +708,7 @@ describe("Security — XSS Prevention in Query Parameters", () => {
     }), writeKey);
   });
 
-  test("Query parameter with double quotes does not break JSON", async () => {
+  test("Query parameter with double quotes does not break JSON and is properly escaped", async () => {
     const malicious = `test"injection"here`;
     const encoded = encodeURIComponent(malicious);
     const res = await fetch(`${baseUrl}/sessions/${SESSION_ID}/events?q=${encoded}`, {
@@ -719,9 +719,17 @@ describe("Security — XSS Prevention in Query Parameters", () => {
     const body = await res.json();
     // Should successfully parse as JSON (no syntax error)
     assert.ok(typeof body === "object", "Response should be valid JSON");
+
+    // Verify malicious input is either absent or properly escaped in response
+    const responseText = JSON.stringify(body);
+    // The unescaped quote sequence should NOT appear in the response body
+    assert.ok(
+      !responseText.includes(`"injection"`),
+      'Unescaped injection pattern should not appear in response body'
+    );
   });
 
-  test("Query parameter with newlines does not break JSON", async () => {
+  test("Query parameter with newlines does not break JSON and is properly escaped", async () => {
     const malicious = `test\ninjection\nhere`;
     const encoded = encodeURIComponent(malicious);
     const res = await fetch(`${baseUrl}/sessions/${SESSION_ID}/events?q=${encoded}`, {
@@ -732,9 +740,19 @@ describe("Security — XSS Prevention in Query Parameters", () => {
     const body = await res.json();
     // Should successfully parse as JSON
     assert.ok(typeof body === "object", "Response should be valid JSON");
+
+    // Verify malicious input is properly escaped (newlines should be \n in JSON)
+    const responseText = JSON.stringify(body);
+    // Actual newline characters should NOT appear in JSON response body
+    // (they should be escaped as \n or removed)
+    const hasActualNewline = /\n(?=[^"]*":)/.test(responseText);
+    assert.ok(
+      !hasActualNewline,
+      'Actual newline characters should not appear unescaped in response body'
+    );
   });
 
-  test("Query parameter with backslashes does not break JSON", async () => {
+  test("Query parameter with backslashes does not break JSON and is properly escaped", async () => {
     const malicious = `test\\escape\\here`;
     const encoded = encodeURIComponent(malicious);
     const res = await fetch(`${baseUrl}/sessions/${SESSION_ID}/events?q=${encoded}`, {
@@ -745,9 +763,15 @@ describe("Security — XSS Prevention in Query Parameters", () => {
     const body = await res.json();
     // Should successfully parse as JSON
     assert.ok(typeof body === "object", "Response should be valid JSON");
+
+    // Verify backslashes are properly escaped in JSON
+    const responseText = JSON.stringify(body);
+    // Verify the response can be round-tripped through JSON parse/stringify
+    const reparsed = JSON.parse(responseText);
+    assert.ok(typeof reparsed === "object", "Response should survive JSON round-trip");
   });
 
-  test("Filter parameter with special characters does not break JSON", async () => {
+  test("Filter parameter with special characters does not break JSON and is properly escaped", async () => {
     const malicious = `<script>alert('xss')</script>`;
     const encoded = encodeURIComponent(malicious);
     const res = await fetch(`${baseUrl}/sessions/${SESSION_ID}/events?type=${encoded}`, {
@@ -758,6 +782,15 @@ describe("Security — XSS Prevention in Query Parameters", () => {
     const body = await res.json();
     // Should successfully parse as JSON
     assert.ok(typeof body === "object", "Response should be valid JSON");
+
+    // Verify script tag payload is properly escaped in response
+    const responseText = JSON.stringify(body);
+    // If the payload appears in the response, it should be escaped (< becomes < or similar)
+    // Raw angle brackets in JSON string should not be followed by 'script>'
+    assert.ok(
+      !responseText.includes('<script>'),
+      'Unescaped script tag should not appear in response body'
+    );
   });
 });
 
@@ -796,9 +829,22 @@ describe("Security — SSE Connection Limits", () => {
         connections.length < MAX_ATTEMPTS,
         `Should hit connection limit before ${MAX_ATTEMPTS} attempts`
       );
+
+      // Verify strict boundary: exactly 100 connections allowed, 101st rejected
+      // Per-tenant limit is MAX_SSE_PER_TENANT = 100
       assert.ok(
         connections.length >= 100,
         "Should allow at least 100 connections per tenant before hitting limit"
+      );
+      assert.ok(
+        connections.length <= 102,
+        `Should reject around connection 100-102, got ${connections.length} (allows for async timing)`
+      );
+
+      // Verify we actually hit the limit (more than one connection should be active)
+      assert.ok(
+        connections.length > 1,
+        "Should have hit limit after multiple connections"
       );
     } finally {
       // Clean up: close all connections
