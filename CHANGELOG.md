@@ -4,6 +4,40 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Phase 8 — Python SDK (2026-06-02)
+
+No breaking changes to the event envelope schema or existing API contracts.
+
+**New: `aep` Python package** (`sdks/python/`)
+
+A production-ready Python SDK with full parity to the JavaScript implementation:
+
+- `create_event()` — mirrors `createEvent.js`; auto-generates `id`/`time`, validates type + agent role, omits `None` optional fields
+- `validate_event()` — Draft 2020-12 JSON Schema validation via `jsonschema`; payload `$schema` resolution; `[warn]`-prefixed non-blocking warnings
+- `sign_event()` / `verify_signature()` — HMAC-SHA256 signing with exact JS canonical form (`JSON.stringify(copy, sortedKeys)` semantics); `hmac.compare_digest` for timing safety
+- `AEPClient` — synchronous HTTP client backed by `httpx`; full endpoint coverage; context manager; `ResourceWarning` on unclosed clients
+- `AsyncAEPClient` — async HTTP client; `emit_batch` uses `asyncio.gather` (concurrent, not sequential); all requests complete before raising on partial failure
+- `AEPServerError` — new exception class for HTTP 5xx with `.status_code` attribute (completes the full `AEPError` hierarchy: `AEPValidationError`, `AEPAuthError`, `AEPRateLimitError`, `AEPNotFoundError`, `AEPConnectionError`, `AEPServerError`)
+- Schemas bundled in `aep/schemas/` with `package-data` so the package works after standalone `pip install`
+- `py.typed` marker (PEP 561) for mypy/pyright annotation support
+- `demos/subagent_research.py` — Python port of the multi-agent research demo (orchestrator + 3 parallel sub-agents)
+
+**Test suite** (`tests/unit/`, `tests/integration/`)
+
+107 unit tests (no server required) using `respx` mocks + `pytest-asyncio`, covering:
+- Event creation, validation, HMAC signing/verification, sync and async client behaviour
+- All error paths: 400/401/403/404/429/5xx and `ConnectError`
+- `emit_batch` partial-failure contract (all requests complete before raise)
+- `__repr__` key masking safety for short keys
+
+11 integration tests auto-skip when `AEP_INGEST_URL` is unreachable (moved to `conftest.py` — no import-time HTTP probe on unit-only runs).
+
+**New internal module** (`aep/_http.py`)
+
+`handle_response`, `parse_retry_after`, `_safe_json` extracted from `client.py` so both sync and async clients share the helpers without cross-module private imports.
+
+---
+
 ## Phase 7 — Production Hardening (2026-03-24)
 
 No breaking changes to the event envelope schema or existing API contracts.

@@ -48,6 +48,33 @@ npm run demo:subagent    # 🌳 Orchestrator + 3 parallel sub-agents
 npm run demo:logging     # 📋 Log spike investigation
 ```
 
+### Python SDK
+
+```bash
+# Install (requires Python ≥ 3.10)
+pip install -e "sdks/python[dev]"
+
+# Emit an event
+python - <<'EOF'
+from aep import create_event, AEPClient
+
+event = create_event(
+    source="agent://my-agent",
+    type="task.created",
+    session_id="ses_001",
+    trace_id="trc_001",
+    payload={"task": "summarise document"},
+)
+with AEPClient() as client:
+    print(client.emit(event))
+EOF
+
+# Run the multi-agent research demo
+python sdks/python/demos/subagent_research.py
+```
+
+See [`sdks/python/README.md`](sdks/python/README.md) for the full Python SDK reference.
+
 ### Production Deployment (With Auth)
 
 ```bash
@@ -206,6 +233,7 @@ Typically indicates cross-tenant access attempt or insufficient scopes for the r
 |----------|---------|
 | **[OpenAPI Docs](http://localhost:8787/docs)** | Interactive API reference (Swagger UI) |
 | **[openapi.json](http://localhost:8787/openapi.json)** | Machine-readable OpenAPI 3.1 spec |
+| **[sdks/python/README.md](./sdks/python/README.md)** | Python SDK reference — install, quick start, API, exceptions |
 | **[AUTH.md](./AUTH.md)** | API key management, tenant scoping, HMAC signing |
 | **[CONTRIBUTING.md](./CONTRIBUTING.md)** | Development setup, code style, contribution workflow |
 | **[SECURITY.md](./SECURITY.md)** | Security guarantees, vulnerability disclosure, deployment checklist |
@@ -218,11 +246,12 @@ Typically indicates cross-tenant access attempt or insufficient scopes for the r
 ## 🏗️ Architecture
 
 ```
-┌─────────────────┐
-│  Your Agents    │ emit events via HTTP/CLI
-└────────┬────────┘
-         │ POST /events { type, source, session_id, trace_id, … }
-         ↓
+┌──────────────────────────────────────────┐
+│           Your Agents                    │
+│  JS · Python SDK · CLI · raw HTTP        │
+└────────────────┬─────────────────────────┘
+                 │ POST /events { type, source, session_id, trace_id, … }
+                 ↓
 ┌─────────────────────────────────┐
 │     AEP Ingest Server           │
 │  - Validate (JSON Schema)       │
@@ -253,6 +282,7 @@ Typically indicates cross-tenant access attempt or insufficient scopes for the r
 
 ## 🧪 Testing
 
+**JavaScript server (Node.js):**
 ```bash
 npm test                  # full suite (92 tests)
 npm run test:unit         # 87 unit tests (event protocol, validation, CLI)
@@ -260,13 +290,28 @@ npm run test:integration  # 5 integration tests (HTTP server flow)
 npm run lint              # ESLint checks
 ```
 
-**Test Coverage:**
+**Python SDK:**
+```bash
+cd sdks/python
+pip install -e ".[dev]"
+pytest tests/unit/        # 107 unit tests (no server needed)
+pytest tests/integration/ # 11 integration tests (auto-skip if server is down)
+```
+
+**JS Test Coverage:**
 - ✅ Event protocol validation (14 types × 3 scenarios)
 - ✅ CLI argument parsing (parseArgs with flags, positionals, combinations)
 - ✅ API endpoint behavior (auth, rate limiting, validation)
 - ✅ Dashboard functionality (SSE, filters, exports)
 - ✅ Multi-tenant isolation (tenant_id enforcement)
 - ✅ Error handling (graceful degradation)
+
+**Python SDK Test Coverage:**
+- ✅ Event creation, validation, HMAC sign/verify
+- ✅ Sync + async client: all endpoints, all error codes (400/401/403/404/429/5xx)
+- ✅ `emit_batch` partial-failure contract and concurrent execution
+- ✅ `__repr__` key masking, `ResourceWarning` on unclosed clients
+- ✅ Thread-safe schema caching, RFC 7231 `Retry-After` parsing
 
 ---
 
@@ -283,10 +328,11 @@ We welcome contributions! Here's how:
 
 **Areas we're looking for help:**
 - 📱 Mobile dashboard (React Native)
-- 🔗 Agent SDK integrations (Python, Go, etc.)
+- 🔗 Go SDK (`go get github.com/surpradhan/aep-go`)
 - 📈 Advanced metrics & analytics
 - 🌍 Internationalization
-- 🐳 Kubernetes operator
+- 🐳 Kubernetes operator for automatic instrumentation
+- 🔌 OpenTelemetry (OTEL) bridge
 - 📚 Docs & tutorials
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed guidelines.
