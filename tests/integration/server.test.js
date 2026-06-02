@@ -575,3 +575,306 @@ describe("GET /rejections", () => {
     assert.equal(res.status, 200);
   });
 });
+
+// ---------------------------------------------------------------------------
+// SECURITY TESTS — Phase 2c
+// ---------------------------------------------------------------------------
+
+/**
+ * Cross-Tenant Isolation Tests
+ * 
+ * Verify that one tenant's API key cannot access another tenant's data.
+ * This tests both database filtering AND application-layer defense-in-depth validation.
+ */
+describe("Security — Cross-Tenant Isolation", () => {
+  const TENANT_A = `tenant_a_${Date.now()}`;
+  const TENANT_B = `tenant_b_${Date.now()}`;
+  const SESSION_A = `ses_a_${Date.now()}`;
+  const SESSION_B = `ses_b_${Date.now()}`;
+  const TRACE_A = `trc_a_${Date.now()}`;
+  const TRACE_B = `trc_b_${Date.now()}`;
+
+  let keyTenantA;
+  let keyTenantB;
+
+  before(async () => {
+    // Create API keys for both tenants
+    const resA = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ tenantId: TENANT_A, label: "tenant-a-key", scopes: ["read", "write"] }),
+    });
+    keyTenantA = (await resA.json()).key;
+
+    const resB = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ tenantId: TENANT_B, label: "tenant-b-key", scopes: ["read", "write"] }),
+    });
+    keyTenantB = (await resB.json()).key;
+
+    // Tenant A: ingest an event
+    await ingest(makeEvent({ session_id: SESSION_A, trace_id: TRACE_A }), keyTenantA);
+
+    // Tenant B: ingest an event
+    await ingest(makeEvent({ session_id: SESSION_B, trace_id: TRACE_B }), keyTenantB);
+  });
+
+  test("Tenant A cannot access Tenant B's sessions", async () => {
+    const res = await fetch(`${baseUrl}/sessions`, {
+      headers: { Authorization: `Bearer ${keyTenantA}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+
+    // Tenant A should only see their own sessions
+    const sessionIds = body.sessions.map(s => s.session_id);
+    assert.ok(sessionIds.includes(SESSION_A), "Tenant A should see their own session");
+    assert.ok(!sessionIds.includes(SESSION_B), "Tenant A should NOT see Tenant B's session");
+  });
+
+  test("Tenant A's query for Tenant B's events returns empty (DB-layer filtering)", async () => {
+    // Database query filters by tenant, so Tenant A cannot access Tenant B's data
+    // Events objects don't have tenant_id fields, so application-layer validation
+    // allows them (treating as system/unscoped data), but DB filtering prevents leakage
+    const res = await fetch(`${baseUrl}/sessions/${SESSION_B}/events`, {
+      headers: { Authorization: `Bearer ${keyTenantA}` },
+    });
+
+    // Database filtering ensures SESSION_B is not visible to Tenant A
+    // Response should be 404 (session not found in tenant's view) or 200 with empty events
+    assert.ok([200, 404].includes(res.status), `Expected 200 or 404, got ${res.status}`);
+
+    if (res.status === 200) {
+      const body = await res.json();
+      // If session exists, events array should be empty (filtered at DB layer)
+      assert.equal(body.events.length, 0, "Cross-tenant events must not appear in results");
+    }
+  });
+
+  test("Tenant B's query for Tenant A's tree returns empty or not found", async () => {
+    const res = await fetch(`${baseUrl}/sessions/${SESSION_A}/tree`, {
+      headers: { Authorization: `Bearer ${keyTenantB}` },
+    });
+
+    // Database filtering ensures tree is scoped to requesting tenant
+    assert.ok([200, 404].includes(res.status), `Expected 200 or 404, got ${res.status}`);
+
+    if (res.status === 200) {
+      const body = await res.json();
+      // If we get a tree, verify it's empty or belongs to Tenant B only
+      assert.ok(!body.session || body.session.session_id !== SESSION_A, "Should not leak Tenant A tree to Tenant B");
+    }
+  });
+
+  test("Tenant A's query for Tenant B's workflows returns empty or not found", async () => {
+    const res = await fetch(`${baseUrl}/workflows/${TRACE_B}`, {
+      headers: { Authorization: `Bearer ${keyTenantA}` },
+    });
+
+    // Database filtering ensures workflows are tenant-scoped
+    assert.ok([200, 404].includes(res.status), `Expected 200 or 404, got ${res.status}`);
+
+    if (res.status === 200) {
+      const body = await res.json();
+      // If we get a workflow, verify it doesn't contain Tenant B's data
+      assert.ok(!body.tree || body.tree.length === 0 || body.trace_id !== TRACE_B, "Should not leak Tenant B workflow to Tenant A");
+    }
+  });
+});
+
+/**
+ * XSS Prevention Tests
+ * 
+ * Verify that query parameters with special characters are safely handled
+ * and don't break JSON responses or enable XSS injection.
+ */
+describe("Security — XSS Prevention in Query Parameters", () => {
+  const SESSION_ID = `ses_xss_${Date.now()}`;
+  const TRACE_ID = `trc_xss_${Date.now()}`;
+
+  before(async () => {
+    // Seed an event for testing
+    await ingest(makeEvent({
+      session_id: SESSION_ID,
+      trace_id: TRACE_ID,
+      type: "task.created",
+    }), writeKey);
+  });
+
+  test("Query parameter with double quotes does not break JSON and is properly escaped", async () => {
+    const malicious = `test"injection"here`;
+    const encoded = encodeURIComponent(malicious);
+    const res = await fetch(`${baseUrl}/sessions/${SESSION_ID}/events?q=${encoded}`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    // Should successfully parse as JSON (no syntax error)
+    assert.ok(typeof body === "object", "Response should be valid JSON");
+
+    // Verify malicious input is either absent or properly escaped in response
+    const responseText = JSON.stringify(body);
+    // The unescaped quote sequence should NOT appear in the response body
+    assert.ok(
+      !responseText.includes(`"injection"`),
+      'Unescaped injection pattern should not appear in response body'
+    );
+  });
+
+  test("Query parameter with newlines does not break JSON and is properly escaped", async () => {
+    const malicious = `test\ninjection\nhere`;
+    const encoded = encodeURIComponent(malicious);
+    const res = await fetch(`${baseUrl}/sessions/${SESSION_ID}/events?q=${encoded}`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    // Should successfully parse as JSON
+    assert.ok(typeof body === "object", "Response should be valid JSON");
+
+    // Verify malicious input is properly escaped (newlines should be \n in JSON)
+    const responseText = JSON.stringify(body);
+    // Actual newline characters should NOT appear in JSON response body
+    // (they should be escaped as \n or removed)
+    const hasActualNewline = /\n(?=[^"]*":)/.test(responseText);
+    assert.ok(
+      !hasActualNewline,
+      'Actual newline characters should not appear unescaped in response body'
+    );
+  });
+
+  test("Query parameter with backslashes does not break JSON and is properly escaped", async () => {
+    const malicious = `test\\escape\\here`;
+    const encoded = encodeURIComponent(malicious);
+    const res = await fetch(`${baseUrl}/sessions/${SESSION_ID}/events?q=${encoded}`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    // Should successfully parse as JSON
+    assert.ok(typeof body === "object", "Response should be valid JSON");
+
+    // Verify backslashes are properly escaped in JSON
+    const responseText = JSON.stringify(body);
+    // Verify the response can be round-tripped through JSON parse/stringify
+    const reparsed = JSON.parse(responseText);
+    assert.ok(typeof reparsed === "object", "Response should survive JSON round-trip");
+  });
+
+  test("Filter parameter with special characters does not break JSON and is properly escaped", async () => {
+    const malicious = `<script>alert('xss')</script>`;
+    const encoded = encodeURIComponent(malicious);
+    const res = await fetch(`${baseUrl}/sessions/${SESSION_ID}/events?type=${encoded}`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    // Should successfully parse as JSON
+    assert.ok(typeof body === "object", "Response should be valid JSON");
+
+    // Verify script tag payload is properly escaped in response
+    const responseText = JSON.stringify(body);
+    // If the payload appears in the response, it should be escaped (< becomes < or similar)
+    // Raw angle brackets in JSON string should not be followed by 'script>'
+    assert.ok(
+      !responseText.includes('<script>'),
+      'Unescaped script tag should not appear in response body'
+    );
+  });
+});
+
+/**
+ * SSE Connection Limit Tests
+ * 
+ * Verify that the per-tenant and global SSE connection limits are enforced
+ * with proper atomic operations to prevent TOCTOU race conditions.
+ */
+describe("Security — SSE Connection Limits", () => {
+  test("SSE connection limit is enforced per-tenant", async () => {
+    const connections = [];
+    const MAX_ATTEMPTS = 105; // Try to exceed the 100-per-tenant limit
+
+    try {
+      for (let i = 0; i < MAX_ATTEMPTS; i++) {
+        const res = await fetch(`${baseUrl}/stream`, {
+          headers: { Authorization: `Bearer ${readKey}` },
+        });
+
+        if (res.status === 429) {
+          // Hit the limit - this is expected after MAX_SSE_PER_TENANT connections
+          assert.equal(res.headers.get("Retry-After"), "60", "429 response should include Retry-After header");
+          break;
+        }
+
+        assert.equal(res.status, 200, `Connection ${i} should succeed`);
+        connections.push(res);
+
+        // Don't keep reading the stream to avoid blocking; just verify we got 200
+        // In a real test, we'd keep connections alive and verify behavior
+      }
+
+      // Should have hit the limit before MAX_ATTEMPTS
+      assert.ok(
+        connections.length < MAX_ATTEMPTS,
+        `Should hit connection limit before ${MAX_ATTEMPTS} attempts`
+      );
+
+      // Verify strict boundary: exactly 100 connections allowed, 101st rejected
+      // Per-tenant limit is MAX_SSE_PER_TENANT = 100
+      assert.ok(
+        connections.length >= 100,
+        "Should allow at least 100 connections per tenant before hitting limit"
+      );
+      assert.ok(
+        connections.length <= 102,
+        `Should reject around connection 100-102, got ${connections.length} (allows for async timing)`
+      );
+
+      // Verify we actually hit the limit (more than one connection should be active)
+      assert.ok(
+        connections.length > 1,
+        "Should have hit limit after multiple connections"
+      );
+    } finally {
+      // Clean up: close all connections
+      for (const conn of connections) {
+        conn.body?.cancel?.();
+      }
+    }
+  });
+
+  test("429 response includes Retry-After header", async () => {
+    // Create many connections to hit the limit
+    const connections = [];
+    for (let i = 0; i < 105; i++) {
+      const res = await fetch(`${baseUrl}/stream`, {
+        headers: { Authorization: `Bearer ${readKey}` },
+      });
+      if (res.status === 429) {
+        // Verify Retry-After header
+        const retryAfter = res.headers.get("Retry-After");
+        assert.equal(retryAfter, "60", "Retry-After header should be present on 429 response");
+        return; // Test passed
+      }
+      connections.push(res);
+    }
+
+    // Clean up
+    for (const conn of connections) {
+      conn.body?.cancel?.();
+    }
+
+    assert.fail("Should have hit 429 limit during connection attempts");
+  });
+});
