@@ -162,6 +162,40 @@ docker compose up -d
 
 ---
 
+## API Response Formats
+
+**202 Accepted** — `POST /events` (async ingest)
+```json
+{ "accepted": true, "duplicate": false, "id": "evt_01HXYZ..." }
+```
+
+**200 OK** — `GET /sessions`
+```json
+{ "sessions": [ { "session_id": "ses_01HXYZ...", "created_at": "..." } ], "next_cursor": "..." }
+```
+
+**200 OK** — `GET /sessions/{sessionId}/events`
+```json
+{ "session_id": "ses_01HXYZ...", "events": [ { "id": "evt_...", "type": "task.created", ... } ] }
+```
+
+**400 Bad Request** — validation failure
+```json
+{ "accepted": false, "errors": [ { "message": "type must be one of task.created, ..." } ] }
+```
+
+**401 Unauthorized** — missing or invalid API key
+```json
+{ "error": "Missing or invalid API key" }
+```
+
+**403 Forbidden** — insufficient tenant permissions
+```json
+{ "error": "Insufficient permissions for this tenant" }
+```
+
+---
+
 ## 📚 Documentation
 
 | Resource | Purpose |
