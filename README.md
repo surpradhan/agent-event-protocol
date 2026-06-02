@@ -311,7 +311,7 @@ MIT License: see [LICENSE](./LICENSE) for details.
 
 ## 🔮 Roadmap
 
-- [ ] Python SDK (`pip install aep`)
+- [x] Python SDK — [`sdks/python/`](sdks/python/) · sync + async clients, validator, HMAC signing, demo
 - [ ] Go SDK (`go get github.com/surpradhan/aep-go`)
 - [ ] Kubernetes operator for automatic instrumentation
 - [ ] OTEL (OpenTelemetry) bridge
