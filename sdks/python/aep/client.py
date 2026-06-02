@@ -53,7 +53,13 @@ class AEPClient:
         self._http.close()
 
     def __repr__(self) -> str:
-        key_hint = f"{self._api_key[:7]}***" if self._api_key else None
+        if self._api_key:
+            # Reveal at most 4 chars and never more than half the key length so
+            # short keys (e.g. "aep_x") aren't accidentally exposed in debug output.
+            visible = min(4, len(self._api_key) // 2)
+            key_hint = f"{self._api_key[:visible]}***"
+        else:
+            key_hint = None
         return (
             f"AEPClient(server_url={self._server_url!r}, "
             f"api_key={key_hint!r}, "

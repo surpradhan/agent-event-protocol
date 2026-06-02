@@ -217,6 +217,28 @@ def test_api_key_sent_as_bearer():
 
 
 @respx.mock
+def test_repr_masks_api_key():
+    """__repr__ must never expose the full api_key, including for short keys."""
+    with AEPClient(server_url="http://x.com", api_key="aep_supersecret") as c:
+        r = repr(c)
+        assert "aep_supersecret" not in r
+        assert "***" in r
+        # Reveals at most 4 chars (the safe aep_ prefix)
+        assert r.count("aep_") <= 1  # prefix only, not the full key
+
+    # Short key: old [:7] would expose "aep_x" entirely; new code must not
+    with AEPClient(server_url="http://x.com", api_key="aep_x") as c:
+        r = repr(c)
+        assert "aep_x" not in r  # full value must not appear
+        assert "***" in r
+
+    # Single-char key: visible=0, so only *** is shown
+    with AEPClient(server_url="http://x.com", api_key="s") as c:
+        r = repr(c)
+        assert "s" not in r.split("api_key=")[1].split(",")[0]  # not in the key_hint part
+
+
+@respx.mock
 def test_no_auth_header_without_key():
     event = _event()
     captured = {}
