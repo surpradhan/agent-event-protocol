@@ -164,6 +164,8 @@ docker compose up -d
 
 ## API Response Formats
 
+Reference these common response structures when building clients and integrations.
+
 **202 Accepted** — `POST /events` (async ingest)
 ```json
 { "accepted": true, "duplicate": false, "id": "evt_01HXYZ..." }
@@ -179,20 +181,22 @@ docker compose up -d
 { "session_id": "ses_01HXYZ...", "events": [ { "id": "evt_...", "type": "task.created", ... } ] }
 ```
 
-**400 Bad Request** — validation failure
+**400 Bad Request** — schema or validation failure
 ```json
-{ "accepted": false, "errors": [ { "message": "type must be one of task.created, ..." } ] }
+{ "accepted": false, "errors": [ "/ must have required property 'session_id'", "/type must be one of: task.created, ..." ] }
 ```
 
-**401 Unauthorized** — missing or invalid API key
+**401 Unauthorized** — authentication failure (missing/invalid/revoked API key)
 ```json
-{ "error": "Missing or invalid API key" }
+{ "error": "Invalid API key" }
 ```
+See [AUTH.md](./AUTH.md) for details on key authentication and scoping.
 
-**403 Forbidden** — insufficient tenant permissions
+**403 Forbidden** — insufficient permissions
 ```json
-{ "error": "Insufficient permissions for this tenant" }
+{ "error": "Forbidden" }
 ```
+Typically indicates cross-tenant access attempt or insufficient scopes for the requested operation.
 
 ---
 
