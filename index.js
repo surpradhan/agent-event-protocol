@@ -51,6 +51,45 @@ function isSafeId(value) {
   return /^[a-zA-Z0-9_-]+$/.test(value);
 }
 
+/**
+ * Validate that returned data belongs to the requesting tenant.
+ * Defense-in-depth security check: prevents SQL injection or logic errors from exposing cross-tenant data.
+ *
+ * IMPORTANT: This is the SAME validation performed by GET endpoint handlers in server.js.
+ * SDK callers using tenantId filtering MUST validate returned data matches their tenant.
+ *
+ * Rules:
+ * - null/undefined data: SAFE (caller handles as empty result)
+ * - Array items WITHOUT tenant_id: SAFE (system/unscoped data)
+ * - Array items WITH tenant_id: MUST match requestedTenantId
+ * - Objects WITH tenant_id: MUST match requestedTenantId
+ *
+ * @param {object|null} data — the returned data from a database query
+ * @param {string} requestedTenantId — the tenant making the request (may be null)
+ * @param {string} dataType — the type of data (for logging/errors)
+ * @returns {boolean} true if data belongs to the tenant, false otherwise
+ */
+function validateTenantOwnership(data, requestedTenantId, dataType = "object") {
+  if (!data) return true; // null/undefined is safe
+  if (!requestedTenantId) return true; // No tenant filter, allow all data
+
+  // For collections (arrays), validate each item
+  if (Array.isArray(data)) {
+    return data.every(item => !item.tenant_id || item.tenant_id === requestedTenantId);
+  }
+
+  // For objects, verify tenant_id matches if present
+  if (data.tenant_id && data.tenant_id !== requestedTenantId) {
+    logger.error(
+      { requested_tenant: requestedTenantId, data_tenant: data.tenant_id, data_type: dataType },
+      "SECURITY: Tenant isolation violation — SDK function returned data from different tenant"
+    );
+    return false;
+  }
+
+  return true;
+}
+
 // ============================================================================
 // Public API - Validation
 // ============================================================================
@@ -64,6 +103,8 @@ function isSafeId(value) {
  * Get all sessions, most recently updated first.
  * Optionally filter by tenant.
  *
+ * SECURITY: Validates returned sessions belong to requesting tenant (defense-in-depth).
+ *
  * @param {string|null} tenantId — (optional) tenant to scope results
  * @returns {Array<{session_id, trace_id, source, event_count, started_at, updated_at}>}
  */
@@ -72,7 +113,15 @@ function getAllSessions(tenantId = null) {
     if (tenantId !== null && !isSafeId(tenantId)) {
       throw new Error("Invalid tenantId format");
     }
-    return db.getAllSessions(tenantId) || [];
+    const sessions = db.getAllSessions(tenantId) || [];
+
+    // Validate tenant ownership (defense-in-depth against SQL injection/logic errors)
+    if (!validateTenantOwnership(sessions, tenantId, "sessions_list")) {
+      logger.error({ tenantId }, "getAllSessions returned sessions from different tenant");
+      return [];
+    }
+
+    return sessions;
   } catch (err) {
     logger.error({ err, tenantId }, "failed to get all sessions");
     return [];
@@ -122,6 +171,8 @@ function getSessionCount(tenantId = null) {
 /**
  * Get all events for a session, with optional filtering.
  *
+ * SECURITY: Validates returned events belong to requesting tenant (defense-in-depth).
+ *
  * @param {string} sessionId
  * @param {{ type?: string, q?: string, tenantId?: string|null }} opts
  * @returns {object[]}
@@ -134,7 +185,15 @@ function getSessionEvents(sessionId, opts = {}) {
     if (opts.tenantId !== undefined && opts.tenantId !== null && !isSafeId(opts.tenantId)) {
       throw new Error("Invalid tenantId format");
     }
-    return db.getSessionEvents(sessionId, opts) || [];
+    const events = db.getSessionEvents(sessionId, opts) || [];
+
+    // Validate tenant ownership (defense-in-depth against SQL injection/logic errors)
+    if (!validateTenantOwnership(events, opts.tenantId, "session_events")) {
+      logger.error({ sessionId, tenantId: opts.tenantId }, "getSessionEvents returned events from different tenant");
+      return [];
+    }
+
+    return events;
   } catch (err) {
     logger.error({ err, sessionId, tenantId: opts.tenantId }, "failed to get session events");
     return [];
@@ -143,6 +202,8 @@ function getSessionEvents(sessionId, opts = {}) {
 
 /**
  * Get a session and all its descendants as a recursive tree.
+ *
+ * SECURITY: Validates returned tree belongs to requesting tenant (defense-in-depth).
  *
  * @param {string} sessionId
  * @param {string|null} tenantId
@@ -156,7 +217,15 @@ function getSessionTree(sessionId, tenantId = null) {
     if (tenantId !== null && !isSafeId(tenantId)) {
       throw new Error("Invalid tenantId format");
     }
-    return db.getSessionTree(sessionId, tenantId);
+    const tree = db.getSessionTree(sessionId, tenantId);
+
+    // Validate tenant ownership (defense-in-depth against SQL injection/logic errors)
+    if (!validateTenantOwnership(tree, tenantId, "session_tree")) {
+      logger.error({ sessionId, tenantId }, "getSessionTree returned tree from different tenant");
+      return null;
+    }
+
+    return tree;
   } catch (err) {
     logger.error({ err, sessionId, tenantId }, "failed to get session tree");
     return null;
@@ -165,6 +234,8 @@ function getSessionTree(sessionId, tenantId = null) {
 
 /**
  * Get all sessions in a workflow (by trace_id) as a tree structure.
+ *
+ * SECURITY: Validates returned workflow belongs to requesting tenant (defense-in-depth).
  *
  * @param {string} traceId
  * @param {string|null} tenantId
@@ -178,7 +249,15 @@ function getWorkflow(traceId, tenantId = null) {
     if (tenantId !== null && !isSafeId(tenantId)) {
       throw new Error("Invalid tenantId format");
     }
-    return db.getWorkflow(traceId, tenantId);
+    const workflow = db.getWorkflow(traceId, tenantId);
+
+    // Validate tenant ownership (defense-in-depth against SQL injection/logic errors)
+    if (!validateTenantOwnership(workflow, tenantId, "workflow")) {
+      logger.error({ traceId, tenantId }, "getWorkflow returned workflow from different tenant");
+      return null;
+    }
+
+    return workflow;
   } catch (err) {
     logger.error({ err, traceId, tenantId }, "failed to get workflow");
     return null;
