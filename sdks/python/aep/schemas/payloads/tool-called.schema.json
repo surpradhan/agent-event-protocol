@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aep.dev/schemas/payloads/tool-called.schema.json",
+  "title": "AEP Payload: tool.called",
+  "description": "Expected shape of the payload for tool.called events.",
+  "type": "object",
+  "required": ["tool_name", "arguments"],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "tool_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Dot-namespaced identifier of the tool being invoked, e.g. 'web.search'."
+    },
+    "arguments": {
+      "type": "object",
+      "description": "Tool-specific input arguments. Shape is tool-dependent."
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Optional caller-specified timeout in milliseconds."
+    },
+    "retry_policy": {
+      "type": "object",
+      "properties": {
+        "max_attempts": { "type": "integer", "minimum": 1 },
+        "backoff_ms":   { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "additionalProperties": true
+}

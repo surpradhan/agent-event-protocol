@@ -1,0 +1,229 @@
+Metadata-Version: 2.4
+Name: aep
+Version: 0.2.0
+Summary: Python SDK for the Agent Event Protocol
+License: MIT
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: httpx>=0.27
+Requires-Dist: jsonschema>=4.20
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23; extra == "dev"
+Requires-Dist: respx>=0.21; extra == "dev"
+
+# AEP Python SDK
+
+Python client library for the [Agent Event Protocol](../../README.md) — an observability framework for agent workflows.
+
+**Version:** 0.2.0 · **Python:** ≥ 3.10 · **Schema:** AEP v0.2.0
+
+---
+
+## Installation
+
+From the repo root (development):
+
+```bash
+pip install -e "sdks/python[dev]"
+```
+
+---
+
+## Quick start
+
+```python
+from aep import create_event, AEPClient
+
+# Build a spec-compliant event
+event = create_event(
+    source="agent://my-agent",
+    type="task.created",
+    session_id="ses_001",
+    trace_id="trc_001",
+    payload={"task": "summarise document"},
+)
+
+# Emit to the AEP ingest server
+with AEPClient(server_url="http://localhost:8787", api_key="aep_...") as client:
+    result = client.emit(event)
+    # {"accepted": True, "duplicate": False, "id": "evt_..."}
+```
+
+Environment variables are read automatically:
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `AEP_INGEST_URL` | Server base URL | `http://localhost:8787` |
+| `AEP_API_KEY` | Bearer token | — |
+
+---
+
+## Async client
+
+```python
+import asyncio
+from aep import create_event, AsyncAEPClient
+
+async def main():
+    event = create_event(
+        source="agent://my-agent",
+        type="task.completed",
+        session_id="ses_001",
+        trace_id="trc_001",
+        payload={"result": "done"},
+    )
+    async with AsyncAEPClient() as client:
+        result = await client.emit(event)
+
+asyncio.run(main())
+```
+
+---
+
+## Event types
+
+```python
+from aep import CORE_EVENT_TYPES, EventType
+
+# String constants
+print(CORE_EVENT_TYPES)
+# ['task.created', 'task.updated', ..., 'error.raised']
+
+# Enum access
+EventType.TOOL_CALLED.value  # 'tool.called'
+```
+
+The 12 core types: `task.created`, `task.updated`, `task.completed`, `task.failed`,
+`tool.called`, `tool.result`, `memory.read`, `memory.write`,
+`handoff.started`, `handoff.completed`, `policy.blocked`, `error.raised`.
+
+---
+
+## Multi-agent / sub-agent workflows
+
+```python
+from aep import create_event, AEPClient
+
+trace_id = "trc_workflow_001"
+orch_session = "ses_orchestrator_001"
+sub_session = "ses_subagent_001"
+
+orch_event = create_event(
+    source="agent://orchestrator",
+    type="task.created",
+    session_id=orch_session,
+    trace_id=trace_id,
+    payload={"goal": "research AI observability"},
+    agent_role="orchestrator",
+)
+
+sub_event = create_event(
+    source="agent://subagent",
+    type="task.created",
+    session_id=sub_session,
+    trace_id=trace_id,       # same trace_id ties sessions together
+    parent_session_id=orch_session,  # links to parent
+    payload={"subtask": "web search"},
+    agent_role="subagent",
+)
+
+with AEPClient() as client:
+    client.emit_batch([orch_event, sub_event])
+    tree = client.get_session_tree(orch_session)
+    workflow = client.get_workflow(trace_id)
+```
+
+---
+
+## Client API
+
+### `AEPClient` (sync) / `AsyncAEPClient` (async)
+
+| Method | Description |
+|--------|-------------|
+| `emit(event)` | POST `/events` — returns response body |
+| `emit_batch(events)` | Emit multiple events sequentially |
+| `get_sessions(*, limit, cursor)` | GET `/sessions` — paginated list |
+| `get_session_events(session_id, *, type, q, limit, cursor)` | GET `/sessions/{id}/events` |
+| `get_session_tree(session_id)` | GET `/sessions/{id}/tree` |
+| `get_session_export(session_id, *, format)` | GET `/sessions/{id}/export` |
+| `get_workflow(trace_id)` | GET `/workflows/{traceId}` |
+| `get_metrics()` | GET `/metrics` |
+| `health()` | GET `/health` |
+| `ready()` | GET `/ready` |
+
+---
+
+## HMAC signing
+
+```python
+from aep import create_event, sign_event
+
+event = create_event(source="agent://test", type="task.created",
+                     session_id="ses_1", trace_id="trc_1", payload={})
+sign_event(event, secret="my-hmac-secret")
+# event["signature"] == {"alg": "hmac-sha256", "value": "<base64>"}
+
+# Or let the client sign automatically:
+from aep import AEPClient
+with AEPClient(hmac_secret="my-hmac-secret") as client:
+    client.emit(event)  # signs before sending
+```
+
+---
+
+## Validation
+
+```python
+from aep import create_event, validate_event
+
+event = create_event(...)
+result = validate_event(event)
+# {"valid": True, "errors": []}
+
+# Errors include warnings prefixed with [warn] which don't affect validity
+```
+
+---
+
+## Exceptions
+
+| Exception | When raised |
+|-----------|-------------|
+| `AEPValidationError` | HTTP 400 — schema validation failed; has `.errors: list[str]` |
+| `AEPAuthError` | HTTP 401/403 — bad API key or insufficient scope |
+| `AEPRateLimitError` | HTTP 429 — rate limit hit; has `.retry_after: int` |
+| `AEPNotFoundError` | HTTP 404 — session or workflow not found |
+| `AEPConnectionError` | Network error reaching the server |
+
+---
+
+## Demo
+
+A complete multi-agent research demo is in [`demos/subagent_research.py`](demos/subagent_research.py).
+It mirrors the JS demo and exercises the session tree and workflow APIs.
+
+```bash
+# Start the server first
+npm run ingest   # from repo root
+
+# Run the demo
+cd sdks/python
+python demos/subagent_research.py
+```
+
+---
+
+## Tests
+
+```bash
+cd sdks/python
+pip install -e ".[dev]"
+
+# Unit tests (no server needed)
+pytest tests/unit/
+
+# Integration tests (requires running server)
+AEP_INGEST_URL=http://localhost:8787 pytest tests/integration/
+```
