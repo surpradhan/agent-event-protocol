@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import json
 import pathlib
-from typing import Any
-
 import threading
+from typing import Any
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError

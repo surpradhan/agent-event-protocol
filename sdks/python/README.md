@@ -129,15 +129,15 @@ with AEPClient() as client:
 | Method | `AEPClient` (sync) | `AsyncAEPClient` (async) |
 |--------|--------------------|--------------------------|
 | `emit(event)` | POST `/events` — returns response body | same, `await`-able |
-| `emit_batch(events)` | Emit sequentially; raises on first error | Emit concurrently via `asyncio.gather`; all requests complete before raising |
-| `get_sessions(*, limit, cursor)` | GET `/sessions` — paginated list |
-| `get_session_events(session_id, *, type, q, limit, cursor)` | GET `/sessions/{id}/events` |
-| `get_session_tree(session_id)` | GET `/sessions/{id}/tree` |
-| `get_session_export(session_id, *, format)` | GET `/sessions/{id}/export` |
-| `get_workflow(trace_id)` | GET `/workflows/{traceId}` |
-| `get_metrics()` | GET `/metrics` |
-| `health()` | GET `/health` |
-| `ready()` | GET `/ready` |
+| `emit_batch(events)` | Sequential; raises on first error, prior events already sent | Concurrent (`asyncio.gather`); all complete before raising |
+| `get_sessions(*, limit, cursor)` | GET `/sessions` — paginated list | same, `await`-able |
+| `get_session_events(session_id, *, type, q, limit, cursor)` | GET `/sessions/{id}/events` | same, `await`-able |
+| `get_session_tree(session_id)` | GET `/sessions/{id}/tree` | same, `await`-able |
+| `get_session_export(session_id, *, format)` | GET `/sessions/{id}/export` | same, `await`-able |
+| `get_workflow(trace_id)` | GET `/workflows/{traceId}` | same, `await`-able |
+| `get_metrics()` | GET `/metrics` | same, `await`-able |
+| `health()` | GET `/health` | same, `await`-able |
+| `ready()` | GET `/ready` | same, `await`-able |
 
 ---
 

@@ -9,7 +9,6 @@ Start the server with ``npm run ingest`` from the repo root, then run:
 import os
 import uuid
 
-import httpx
 import pytest
 
 from aep import CORE_EVENT_TYPES, create_event
@@ -18,20 +17,8 @@ from aep.exceptions import AEPNotFoundError, AEPValidationError
 
 _SERVER_URL = os.environ.get("AEP_INGEST_URL", "http://localhost:8787")
 _API_KEY = os.environ.get("AEP_API_KEY")
-
-
-def _server_reachable() -> bool:
-    try:
-        resp = httpx.get(f"{_SERVER_URL}/health", timeout=2.0)
-        return resp.status_code == 200
-    except Exception:
-        return False
-
-
-pytestmark = pytest.mark.skipif(
-    not _server_reachable(),
-    reason=f"AEP server not reachable at {_SERVER_URL} — start with 'npm run ingest'",
-)
+# Server-reachability check and skip logic live in conftest.py so they run
+# once per session rather than at import time during pytest collection.
 
 
 @pytest.fixture(scope="module")

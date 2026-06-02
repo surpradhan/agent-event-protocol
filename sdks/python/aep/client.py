@@ -7,15 +7,9 @@ from typing import Any
 import httpx
 
 from ._constants import DEFAULT_SERVER_URL
+from ._http import handle_response
 from ._signature import sign_event
-from .exceptions import (
-    AEPAuthError,
-    AEPConnectionError,
-    AEPNotFoundError,
-    AEPRateLimitError,
-    AEPServerError,
-    AEPValidationError,
-)
+from .exceptions import AEPConnectionError
 
 
 class AEPClient:
@@ -93,7 +87,12 @@ class AEPClient:
         return self._post("/events", event)
 
     def emit_batch(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Emit multiple events sequentially. Returns a list of response bodies."""
+        """Emit multiple events sequentially.
+
+        Returns a list of response bodies in the same order as *events*.
+        Raises on the first failing event; events before it were already sent.
+        Raises the same exceptions as :meth:`emit`.
+        """
         return [self.emit(e) for e in events]
 
     # ── sessions ──────────────────────────────────────────────────────────────
@@ -168,7 +167,7 @@ class AEPClient:
             resp = self._http.get(url, headers=self._headers(), params=params)
         except httpx.ConnectError as exc:
             raise AEPConnectionError(f"Cannot reach AEP server at {self._server_url}: {exc}") from exc
-        return _handle_response(resp)
+        return handle_response(resp)
 
     def _post(self, path: str, body: dict) -> dict[str, Any]:
         url = self._server_url + path
@@ -176,51 +175,6 @@ class AEPClient:
             resp = self._http.post(url, headers=self._headers(), json=body)
         except httpx.ConnectError as exc:
             raise AEPConnectionError(f"Cannot reach AEP server at {self._server_url}: {exc}") from exc
-        return _handle_response(resp)
+        return handle_response(resp)
 
 
-def _handle_response(resp: httpx.Response) -> dict[str, Any]:
-    if resp.status_code in (200, 201, 202):
-        return resp.json()
-    if resp.status_code == 400:
-        body = _safe_json(resp)
-        raise AEPValidationError(
-            f"Validation error: {body.get('errors', body)}",
-            errors=body.get("errors", []),
-        )
-    if resp.status_code in (401, 403):
-        body = _safe_json(resp)
-        raise AEPAuthError(body.get("error", "Authentication failed"))
-    if resp.status_code == 404:
-        body = _safe_json(resp)
-        raise AEPNotFoundError(body.get("error", "Not found"))
-    if resp.status_code == 429:
-        body = _safe_json(resp)
-        retry_after = _parse_retry_after(resp.headers.get("Retry-After", "0"))
-        raise AEPRateLimitError(body.get("error", "Rate limit exceeded"), retry_after=retry_after)
-    if resp.status_code >= 500:
-        body = _safe_json(resp)
-        raise AEPServerError(
-            body.get("error", f"Server error {resp.status_code}"),
-            status_code=resp.status_code,
-        )
-    resp.raise_for_status()
-    return resp.json()
-
-
-def _parse_retry_after(value: str) -> int:
-    """Parse Retry-After header value — RFC 7231 allows both integer seconds and HTTP-date.
-
-    Negative values are clamped to 0; HTTP-date strings fall back to 0.
-    """
-    try:
-        return max(0, int(value))
-    except ValueError:
-        return 0
-
-
-def _safe_json(resp: httpx.Response) -> dict:
-    try:
-        return resp.json()
-    except Exception:
-        return {}

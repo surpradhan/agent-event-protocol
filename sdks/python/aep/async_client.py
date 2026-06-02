@@ -8,8 +8,8 @@ from typing import Any
 import httpx
 
 from ._constants import DEFAULT_SERVER_URL
+from ._http import handle_response
 from ._signature import sign_event
-from .client import _handle_response
 from .exceptions import AEPConnectionError
 
 
@@ -171,7 +171,7 @@ class AsyncAEPClient:
             resp = await self._http.get(url, headers=self._headers(), params=params)
         except httpx.ConnectError as exc:
             raise AEPConnectionError(f"Cannot reach AEP server at {self._server_url}: {exc}") from exc
-        return _handle_response(resp)
+        return handle_response(resp)
 
     async def _post(self, path: str, body: dict) -> dict[str, Any]:
         url = self._server_url + path
@@ -179,4 +179,4 @@ class AsyncAEPClient:
             resp = await self._http.post(url, headers=self._headers(), json=body)
         except httpx.ConnectError as exc:
             raise AEPConnectionError(f"Cannot reach AEP server at {self._server_url}: {exc}") from exc
-        return _handle_response(resp)
+        return handle_response(resp)
