@@ -48,9 +48,12 @@ type AgentInstrumentationSpec struct {
 	// +optional
 	NamespaceSelector *metav1.LabelSelector `json:"namespaceSelector,omitempty"`
 
-	// PodSelector restricts sidecar injection to pods matching this label
-	// selector within eligible namespaces. When nil, all pods annotated
-	// with aep.dev/inject=true are eligible.
+	// PodSelector filters which pods are counted in status.injectedCount within
+	// eligible namespaces. Note: this selector does NOT gate webhook injection —
+	// any pod annotated aep.dev/inject=true in a covered namespace will receive
+	// the sidecar regardless of its labels. Use this field to scope the injected
+	// pod count reported in status, not to restrict which pods get instrumented.
+	// When nil, all pods carrying aep.dev/injected=true are counted.
 	// +optional
 	PodSelector *metav1.LabelSelector `json:"podSelector,omitempty"`
 

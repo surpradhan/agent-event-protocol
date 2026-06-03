@@ -25,6 +25,14 @@ jobs:
       - name: Download dependencies
         run: go mod tidy
 
+      - name: Install controller-gen
+        run: go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.14.0
+
+      - name: Verify generated code is up to date
+        run: |
+          $(go env GOPATH)/bin/controller-gen object:headerFile="hack/boilerplate.go.txt" paths="./..."
+          git diff --exit-code -- api/
+
       - name: Run operator unit tests
         run: go test $(go list ./... | grep -v /tests) -v -count=1
 

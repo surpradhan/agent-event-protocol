@@ -26,6 +26,13 @@ spec:
       # Ignore: pods still start if the webhook is unavailable.
       failurePolicy: Ignore
       sideEffects: None
+      # Exclude Kubernetes system namespaces to avoid unnecessary webhook calls
+      # for core components that will never carry aep.dev/inject=true.
+      namespaceSelector:
+        matchExpressions:
+          - key: kubernetes.io/metadata.name
+            operator: NotIn
+            values: [kube-system, kube-public]
       # NOTE: objectSelector is intentionally absent.
       # The opt-in mechanism uses the aep.dev/inject ANNOTATION, not a label.
       # objectSelector only matches labels, so adding it here would silently

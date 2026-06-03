@@ -6,6 +6,7 @@ package webhook_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	admissionv1 "k8s.io/api/admission/v1"
@@ -101,7 +102,9 @@ func requireAllowed(t *testing.T, resp admission.Response) {
 func sidecarFromPatches(t *testing.T, patches []jsonpatch.JsonPatchOperation) *corev1.Container {
 	t.Helper()
 	for _, p := range patches {
-		if p.Operation == "add" && p.Path == "/spec/containers/-" {
+		// admission.PatchResponseFromRaw generates index-based paths
+		// (/spec/containers/N) rather than append-style (/spec/containers/-).
+		if p.Operation == "add" && strings.HasPrefix(p.Path, "/spec/containers/") {
 			raw, err := json.Marshal(p.Value)
 			if err != nil {
 				t.Fatalf("marshalling patch value: %v", err)
