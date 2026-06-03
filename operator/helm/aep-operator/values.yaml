@@ -1,0 +1,109 @@
+# ── Operator image ────────────────────────────────────────────────────────────
+image:
+  repository: ghcr.io/surpradhan/aep-operator
+  # tag defaults to .Chart.AppVersion when left empty
+  tag: ""
+  # Use Always for mutable tags (:latest); IfNotPresent for pinned semver tags.
+  pullPolicy: Always
+  # Image pull secrets must be a list of {name: <secret-name>} objects.
+  # Example:
+  #   pullSecrets:
+  #     - name: my-registry-secret
+  pullSecrets: []
+
+# ── Sidecar image injected into opted-in agent pods ──────────────────────────
+sidecar:
+  image:
+    repository: ghcr.io/surpradhan/aep-sidecar
+    tag: latest
+
+# ── AEP ingest server URL (passed as --aep-server-url) ───────────────────────
+aepServerURL: http://aep-ingest.aep-system.svc.cluster.local:8787
+
+# ── Operator deployment ───────────────────────────────────────────────────────
+replicaCount: 1
+
+# Enable leader election for HA deployments (recommended for production).
+leaderElect: true
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Override the namespace for all resources. Defaults to .Release.Namespace.
+# Use with --create-namespace on first install:
+#   helm install aep-operator ./helm/aep-operator --create-namespace -n aep-system
+namespaceOverride: ""
+
+serviceAccount:
+  # Defaults to the chart fullname when empty.
+  name: ""
+  annotations: {}
+
+# Resource requests/limits for the operator container.
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 128Mi
+
+# Pod-level security context (applies to all containers in the operator pod).
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container-level security context for the operator container.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Extra environment variables for the operator container.
+extraEnv: []
+# - name: MY_VAR
+#   value: my-value
+
+# Extra labels to add to all resources.
+commonLabels: {}
+
+# ── Mutating webhook ──────────────────────────────────────────────────────────
+webhook:
+  # Set to false to disable the MutatingWebhookConfiguration and webhook Service.
+  # The operator will still run but no sidecar injection occurs.
+  enabled: true
+
+  # Use cert-manager to provision TLS for the webhook server.
+  # When false, you must manually create a TLS Secret before deploying.
+  # The Secret name depends on the release name — run
+  #   helm template <release> ./helm/aep-operator | grep secretName
+  # to see the generated value (typically <release>-aep-operator-webhook-server-cert).
+  certManager:
+    enabled: true
+
+  # Kubernetes webhook admission timeout in seconds (1–30).
+  # With failurePolicy=Ignore, a timeout allows the pod to start without injection.
+  timeoutSeconds: 10
+
+  # namespaceSelector restricts which namespaces the webhook applies to.
+  # By default, system namespaces are excluded to avoid routing every kube-system
+  # pod create through the webhook. Customise to match your cluster layout.
+  namespaceSelector:
+    matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: NotIn
+        values:
+          - kube-system
+          - kube-public
+
+# ── CRD installation ──────────────────────────────────────────────────────────
+# CRDs are in helm/aep-operator/crds/ and are managed by Helm's built-in CRD
+# lifecycle: installed before other resources, skipped on upgrades.
+# Helm values cannot gate crds/ directory installation. To skip CRDs entirely:
+#   helm install --skip-crds ...

@@ -1,0 +1,26 @@
+apiVersion: v2
+name: aep-operator
+description: >
+  Kubernetes Operator for the Agent Event Protocol (AEP).
+  Automatically injects an AEP observability sidecar into opted-in agent pods
+  and reports injection status via the AgentInstrumentation CRD.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - aep
+  - agent-event-protocol
+  - observability
+  - operator
+  - sidecar-injection
+home: https://github.com/surpradhan/agent-event-protocol
+sources:
+  - https://github.com/surpradhan/agent-event-protocol
+maintainers:
+  - name: Surabhi Pradhan
+    email: surabhi7pradhan@gmail.com
+annotations:
+  # cert-manager is a prerequisite when webhook.certManager.enabled=true.
+  # Install it separately: https://cert-manager.io/docs/installation/
+  artifacthub.io/preinstall: |
+    cert-manager >= 1.0.0 (when webhook.certManager.enabled=true)

@@ -109,14 +109,15 @@ AEP provides a unified observability framework for multi-agent AI systems. It en
 
 ## 🚀 Roadmap (Future Phases)
 
-### Phase 10: Kubernetes Operator (Q2 2026)
+### Phase 10: Kubernetes Operator (2026-06-03)
 
-**Objective:** Automatic instrumentation for agent pods running in Kubernetes.
+**Status: ✅ Complete**
 
-- Custom Resource Definition (CRD): `AgentInstrumentation`
-- Mutating webhook: inject sidecar or init container for automatic event emission
-- OpenTelemetry receiver for collecting traces from existing instrumentation
-- Example: annotate a pod with `aep.dev/inject=true` → sidecar automatically emits events to the AEP ingest server
+- `AgentInstrumentation` CRD (cluster-scoped): `namespaceSelector`, `podSelector`, `apiKeySecretRef`, `sidecarImage`, `resources`, `env` overrides
+- Mutating webhook (`aep.dev/inject=true` annotation opt-in): injects AEP sidecar with downward API env vars, Secret-backed API key, configurable resources, secure SecurityContext
+- Controller: reconciles `AgentInstrumentation` CRs, maintains `status.injectedCount` and `status.conditions` (Ready/Disabled/InjectionFailed)
+- Helm chart (`operator/helm/aep-operator/`) with cert-manager TLS, configurable `namespaceSelector`, all values documented
+- 22 unit tests (10 controller + 12 webhook) + 4 envtest integration tests
 
 **Success criteria:**
 - ✅ Operator can inject sidecar into agent pods
@@ -316,4 +317,4 @@ Future phases will include:
 
 ---
 
-**Last Updated:** 2026-06-03 (Phase 9: Go SDK Complete)
+**Last Updated:** 2026-06-03 (Phase 10: Kubernetes Operator Complete)

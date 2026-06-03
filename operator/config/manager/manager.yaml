@@ -1,0 +1,82 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aep-system
+  labels:
+    app.kubernetes.io/name: aep-operator
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aep-operator
+  namespace: aep-system
+  labels:
+    app.kubernetes.io/name: aep-operator
+    app.kubernetes.io/component: controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aep-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aep-operator
+      annotations:
+        # Exclude the operator pod itself from sidecar injection.
+        aep.dev/inject: "false"
+    spec:
+      serviceAccountName: aep-operator
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: operator
+          image: ghcr.io/surpradhan/aep-operator:latest
+          imagePullPolicy: Always  # :latest is a mutable tag; Always ensures fresh pulls
+          args:
+            - --leader-elect=true
+            - --aep-server-url=http://aep-ingest.aep-system.svc.cluster.local:8787
+            - --sidecar-image=ghcr.io/surpradhan/aep-sidecar:latest
+          ports:
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          volumeMounts:
+            - name: webhook-cert
+              mountPath: /tmp/k8s-webhook-server/serving-certs
+              readOnly: true
+      volumes:
+        - name: webhook-cert
+          secret:
+            secretName: aep-operator-webhook-server-cert
+      terminationGracePeriodSeconds: 60  # allow in-flight reconciles + webhook requests to drain

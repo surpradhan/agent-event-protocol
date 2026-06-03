@@ -1,0 +1,2 @@
+// Copyright 2026 Surabhi Pradhan.
+// SPDX-License-Identifier: MIT

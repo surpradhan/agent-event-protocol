@@ -1,0 +1,285 @@
+---
+# Hand-authored manifest — equivalent to `make manifests` output.
+# Regenerate with: make manifests  (requires controller-gen and go mod tidy)
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: agentinstrumentations.aep.dev
+spec:
+  group: aep.dev
+  names:
+    kind: AgentInstrumentation
+    listKind: AgentInstrumentationList
+    plural: agentinstrumentations
+    singular: agentinstrumentation
+    shortNames:
+      - ainstr
+    categories:
+      - aep
+  scope: Cluster
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Enabled
+          type: boolean
+          jsonPath: .spec.enabled
+        - name: Injected
+          type: integer
+          jsonPath: .status.injectedCount
+        - name: Ready
+          type: string
+          jsonPath: .status.conditions[?(@.type=="Ready")].status
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          description: >
+            AgentInstrumentation configures which pods receive an injected AEP
+            observability sidecar and how that sidecar is configured. Annotate
+            a pod with aep.dev/inject=true to opt in to injection.
+            If multiple AgentInstrumentation resources match the same namespace
+            or pod, the one whose name sorts first alphabetically takes
+            precedence.
+          type: object
+          required: [spec]
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              description: Desired state of AgentInstrumentation.
+              type: object
+              properties:
+                enabled:
+                  description: >
+                    Controls whether sidecar injection is active.
+                    Set to false to pause without deleting the resource.
+                  type: boolean
+                  default: true
+                namespaceSelector:
+                  description: >
+                    Restricts injection to namespaces matching this selector.
+                    When absent, all namespaces are eligible.
+                  type: object
+                  properties:
+                    matchLabels:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    matchExpressions:
+                      type: array
+                      items:
+                        type: object
+                        required: [key, operator]
+                        properties:
+                          key:
+                            type: string
+                          operator:
+                            type: string
+                            enum: [In, NotIn, Exists, DoesNotExist]
+                          values:
+                            type: array
+                            items:
+                              type: string
+                podSelector:
+                  description: >
+                    Restricts injection to pods matching this selector within
+                    eligible namespaces. When absent, all pods annotated with
+                    aep.dev/inject=true are eligible.
+                  type: object
+                  properties:
+                    matchLabels:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    matchExpressions:
+                      type: array
+                      items:
+                        type: object
+                        required: [key, operator]
+                        properties:
+                          key:
+                            type: string
+                          operator:
+                            type: string
+                            enum: [In, NotIn, Exists, DoesNotExist]
+                          values:
+                            type: array
+                            items:
+                              type: string
+                aepServerURL:
+                  description: >
+                    URL of the AEP ingest server the sidecar emits to.
+                    Overrides the operator-level --aep-server-url flag.
+                  type: string
+                  pattern: '^https?://.+'
+                apiKeySecretRef:
+                  description: >
+                    References the Secret containing the AEP API key.
+                    The sidecar presents the value as
+                    Authorization: Bearer <token> on every event POST.
+                    When absent, the sidecar connects without authentication.
+                  type: object
+                  required: [key]
+                  properties:
+                    name:
+                      description: Name of the Secret in the operator namespace.
+                      type: string
+                    key:
+                      description: Key within the Secret whose value is the API token.
+                      type: string
+                    optional:
+                      description: Whether the Secret must exist; defaults to false.
+                      type: boolean
+                sidecarImage:
+                  description: >
+                    Container image for the injected sidecar.
+                    Overrides the operator-level --sidecar-image flag.
+                  type: string
+                resources:
+                  description: >
+                    Compute resource requests and limits for the sidecar container.
+                  type: object
+                  properties:
+                    requests:
+                      type: object
+                      additionalProperties:
+                        anyOf:
+                          - type: integer
+                          - type: string
+                        pattern: '^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$'
+                        x-kubernetes-int-or-string: true
+                    limits:
+                      type: object
+                      additionalProperties:
+                        anyOf:
+                          - type: integer
+                          - type: string
+                        pattern: '^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$'
+                        x-kubernetes-int-or-string: true
+                env:
+                  description: >
+                    Additional environment variables for the sidecar container.
+                    These supplement (and may override) operator-set defaults
+                    (AEP_SERVER_URL, AEP_POD_NAME, AEP_NAMESPACE, etc.).
+                  type: array
+                  x-kubernetes-list-map-keys: [name]
+                  x-kubernetes-list-type: map
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      name:
+                        type: string
+                      value:
+                        type: string
+                      valueFrom:
+                        type: object
+                        properties:
+                          configMapKeyRef:
+                            type: object
+                            required: [key]
+                            properties:
+                              name:
+                                type: string
+                              key:
+                                type: string
+                              optional:
+                                type: boolean
+                          secretKeyRef:
+                            type: object
+                            required: [key]
+                            properties:
+                              name:
+                                type: string
+                              key:
+                                type: string
+                              optional:
+                                type: boolean
+                          fieldRef:
+                            type: object
+                            required: [fieldPath]
+                            properties:
+                              apiVersion:
+                                type: string
+                              fieldPath:
+                                type: string
+                          resourceFieldRef:
+                            type: object
+                            required: [resource]
+                            properties:
+                              containerName:
+                                type: string
+                              resource:
+                                type: string
+                              divisor:
+                                anyOf:
+                                  - type: integer
+                                  - type: string
+                                pattern: '^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$'
+                                x-kubernetes-int-or-string: true
+            status:
+              description: Observed state of AgentInstrumentation.
+              type: object
+              properties:
+                observedGeneration:
+                  description: Most recent generation successfully reconciled.
+                  type: integer
+                  format: int64
+                injectedCount:
+                  description: Number of pods currently carrying the AEP sidecar.
+                  type: integer
+                  format: int32
+                conditions:
+                  description: >
+                    Latest available observations of this resource's state.
+                    Condition type: Ready.
+                      Ready=True  (reason: Active)          — healthy.
+                      Ready=False (reason: Disabled)        — spec.enabled=false.
+                      Ready=False (reason: InjectionFailed) — pod injection errors.
+                      Ready=False (reason: WebhookError)    — webhook unavailable.
+                  type: array
+                  x-kubernetes-list-map-keys: [type]
+                  x-kubernetes-list-type: map
+                  items:
+                    type: object
+                    required: [lastTransitionTime, message, reason, status, type]
+                    properties:
+                      type:
+                        description: Condition type (Ready).
+                        type: string
+                        maxLength: 316
+                        pattern: '^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$'
+                      status:
+                        description: '"True", "False", or "Unknown".'
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      observedGeneration:
+                        description: Generation at which this condition was set.
+                        type: integer
+                        format: int64
+                        minimum: 0
+                      lastTransitionTime:
+                        description: Time the condition last transitioned.
+                        type: string
+                        format: date-time
+                      reason:
+                        description: >
+                          Machine-readable reason: Active | Disabled |
+                          InjectionFailed | WebhookError.
+                        type: string
+                        maxLength: 1024
+                        minLength: 1
+                        pattern: '^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$'
+                      message:
+                        description: Human-readable message about the condition.
+                        type: string
+                        maxLength: 32768
