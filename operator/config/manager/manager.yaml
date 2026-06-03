@@ -35,7 +35,7 @@ spec:
       containers:
         - name: operator
           image: ghcr.io/surpradhan/aep-operator:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always  # :latest is a mutable tag; Always ensures fresh pulls
           args:
             - --leader-elect=true
             - --aep-server-url=http://aep-ingest.aep-system.svc.cluster.local:8787
@@ -71,4 +71,4 @@ spec:
             limits:
               cpu: 500m
               memory: 128Mi
-      terminationGracePeriodSeconds: 10
+      terminationGracePeriodSeconds: 60  # allow in-flight reconciles + webhook requests to drain

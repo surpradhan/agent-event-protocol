@@ -5,6 +5,7 @@ package controller_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -21,8 +22,9 @@ import (
 	"github.com/surpradhan/aep-operator/internal/controller"
 )
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
+// testScheme builds a runtime.Scheme with clientgo + AEP types registered.
 func testScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
@@ -35,15 +37,7 @@ func testScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-// getAinstr fetches the AgentInstrumentation named `name` from the fake client.
-func getAinstr(t *testing.T, c interface {
-	Get(ctx context.Context, key types.NamespacedName, obj interface{ DeepCopyObject() runtime.Object }, opts ...interface{}) error
-}, name string) *aepv1alpha1.AgentInstrumentation {
-	t.Helper()
-	// Use the raw client instead — fake.Client implements client.Client
-	return nil // placeholder; actual assertion done inline per test
-}
-
+// reconcile is a shorthand for invoking the reconciler on a named resource.
 func reconcile(t *testing.T, r *controller.AgentInstrumentationReconciler, name string) (ctrl.Result, error) {
 	t.Helper()
 	return r.Reconcile(context.Background(), ctrl.Request{
@@ -51,6 +45,8 @@ func reconcile(t *testing.T, r *controller.AgentInstrumentationReconciler, name 
 	})
 }
 
+// requireCondition asserts that a condition of the given type exists with the
+// expected status and reason.
 func requireCondition(
 	t *testing.T,
 	conditions []metav1.Condition,
@@ -64,18 +60,18 @@ func requireCondition(
 		t.Fatalf("condition %q not found in %+v", condType, conditions)
 	}
 	if cond.Status != wantStatus {
-		t.Errorf("condition %q: want status %s, got %s (reason=%s, msg=%s)",
+		t.Errorf("condition %q: want status=%s, got status=%s (reason=%s msg=%q)",
 			condType, wantStatus, cond.Status, cond.Reason, cond.Message)
 	}
 	if cond.Reason != wantReason {
-		t.Errorf("condition %q: want reason %s, got %s", condType, wantReason, cond.Reason)
+		t.Errorf("condition %q: want reason=%s, got reason=%s", condType, wantReason, cond.Reason)
 	}
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-// TestReconcile_NotFound verifies a clean return when the resource is already
-// deleted before the reconcile loop runs.
+// TestReconcile_NotFound verifies a clean no-op return when the resource has
+// already been deleted before the reconcile loop runs.
 func TestReconcile_NotFound(t *testing.T) {
 	scheme := testScheme(t)
 	r := &controller.AgentInstrumentationReconciler{
@@ -91,7 +87,8 @@ func TestReconcile_NotFound(t *testing.T) {
 	}
 }
 
-// TestReconcile_Disabled verifies Ready=False/Disabled when spec.enabled=false.
+// TestReconcile_Disabled verifies Ready=False/Disabled and no requeue when
+// spec.enabled is false.
 func TestReconcile_Disabled(t *testing.T) {
 	ainstr := &aepv1alpha1.AgentInstrumentation{
 		ObjectMeta: metav1.ObjectMeta{Name: "test", Generation: 1},
@@ -109,7 +106,6 @@ func TestReconcile_Disabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Disabled → no periodic requeue.
 	if result.Requeue || result.RequeueAfter != 0 {
 		t.Errorf("expected no requeue when disabled, got %+v", result)
 	}
@@ -128,8 +124,8 @@ func TestReconcile_Disabled(t *testing.T) {
 	}
 }
 
-// TestReconcile_Enabled_NoPods verifies Ready=True/Active when enabled with no
-// injected pods yet.
+// TestReconcile_Enabled_NoPods verifies Ready=True/Active and RequeueAfter
+// when enabled but no pods are injected yet.
 func TestReconcile_Enabled_NoPods(t *testing.T) {
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
 	ainstr := &aepv1alpha1.AgentInstrumentation{
@@ -148,7 +144,6 @@ func TestReconcile_Enabled_NoPods(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Active → should requeue after interval.
 	if result.RequeueAfter == 0 {
 		t.Error("expected RequeueAfter for active instrumentation")
 	}
@@ -167,8 +162,8 @@ func TestReconcile_Enabled_NoPods(t *testing.T) {
 	}
 }
 
-// TestReconcile_Enabled_WithInjectedPods verifies that injected pod count is
-// correctly reflected in status.
+// TestReconcile_Enabled_WithInjectedPods verifies that only pods carrying
+// the SidecarAnnotation are counted.
 func TestReconcile_Enabled_WithInjectedPods(t *testing.T) {
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
 	injectedPod := &corev1.Pod{
@@ -195,57 +190,31 @@ func TestReconcile_Enabled_WithInjectedPods(t *testing.T) {
 	if _, err := reconcile(t, r, "test"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
 	updated := &aepv1alpha1.AgentInstrumentation{}
 	if err := c.Get(context.Background(), types.NamespacedName{Name: "test"}, updated); err != nil {
-		t.Fatalf("fetching updated resource: %v", err)
+		t.Fatalf("fetching: %v", err)
 	}
 	if updated.Status.InjectedCount != 1 {
 		t.Errorf("expected InjectedCount=1, got %d", updated.Status.InjectedCount)
 	}
 }
 
-// TestReconcile_Enabled_MultipleInjectedPods verifies count across multiple pods.
+// TestReconcile_Enabled_MultipleInjectedPods verifies the count across multiple
+// injected and non-injected pods.
 func TestReconcile_Enabled_MultipleInjectedPods(t *testing.T) {
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
 	ainstr := &aepv1alpha1.AgentInstrumentation{
 		ObjectMeta: metav1.ObjectMeta{Name: "test", Generation: 1},
 		Spec:       aepv1alpha1.AgentInstrumentationSpec{Enabled: true},
 	}
-	objects := []interface{ DeepCopyObject() runtime.Object }{ainstr, ns}
-	// Add 3 injected pods and 2 plain pods.
-	for i := 1; i <= 3; i++ {
-		objects = append(objects, &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:        fmt.Sprintf("injected-%d", i),
-				Namespace:   "default",
-				Annotations: map[string]string{controller.SidecarAnnotation: "true"},
-			},
-		})
-	}
-	for i := 1; i <= 2; i++ {
-		objects = append(objects, &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      fmt.Sprintf("plain-%d", i),
-				Namespace: "default",
-			},
-		})
-	}
 	scheme := testScheme(t)
-	builder := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(ainstr)
-	for _, o := range objects {
-		builder = builder.WithObjects(o.(interface {
-			DeepCopyObject() runtime.Object
-		}))
-	}
-	// Rebuild cleanly using individual WithObjects calls
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(ainstr, ns).
 		WithStatusSubresource(ainstr).
 		Build()
 
-	// Add pods directly
+	// Add 3 injected pods and 2 plain pods.
 	for i := 1; i <= 3; i++ {
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
@@ -255,7 +224,7 @@ func TestReconcile_Enabled_MultipleInjectedPods(t *testing.T) {
 			},
 		}
 		if err := c.Create(context.Background(), pod); err != nil {
-			t.Fatalf("creating pod: %v", err)
+			t.Fatalf("creating injected pod %d: %v", i, err)
 		}
 	}
 	for i := 1; i <= 2; i++ {
@@ -266,7 +235,7 @@ func TestReconcile_Enabled_MultipleInjectedPods(t *testing.T) {
 			},
 		}
 		if err := c.Create(context.Background(), pod); err != nil {
-			t.Fatalf("creating plain pod: %v", err)
+			t.Fatalf("creating plain pod %d: %v", i, err)
 		}
 	}
 
@@ -274,7 +243,6 @@ func TestReconcile_Enabled_MultipleInjectedPods(t *testing.T) {
 	if _, err := reconcile(t, r, "test"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
 	updated := &aepv1alpha1.AgentInstrumentation{}
 	if err := c.Get(context.Background(), types.NamespacedName{Name: "test"}, updated); err != nil {
 		t.Fatalf("fetching: %v", err)
@@ -284,8 +252,8 @@ func TestReconcile_Enabled_MultipleInjectedPods(t *testing.T) {
 	}
 }
 
-// TestReconcile_ConditionObservedGeneration verifies the condition carries the
-// correct ObservedGeneration (not zero).
+// TestReconcile_ConditionObservedGeneration verifies that the Ready condition
+// carries the current resource generation, not zero.
 func TestReconcile_ConditionObservedGeneration(t *testing.T) {
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
 	ainstr := &aepv1alpha1.AgentInstrumentation{
@@ -312,12 +280,12 @@ func TestReconcile_ConditionObservedGeneration(t *testing.T) {
 		t.Fatal("Ready condition not found")
 	}
 	if cond.ObservedGeneration != 5 {
-		t.Errorf("expected ObservedGeneration=5 on condition, got %d", cond.ObservedGeneration)
+		t.Errorf("expected condition.ObservedGeneration=5, got %d", cond.ObservedGeneration)
 	}
 }
 
-// TestReconcile_RequeueInterval verifies the active case returns a RequeueAfter
-// greater than zero (exact value is an implementation detail).
+// TestReconcile_RequeueInterval verifies the active case returns a non-zero
+// RequeueAfter for periodic pod-count refresh.
 func TestReconcile_RequeueInterval(t *testing.T) {
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
 	ainstr := &aepv1alpha1.AgentInstrumentation{
@@ -341,8 +309,8 @@ func TestReconcile_RequeueInterval(t *testing.T) {
 	}
 }
 
-// TestReconcile_NamespaceSelector verifies that only pods in matching
-// namespaces are counted.
+// TestReconcile_NamespaceSelector verifies that only pods in namespaces
+// matching the selector are counted.
 func TestReconcile_NamespaceSelector(t *testing.T) {
 	matchedNS := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
@@ -353,14 +321,13 @@ func TestReconcile_NamespaceSelector(t *testing.T) {
 	unmatchedNS := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: "other"},
 	}
-	// One injected pod in matched NS, one in unmatched NS.
-	podMatched := &corev1.Pod{
+	podInMatched := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "agent", Namespace: "ai-workloads",
 			Annotations: map[string]string{controller.SidecarAnnotation: "true"},
 		},
 	}
-	podUnmatched := &corev1.Pod{
+	podInUnmatched := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "agent", Namespace: "other",
 			Annotations: map[string]string{controller.SidecarAnnotation: "true"},
@@ -378,7 +345,7 @@ func TestReconcile_NamespaceSelector(t *testing.T) {
 	scheme := testScheme(t)
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(ainstr, matchedNS, unmatchedNS, podMatched, podUnmatched).
+		WithObjects(ainstr, matchedNS, unmatchedNS, podInMatched, podInUnmatched).
 		WithStatusSubresource(ainstr).
 		Build()
 	r := &controller.AgentInstrumentationReconciler{Client: c, Scheme: scheme}
@@ -390,9 +357,97 @@ func TestReconcile_NamespaceSelector(t *testing.T) {
 	if err := c.Get(context.Background(), types.NamespacedName{Name: "test"}, updated); err != nil {
 		t.Fatalf("fetching: %v", err)
 	}
-	// Only pod in matched namespace should be counted.
 	if updated.Status.InjectedCount != 1 {
-		t.Errorf("expected InjectedCount=1 (only matched namespace), got %d",
+		t.Errorf("expected InjectedCount=1 (matched namespace only), got %d",
 			updated.Status.InjectedCount)
 	}
+}
+
+// TestReconcile_PodSelector verifies that only pods matching the pod label
+// selector are counted, even if both carry SidecarAnnotation.
+func TestReconcile_PodSelector(t *testing.T) {
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
+	matchingPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "agent",
+			Namespace:   "default",
+			Labels:      map[string]string{"app": "agent"},
+			Annotations: map[string]string{controller.SidecarAnnotation: "true"},
+		},
+	}
+	nonMatchingPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "other",
+			Namespace:   "default",
+			Labels:      map[string]string{"app": "unrelated"},
+			Annotations: map[string]string{controller.SidecarAnnotation: "true"},
+		},
+	}
+	ainstr := &aepv1alpha1.AgentInstrumentation{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Generation: 1},
+		Spec: aepv1alpha1.AgentInstrumentationSpec{
+			Enabled: true,
+			PodSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": "agent"},
+			},
+		},
+	}
+	scheme := testScheme(t)
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(ainstr, ns, matchingPod, nonMatchingPod).
+		WithStatusSubresource(ainstr).
+		Build()
+	r := &controller.AgentInstrumentationReconciler{Client: c, Scheme: scheme}
+
+	if _, err := reconcile(t, r, "test"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	updated := &aepv1alpha1.AgentInstrumentation{}
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "test"}, updated); err != nil {
+		t.Fatalf("fetching: %v", err)
+	}
+	if updated.Status.InjectedCount != 1 {
+		t.Errorf("expected InjectedCount=1 (pod selector match only), got %d",
+			updated.Status.InjectedCount)
+	}
+}
+
+// TestReconcile_InjectionFailed verifies that an invalid selector causes the
+// reconciler to return an error and set Ready=False/InjectionFailed.
+func TestReconcile_InjectionFailed(t *testing.T) {
+	// An unknown LabelSelectorOperator causes metav1.LabelSelectorAsSelector
+	// to return an error, simulating a countInjectedPods failure without
+	// requiring a mockable client.
+	ainstr := &aepv1alpha1.AgentInstrumentation{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Generation: 1},
+		Spec: aepv1alpha1.AgentInstrumentationSpec{
+			Enabled: true,
+			NamespaceSelector: &metav1.LabelSelector{
+				MatchExpressions: []metav1.LabelSelectorRequirement{
+					{Key: "env", Operator: "InvalidOperator", Values: []string{"prod"}},
+				},
+			},
+		},
+	}
+	scheme := testScheme(t)
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(ainstr).
+		WithStatusSubresource(ainstr).
+		Build()
+	r := &controller.AgentInstrumentationReconciler{Client: c, Scheme: scheme}
+
+	_, err := reconcile(t, r, "test")
+	if err == nil {
+		t.Fatal("expected error from invalid label selector, got nil")
+	}
+
+	// The controller should still update status to InjectionFailed.
+	updated := &aepv1alpha1.AgentInstrumentation{}
+	if gErr := c.Get(context.Background(), types.NamespacedName{Name: "test"}, updated); gErr != nil {
+		t.Fatalf("fetching updated resource: %v", gErr)
+	}
+	requireCondition(t, updated.Status.Conditions,
+		aepv1alpha1.ConditionReady, metav1.ConditionFalse, aepv1alpha1.ReasonInjectionFailed)
 }

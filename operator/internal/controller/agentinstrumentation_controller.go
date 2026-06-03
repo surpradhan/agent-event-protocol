@@ -170,6 +170,10 @@ func (r *AgentInstrumentationReconciler) countInjectedPods(
 
 // setStatus updates the Ready condition and counters, then patches status via
 // the status subresource. It uses a MergeFrom patch to minimise write conflicts.
+//
+// Note: setStatus mutates ainstr.Status in place as a side effect of calling
+// apimeta.SetStatusCondition. Callers must not read ainstr.Status after this
+// call; re-fetch from the API server if the updated state is needed.
 func (r *AgentInstrumentationReconciler) setStatus(
 	ctx context.Context,
 	ainstr *aepv1alpha1.AgentInstrumentation,

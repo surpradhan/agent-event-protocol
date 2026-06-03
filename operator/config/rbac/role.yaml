@@ -5,16 +5,14 @@ kind: ClusterRole
 metadata:
   name: operator-role
 rules:
-  # AgentInstrumentation CRD management
+  # AgentInstrumentation: read (cache list/watch) + status patch only.
+  # The controller never creates or deletes CRs — users do.
   - apiGroups: [aep.dev]
     resources: [agentinstrumentations]
-    verbs: [get, list, watch, create, update, patch, delete]
+    verbs: [get, list, watch]
   - apiGroups: [aep.dev]
     resources: [agentinstrumentations/status]
     verbs: [get, update, patch]
-  - apiGroups: [aep.dev]
-    resources: [agentinstrumentations/finalizers]
-    verbs: [update]
   # Namespace + Pod reads for injectedCount reconciliation
   - apiGroups: [""]
     resources: [namespaces]
