@@ -1,17 +1,23 @@
-// Package v1alpha1 contains API types for the AEP operator.
-// Full types are defined in Step 2 (agentinstrumentation_types.go).
+// Copyright 2026 Surabhi Pradhan.
+// SPDX-License-Identifier: MIT
+
+// Package v1alpha1 contains API Schema definitions for the aep.dev v1alpha1 API group.
+// +groupName=aep.dev
 package v1alpha1
 
 import (
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/scheme"
 )
 
-// SchemeGroupVersion is the group version for the AEP operator API.
-var SchemeGroupVersion = schema.GroupVersion{Group: "aep.dev", Version: "v1alpha1"}
+var (
+	// GroupVersion is the group version for the AEP operator API.
+	GroupVersion = schema.GroupVersion{Group: "aep.dev", Version: "v1alpha1"}
 
-// AddToScheme adds AEP types to the given scheme.
-// Stub — types will be registered in Step 2 once CRD types are defined.
-func AddToScheme(_ *runtime.Scheme) error {
-	return nil
-}
+	// SchemeBuilder is used to register Go types with a Kubernetes scheme.
+	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
+
+	// AddToScheme adds the types in this group-version to the given scheme.
+	// Called from main.go's init() to register AgentInstrumentation types.
+	AddToScheme = SchemeBuilder.AddToScheme
+)
