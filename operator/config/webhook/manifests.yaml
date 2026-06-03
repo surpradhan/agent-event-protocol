@@ -1,6 +1,6 @@
 ---
 # Hand-authored — equivalent to `make manifests` output from +kubebuilder:webhook marker.
-# TLS cert injection is handled by cert-manager (see certificate.yaml).
+# TLS cert injection is handled by cert-manager (see service.yaml for Certificate + Issuer).
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
@@ -23,12 +23,12 @@ spec:
           operations: [CREATE]
           resources: [pods]
           scope: Namespaced
-      # ignore: if the webhook is down, pods still start (availability > strict enforcement)
+      # Ignore: pods still start if the webhook is unavailable.
       failurePolicy: Ignore
       sideEffects: None
-      # Only route pods that explicitly opt in, avoiding unnecessary webhook calls.
-      objectSelector:
-        matchExpressions:
-          - key: aep.dev/inject
-            operator: In
-            values: ["true"]
+      # NOTE: objectSelector is intentionally absent.
+      # The opt-in mechanism uses the aep.dev/inject ANNOTATION, not a label.
+      # objectSelector only matches labels, so adding it here would silently
+      # block all injection. The Handle() function gates injection on the
+      # annotation instead, which means all pod creates are routed here — the
+      # first check in Handle() is a fast no-op for unannotated pods.

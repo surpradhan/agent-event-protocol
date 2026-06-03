@@ -42,8 +42,9 @@ const (
 	// The controller reads this to compute status.injectedCount.
 	InjectedAnnotation = "aep.dev/injected"
 
-	// sidecarContainerName is the name of the injected container.
-	sidecarContainerName = "aep-sidecar"
+	// SidecarContainerName is the name of the injected container.
+	// Exported so tests and the controller can reference it without hardcoding.
+	SidecarContainerName = "aep-sidecar"
 
 	// webhookPath is the HTTP path the API server sends admission requests to.
 	webhookPath = "/mutate-core-v1-pod"
@@ -188,15 +189,17 @@ func (s *SidecarInjector) inject(
 	}
 	pod.Annotations[InjectedAnnotation] = "true"
 
-	sidecar := s.buildSidecar(pod, namespace, ainstr)
+	sidecar := s.buildSidecar(namespace, ainstr)
 	pod.Spec.Containers = append(pod.Spec.Containers, sidecar)
 }
 
 // buildSidecar constructs the AEP sidecar container spec.
-// Environment variables are layered: operator defaults → K8s downward API →
-// per-instrumentation overrides (ainstr.Spec.Env).
+// Environment variables are layered in this order (last wins):
+//  1. Operator defaults (AEP_SERVER_URL, AEP_NAMESPACE)
+//  2. Kubernetes downward API (AEP_POD_NAME, AEP_NODE_NAME, AEP_POD_UID)
+//  3. API key Secret (AEP_API_KEY, if spec.apiKeySecretRef is set)
+//  4. Per-instrumentation overrides (spec.env)
 func (s *SidecarInjector) buildSidecar(
-	pod *corev1.Pod,
 	namespace string,
 	ainstr *aepv1alpha1.AgentInstrumentation,
 ) corev1.Container {
@@ -247,7 +250,7 @@ func (s *SidecarInjector) buildSidecar(
 	}
 
 	return corev1.Container{
-		Name:            sidecarContainerName,
+		Name:            SidecarContainerName,
 		Image:           s.sidecarImage(ainstr),
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Env:             env,

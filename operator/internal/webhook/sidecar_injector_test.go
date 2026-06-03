@@ -13,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	jsonpatch "gomodules.xyz/jsonpatch/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -39,13 +40,12 @@ func testScheme(t *testing.T) *runtime.Scheme {
 func newInjector(t *testing.T, scheme *runtime.Scheme, objs ...client.Object) *webhook.SidecarInjector {
 	t.Helper()
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
-	inj := &webhook.SidecarInjector{
+	return &webhook.SidecarInjector{
 		Client:       c,
 		AEPServerURL: "http://aep.default.svc:8787",
 		SidecarImage: "ghcr.io/surpradhan/aep-sidecar:test",
 		Decoder:      admission.NewDecoder(scheme),
 	}
-	return inj
 }
 
 // podRequest builds an admission.Request for a Pod CREATE.
@@ -87,9 +87,18 @@ func enabledAinstr(name string, nsSelector *metav1.LabelSelector) *aepv1alpha1.A
 	}
 }
 
-// sidecarFromPatches extracts the aep-sidecar container from the admission
-// patches. Returns nil if no container add patch is found.
-func sidecarFromPatches(t *testing.T, patches []admission.JSONPatchOp) *corev1.Container {
+// requireAllowed fails the test if resp is not Allowed.
+func requireAllowed(t *testing.T, resp admission.Response) {
+	t.Helper()
+	if !resp.Allowed {
+		t.Fatalf("expected Allowed response, got denied: code=%v msg=%q",
+			resp.Result.GetCode(), resp.Result.GetMessage())
+	}
+}
+
+// sidecarFromPatches extracts the aep-sidecar container from JSON patch ops.
+// Returns nil if no matching container-add patch is found.
+func sidecarFromPatches(t *testing.T, patches []jsonpatch.JsonPatchOperation) *corev1.Container {
 	t.Helper()
 	for _, p := range patches {
 		if p.Operation == "add" && p.Path == "/spec/containers/-" {
@@ -101,7 +110,7 @@ func sidecarFromPatches(t *testing.T, patches []admission.JSONPatchOp) *corev1.C
 			if err := json.Unmarshal(raw, &c); err != nil {
 				t.Fatalf("unmarshalling container from patch: %v", err)
 			}
-			if c.Name == "aep-sidecar" {
+			if c.Name == webhook.SidecarContainerName {
 				return &c
 			}
 		}
@@ -109,14 +118,17 @@ func sidecarFromPatches(t *testing.T, patches []admission.JSONPatchOp) *corev1.C
 	return nil
 }
 
-// patchedAnnotation returns the value set by an annotations add patch, or "".
-func patchedAnnotation(patches []admission.JSONPatchOp, key string) string {
-	// JSON Patch escapes '/' as '~1' in paths.
+// patchedAnnotation returns the value added by an annotation-add patch, or "".
+// Implements RFC 6901 path escaping: ~ → ~0 first, then / → ~1.
+func patchedAnnotation(patches []jsonpatch.JsonPatchOperation, key string) string {
 	escapedKey := ""
 	for _, ch := range key {
-		if ch == '/' {
+		switch ch {
+		case '~':
+			escapedKey += "~0"
+		case '/':
 			escapedKey += "~1"
-		} else {
+		default:
 			escapedKey += string(ch)
 		}
 	}
@@ -131,7 +143,7 @@ func patchedAnnotation(patches []admission.JSONPatchOp, key string) string {
 	return ""
 }
 
-// envVal looks up an env var value by name (plain Value only, not ValueFrom).
+// envVal looks up a plain Value env var by name (ignores ValueFrom entries).
 func envVal(env []corev1.EnvVar, name string) string {
 	for _, e := range env {
 		if e.Name == name && e.ValueFrom == nil {
@@ -150,9 +162,7 @@ func TestHandle_NoAnnotation(t *testing.T) {
 	inj := newInjector(t, scheme, plainNS("default"))
 
 	resp := inj.Handle(context.Background(), podRequest(t, pod))
-	if !resp.Allowed {
-		t.Errorf("expected Allowed, got: %v", resp.Result)
-	}
+	requireAllowed(t, resp)
 	if len(resp.Patches) > 0 {
 		t.Errorf("expected no patches, got %d", len(resp.Patches))
 	}
@@ -170,9 +180,7 @@ func TestHandle_ExplicitOptOut(t *testing.T) {
 	inj := newInjector(t, scheme, plainNS("default"), enabledAinstr("global", nil))
 
 	resp := inj.Handle(context.Background(), podRequest(t, pod))
-	if !resp.Allowed {
-		t.Errorf("expected Allowed, got: %v", resp.Result)
-	}
+	requireAllowed(t, resp)
 	if len(resp.Patches) > 0 {
 		t.Errorf("expected no patches for opt-out, got %d", len(resp.Patches))
 	}
@@ -193,9 +201,7 @@ func TestHandle_AlreadyInjected(t *testing.T) {
 	inj := newInjector(t, scheme, plainNS("default"), enabledAinstr("global", nil))
 
 	resp := inj.Handle(context.Background(), podRequest(t, pod))
-	if !resp.Allowed {
-		t.Errorf("expected Allowed, got: %v", resp.Result)
-	}
+	requireAllowed(t, resp)
 	if len(resp.Patches) > 0 {
 		t.Errorf("expected no patches for already-injected pod, got %d", len(resp.Patches))
 	}
@@ -210,12 +216,10 @@ func TestHandle_NoCoveringInstrumentation(t *testing.T) {
 			Annotations: map[string]string{webhook.InjectAnnotation: "true"},
 		},
 	}
-	inj := newInjector(t, scheme, plainNS("default")) // no ainstr objects
+	inj := newInjector(t, scheme, plainNS("default")) // no ainstr
 
 	resp := inj.Handle(context.Background(), podRequest(t, pod))
-	if !resp.Allowed {
-		t.Errorf("expected Allowed, got: %v", resp.Result)
-	}
+	requireAllowed(t, resp)
 	if len(resp.Patches) > 0 {
 		t.Errorf("expected no patches, got %d", len(resp.Patches))
 	}
@@ -237,9 +241,7 @@ func TestHandle_DisabledInstrumentation(t *testing.T) {
 	inj := newInjector(t, scheme, plainNS("default"), ainstr)
 
 	resp := inj.Handle(context.Background(), podRequest(t, pod))
-	if !resp.Allowed {
-		t.Errorf("expected Allowed, got: %v", resp.Result)
-	}
+	requireAllowed(t, resp)
 	if len(resp.Patches) > 0 {
 		t.Errorf("expected no patches for disabled instrumentation, got %d", len(resp.Patches))
 	}
@@ -260,19 +262,15 @@ func TestHandle_Inject(t *testing.T) {
 	inj := newInjector(t, scheme, plainNS("default"), enabledAinstr("global", nil))
 
 	resp := inj.Handle(context.Background(), podRequest(t, pod))
-	if !resp.Allowed {
-		t.Fatalf("expected Allowed, got: %+v", resp.Result)
-	}
+	requireAllowed(t, resp)
 	if len(resp.Patches) == 0 {
 		t.Fatal("expected patches, got none")
 	}
 
-	// InjectedAnnotation must be added.
 	if got := patchedAnnotation(resp.Patches, webhook.InjectedAnnotation); got != "true" {
 		t.Errorf("aep.dev/injected=%q, want true", got)
 	}
 
-	// Sidecar container must be appended.
 	sidecar := sidecarFromPatches(t, resp.Patches)
 	if sidecar == nil {
 		t.Fatalf("aep-sidecar container not found in patches: %+v", resp.Patches)
@@ -294,7 +292,6 @@ func TestHandle_NamespaceSelectorFilter(t *testing.T) {
 	ainstr := enabledAinstr("selective", &metav1.LabelSelector{
 		MatchLabels: map[string]string{"team": "ai"},
 	})
-
 	podIn := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "p", Namespace: "ai",
@@ -309,7 +306,6 @@ func TestHandle_NamespaceSelectorFilter(t *testing.T) {
 		},
 		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "x"}}},
 	}
-
 	inj := newInjector(t, scheme,
 		labelledNS("ai", map[string]string{"team": "ai"}),
 		plainNS("default"),
@@ -318,18 +314,14 @@ func TestHandle_NamespaceSelectorFilter(t *testing.T) {
 
 	// Pod in matching namespace → injected.
 	respIn := inj.Handle(context.Background(), podRequest(t, podIn))
-	if !respIn.Allowed {
-		t.Fatalf("expected Allowed for labelled NS: %+v", respIn.Result)
-	}
+	requireAllowed(t, respIn)
 	if sidecarFromPatches(t, respIn.Patches) == nil {
 		t.Error("expected sidecar injection in labelled namespace")
 	}
 
 	// Pod in unmatched namespace → not injected.
 	respOut := inj.Handle(context.Background(), podRequest(t, podOut))
-	if !respOut.Allowed {
-		t.Fatalf("expected Allowed for unlabelled NS: %+v", respOut.Result)
-	}
+	requireAllowed(t, respOut)
 	if len(respOut.Patches) > 0 {
 		t.Errorf("expected no patches for unlabelled namespace, got %d", len(respOut.Patches))
 	}
@@ -356,8 +348,9 @@ func TestHandle_PerCROverrides(t *testing.T) {
 	inj := newInjector(t, scheme, plainNS("default"), ainstr)
 
 	resp := inj.Handle(context.Background(), podRequest(t, pod))
-	if !resp.Allowed || len(resp.Patches) == 0 {
-		t.Fatalf("expected injection, got Allowed=%v patches=%d", resp.Allowed, len(resp.Patches))
+	requireAllowed(t, resp)
+	if len(resp.Patches) == 0 {
+		t.Fatal("expected injection patches, got none")
 	}
 	sidecar := sidecarFromPatches(t, resp.Patches)
 	if sidecar == nil {
@@ -384,9 +377,10 @@ func TestHandle_DefaultResources(t *testing.T) {
 	inj := newInjector(t, scheme, plainNS("default"), enabledAinstr("g", nil))
 
 	resp := inj.Handle(context.Background(), podRequest(t, pod))
+	requireAllowed(t, resp)
 	sidecar := sidecarFromPatches(t, resp.Patches)
 	if sidecar == nil {
-		t.Fatal("sidecar not found")
+		t.Fatal("sidecar not found in patches")
 	}
 	if sidecar.Resources.Requests == nil {
 		t.Error("expected default resource requests")
@@ -409,9 +403,10 @@ func TestHandle_SecurityContext(t *testing.T) {
 	inj := newInjector(t, scheme, plainNS("default"), enabledAinstr("g", nil))
 
 	resp := inj.Handle(context.Background(), podRequest(t, pod))
+	requireAllowed(t, resp)
 	sidecar := sidecarFromPatches(t, resp.Patches)
 	if sidecar == nil {
-		t.Fatal("sidecar not found")
+		t.Fatal("sidecar not found in patches")
 	}
 	sc := sidecar.SecurityContext
 	if sc == nil {
@@ -428,7 +423,7 @@ func TestHandle_SecurityContext(t *testing.T) {
 	}
 }
 
-// TestHandle_KubernetesMetadataEnv: downward API env vars are present.
+// TestHandle_KubernetesMetadataEnv: downward API env vars are wired via FieldRef.
 func TestHandle_KubernetesMetadataEnv(t *testing.T) {
 	scheme := testScheme(t)
 	pod := &corev1.Pod{
@@ -441,18 +436,18 @@ func TestHandle_KubernetesMetadataEnv(t *testing.T) {
 	inj := newInjector(t, scheme, plainNS("default"), enabledAinstr("g", nil))
 
 	resp := inj.Handle(context.Background(), podRequest(t, pod))
+	requireAllowed(t, resp)
 	sidecar := sidecarFromPatches(t, resp.Patches)
 	if sidecar == nil {
-		t.Fatal("sidecar not found")
+		t.Fatal("sidecar not found in patches")
 	}
 
-	// Check downward-API vars are wired up (ValueFrom, not plain Value).
 	downwardVars := map[string]string{
 		"AEP_POD_NAME":  "metadata.name",
 		"AEP_NODE_NAME": "spec.nodeName",
 		"AEP_POD_UID":   "metadata.uid",
 	}
-	envByName := make(map[string]corev1.EnvVar)
+	envByName := make(map[string]corev1.EnvVar, len(sidecar.Env))
 	for _, e := range sidecar.Env {
 		envByName[e.Name] = e
 	}
@@ -467,13 +462,16 @@ func TestHandle_KubernetesMetadataEnv(t *testing.T) {
 			continue
 		}
 		if e.ValueFrom.FieldRef.FieldPath != fieldPath {
-			t.Errorf("%s: fieldPath=%q, want %q", varName, e.ValueFrom.FieldRef.FieldPath, fieldPath)
+			t.Errorf("%s: fieldPath=%q, want %q",
+				varName, e.ValueFrom.FieldRef.FieldPath, fieldPath)
 		}
 	}
 }
 
 // TestHandle_AlphabeticalConflictResolution: when two ainstr resources cover the
 // same namespace, alphabetically-first wins.
+// ainstrZ is inserted into the fake client FIRST to ensure the sort is actually
+// exercised — without sortByName, "zzz" would be found first.
 func TestHandle_AlphabeticalConflictResolution(t *testing.T) {
 	scheme := testScheme(t)
 	ainstrA := &aepv1alpha1.AgentInstrumentation{
@@ -497,15 +495,19 @@ func TestHandle_AlphabeticalConflictResolution(t *testing.T) {
 		},
 		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "x"}}},
 	}
-	inj := newInjector(t, scheme, plainNS("default"), ainstrA, ainstrZ)
+
+	// ainstrZ inserted first so the fake client's natural order would pick "zzz"
+	// without the sort. If sortByName is working, "aaa" must win.
+	inj := newInjector(t, scheme, plainNS("default"), ainstrZ, ainstrA)
 
 	resp := inj.Handle(context.Background(), podRequest(t, pod))
+	requireAllowed(t, resp)
 	sidecar := sidecarFromPatches(t, resp.Patches)
 	if sidecar == nil {
-		t.Fatal("sidecar not found")
+		t.Fatal("sidecar not found in patches")
 	}
 	if sidecar.Image != "image-from-aaa" {
-		t.Errorf("expected alphabetically-first ainstr to win; image=%q, want image-from-aaa",
+		t.Errorf("alphabetically-first ainstr should win; got image=%q, want image-from-aaa",
 			sidecar.Image)
 	}
 }
