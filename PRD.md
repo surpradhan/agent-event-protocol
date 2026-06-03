@@ -45,7 +45,7 @@ As agent frameworks proliferate (LangGraph, CrewAI, AutoGen, custom orchestrator
 
 ### The window
 
-OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) are being standardised now. The window to establish AEP as the reference vocabulary is approximately 6–12 months. The counter-move: **contribute AEP's event types to the OTEL GenAI SIG** so that AEP becomes the reference implementation rather than a competitor.
+OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) are being standardized now. The window to establish AEP as the reference vocabulary is approximately 6–12 months. The counter-move: **contribute AEP's event types to the OTEL GenAI SIG** so that AEP becomes the reference implementation rather than a competitor.
 
 ---
 
@@ -162,7 +162,7 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 - ✅ OTEL SDK can export traces to AEP
 - ✅ Trace context (trace ID, span ID, parent span ID) maps to AEP causation chains
 - ✅ Drop-in replacement for existing OTEL exporters
-- ✅ AEP event types proposed / accepted in OTEL GenAI semantic conventions
+- ⏳ AEP event types proposed / accepted in OTEL GenAI semantic conventions
 
 ### Phase 12: Framework Auto-Instrumentation (Q2 2026)
 
@@ -176,15 +176,15 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 **Why this matters:** The K8s operator covers infra teams; auto-instrumentation covers every developer running agents locally or in serverless. This is the highest-leverage adoption lever.
 
 **Success criteria:**
-- ✅ `aep.instrument()` works on LangGraph + CrewAI with no other code changes
-- ✅ At least one framework ships native AEP emission
-- ✅ Demo published that shows causation chain replay for a failed multi-agent workflow
+- ⏳ `aep.instrument()` works on LangGraph + CrewAI with no other code changes, tested against LangGraph ≥0.1, CrewAI ≥0.2, AutoGen ≥0.3
+- ⏳ At least one framework ships native AEP emission
+- ⏳ Demo published that shows causation chain replay for a failed multi-agent workflow
 
 ### Phase 13: Hosted SaaS — aep.dev (Q3 2026)
 
 **Objective:** Remove the self-hosting barrier and make AEP a product people depend on daily.
 
-- **Free tier**: unlimited events for individuals, 30-day retention, 1 project
+- **Free tier**: unlimited events for individuals up to 5 GB storage, 30-day retention, 1 project
 - **Team tier**: multi-tenant, 90-day retention, SSO, shared dashboards
 - **Enterprise tier**: unlimited retention, SAML, dedicated ingest endpoint, SLA
 - Postgres backend replacing SQLite for production durability
@@ -202,7 +202,7 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 
 **Objective:** Own the enterprise compliance story that no other agent observability tool addresses.
 
-- **Immutable audit log**: HMAC-signed event chains with cryptographic proof of ordering and integrity
+- **Cryptographic tamper-detection**: HMAC-signed events — any post-hoc modification to the event payload or ordering is detectable, even if the underlying storage is accessible. Note: this provides *detection* guarantees, not storage immutability; WORM storage can be added at the infrastructure layer for stricter requirements
 - **Audit export**: export signed event logs as tamper-evident bundles (PDF + JSON) for legal/compliance review
 - **Policy enforcement reporting**: `policy.blocked` event analytics — what did the agent refuse to do, and when?
 - **Data residency controls**: choose region for event storage (EU, US, APAC)
@@ -367,6 +367,7 @@ AEP Ingest Server
 
 We welcome contributions across:
 - **Framework Integrations** — LangGraph, CrewAI, AutoGen, Vercel AI SDK auto-instrumentation patches
+- **Kubernetes Operator** — multi-cluster support, OTEL sidecar integration, additional webhook policies
 - **Additional SDKs** — Rust, Java, Ruby, TypeScript (native, not Node.js)
 - **OpenTelemetry Bridge** — OTEL Collector plugin + GenAI SIG contributions
 - **Dashboard Enhancements** — better visualization, advanced filtering, causation DAG replay
