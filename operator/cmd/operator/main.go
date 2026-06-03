@@ -5,6 +5,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -13,10 +14,22 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	aepv1alpha1 "github.com/surpradhan/aep-operator/api/v1alpha1"
 	"github.com/surpradhan/aep-operator/internal/controller"
 	"github.com/surpradhan/aep-operator/internal/webhook"
+)
+
+// Build-time version information injected via ldflags:
+//
+//	-X main.version=$(git describe --tags --always --dirty)
+//	-X main.gitCommit=$(git rev-parse --short HEAD)
+//	-X main.buildDate=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+var (
+	version   = "dev"
+	gitCommit = "none"
+	buildDate = "unknown"
 )
 
 var (
@@ -36,27 +49,41 @@ func main() {
 		enableLeaderElection bool
 		aepServerURL         string
 		sidecarImage         string
+		showVersion          bool
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
-		"The address the metric endpoint binds to.")
+		"The address the metrics endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081",
-		"The address the probe endpoint binds to.")
+		"The address the health probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
-		"Enable leader election for high-availability deployments.")
+		"Enable leader election for high-availability deployments. "+
+			"Recommended for production (set to true).")
 	flag.StringVar(&aepServerURL, "aep-server-url", "http://aep-ingest.aep-system.svc.cluster.local:8787",
 		"URL of the AEP ingest server.")
 	flag.StringVar(&sidecarImage, "sidecar-image", "ghcr.io/surpradhan/aep-sidecar:latest",
 		"Container image for the AEP sidecar injected into agent pods.")
-	opts := zap.Options{Development: true}
+	flag.BoolVar(&showVersion, "version", false,
+		"Print version information and exit.")
+
+	// zap.Options defaults Development to false; flags allow override at runtime.
+	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
+
+	if showVersion {
+		fmt.Printf("aep-operator version=%s commit=%s buildDate=%s\n",
+			version, gitCommit, buildDate)
+		os.Exit(0)
+	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		MetricsBindAddress:     metricsAddr,
+		Scheme: scheme,
+		Metrics: metricsserver.Options{
+			BindAddress: metricsAddr,
+		},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "aep-operator.aep.dev",
@@ -95,6 +122,8 @@ func main() {
 	}
 
 	setupLog.Info("starting AEP operator",
+		"version", version,
+		"commit", gitCommit,
 		"aep-server-url", aepServerURL,
 		"sidecar-image", sidecarImage,
 	)

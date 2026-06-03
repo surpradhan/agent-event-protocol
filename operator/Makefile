@@ -1,38 +1,50 @@
 # AEP Operator Makefile
 
-# Tool versions
+# ── Versions ──────────────────────────────────────────────────────────────────
 CONTROLLER_GEN_VERSION ?= v0.14.0
-ENVTEST_VERSION        ?= release-0.17
+ENVTEST_VERSION        ?= v0.17.3
 
-# Image settings
-IMG          ?= ghcr.io/surpradhan/aep-operator:latest
-SIDECAR_IMG  ?= ghcr.io/surpradhan/aep-sidecar:latest
+# ── Image settings ────────────────────────────────────────────────────────────
+IMG         ?= ghcr.io/surpradhan/aep-operator:latest
+SIDECAR_IMG ?= ghcr.io/surpradhan/aep-sidecar:latest
 
-# Go settings
+# ── Build metadata (injected via ldflags) ────────────────────────────────────
+VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
+BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+LDFLAGS    := -s -w \
+	-X main.version=$(VERSION) \
+	-X main.gitCommit=$(GIT_COMMIT) \
+	-X main.buildDate=$(BUILD_DATE)
+
+# ── Go settings ───────────────────────────────────────────────────────────────
 GOBIN ?= $(shell go env GOPATH)/bin
 
-.PHONY: all build test lint generate manifests install uninstall deploy undeploy help
+.PHONY: all build test lint tidy generate manifests install uninstall \
+        deploy undeploy docker-build docker-push controller-gen envtest help
 
-all: generate manifests build
+all: generate manifests build ## Run generate + manifests + build
 
-## Build the operator binary
-build:
-	go build -o bin/operator ./cmd/operator/...
+# ── Development ───────────────────────────────────────────────────────────────
 
-## Run all unit tests
-test:
+build: ## Build the operator binary (with version ldflags)
+	go build -ldflags="$(LDFLAGS)" -o bin/operator ./cmd/operator/...
+
+test: ## Run all unit tests
 	go test ./... -v -count=1
 
-## Run linter
-lint:
+lint: ## Run golangci-lint
 	golangci-lint run ./...
 
-## Generate DeepCopyObject implementations
-generate:
+tidy: ## Run go mod tidy (required after first clone and after adding deps)
+	go mod tidy
+
+# ── Code generation ───────────────────────────────────────────────────────────
+
+generate: ## Generate DeepCopyObject implementations via controller-gen
 	$(GOBIN)/controller-gen object:headerFile="hack/boilerplate.go.txt" paths="./..."
 
-## Generate CRD, RBAC, and webhook manifests from Go types
-manifests:
+manifests: ## Generate CRD, RBAC, and webhook manifests from Go type markers
 	$(GOBIN)/controller-gen \
 		crd rbac:roleName=operator-role webhook \
 		paths="./..." \
@@ -40,38 +52,45 @@ manifests:
 		output:rbac:artifacts:config=config/rbac \
 		output:webhook:artifacts:config=config/webhook
 
-## Install CRDs into the current cluster
-install:
+# ── Cluster operations ────────────────────────────────────────────────────────
+
+install: ## Install CRDs into the current cluster
 	kubectl apply -f config/crd/
 
-## Uninstall CRDs from the current cluster
-uninstall:
+uninstall: ## Uninstall CRDs from the current cluster
 	kubectl delete --ignore-not-found -f config/crd/
 
-## Deploy operator to the current cluster
-deploy:
-	kubectl apply -f config/
+deploy: ## Deploy operator to current cluster (CRDs → RBAC → manager, in order)
+	kubectl apply -f config/crd/
+	kubectl apply -f config/rbac/
+	kubectl apply -f config/webhook/
+	kubectl apply -f config/manager/
 
-## Undeploy operator from the current cluster
-undeploy:
-	kubectl delete --ignore-not-found -f config/
+undeploy: ## Undeploy operator from current cluster
+	kubectl delete --ignore-not-found -f config/manager/
+	kubectl delete --ignore-not-found -f config/webhook/
+	kubectl delete --ignore-not-found -f config/rbac/
+	kubectl delete --ignore-not-found -f config/crd/
 
-## Build and push Docker image
-docker-build:
-	docker build -t $(IMG) .
+# ── Docker ────────────────────────────────────────────────────────────────────
 
-docker-push:
-	docker push $(IMG)
+docker-build: ## Build operator Docker image (multi-arch via BuildKit)
+	docker buildx build --platform linux/amd64,linux/arm64 -t $(IMG) .
 
-## Install controller-gen
-.PHONY: controller-gen
-controller-gen:
+docker-push: ## Push operator Docker image
+	docker buildx build --platform linux/amd64,linux/arm64 -t $(IMG) --push .
+
+# ── Tool installation ─────────────────────────────────────────────────────────
+
+controller-gen: ## Install controller-gen
 	go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
 
-## Install setup-envtest
-.PHONY: envtest
-envtest:
+envtest: ## Install setup-envtest
 	go install sigs.k8s.io/controller-runtime/tools/setup-envtest@$(ENVTEST_VERSION)
 
-help:
-	@grep -E '^##' Makefile | sed 's/## //'
+# ── Help ──────────────────────────────────────────────────────────────────────
+
+help: ## Display this help
+	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n\nTargets:\n"} \
+	/^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2 }' \
+	$(MAKEFILE_LIST)
