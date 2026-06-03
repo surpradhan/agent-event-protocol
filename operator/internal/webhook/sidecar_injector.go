@@ -59,7 +59,7 @@ type SidecarInjector struct {
 	AEPServerURL string
 	SidecarImage string
 	// Decoder is set by SetupWithManager and may be overridden in tests.
-	Decoder admission.Decoder
+	Decoder *admission.Decoder
 }
 
 // Handle processes a mutating admission request for a Pod.
