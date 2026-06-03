@@ -1,0 +1,40 @@
+---
+# Service that routes webhook admission requests to the operator pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: aep-operator-webhook-service
+  namespace: aep-system
+  labels:
+    app.kubernetes.io/name: aep-operator
+spec:
+  selector:
+    app.kubernetes.io/name: aep-operator
+  ports:
+    - name: webhook
+      port: 443
+      targetPort: 9443  # controller-runtime webhook server default port
+---
+# cert-manager Certificate for TLS — the CA bundle is injected into the
+# MutatingWebhookConfiguration by the cert-manager cainjector.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: aep-operator-serving-cert
+  namespace: aep-system
+spec:
+  dnsNames:
+    - aep-operator-webhook-service.aep-system.svc
+    - aep-operator-webhook-service.aep-system.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: aep-operator-selfsigned-issuer
+  secretName: aep-operator-webhook-server-cert
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: aep-operator-selfsigned-issuer
+  namespace: aep-system
+spec:
+  selfSigned: {}

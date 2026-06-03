@@ -1,0 +1,34 @@
+---
+# Hand-authored — equivalent to `make manifests` output from +kubebuilder:webhook marker.
+# TLS cert injection is handled by cert-manager (see certificate.yaml).
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: aep-mutating-webhook-configuration
+  annotations:
+    # cert-manager injects the CA bundle into this field automatically.
+    cert-manager.io/inject-ca-from: aep-system/aep-operator-serving-cert
+spec:
+  webhooks:
+    - name: mpod.aep.dev
+      admissionReviewVersions: [v1]
+      clientConfig:
+        service:
+          name: aep-operator-webhook-service
+          namespace: aep-system
+          path: /mutate-core-v1-pod
+      rules:
+        - apiGroups: [""]
+          apiVersions: [v1]
+          operations: [CREATE]
+          resources: [pods]
+          scope: Namespaced
+      # ignore: if the webhook is down, pods still start (availability > strict enforcement)
+      failurePolicy: Ignore
+      sideEffects: None
+      # Only route pods that explicitly opt in, avoiding unnecessary webhook calls.
+      objectSelector:
+        matchExpressions:
+          - key: aep.dev/inject
+            operator: In
+            values: ["true"]

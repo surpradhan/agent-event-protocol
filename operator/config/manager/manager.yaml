@@ -71,4 +71,12 @@ spec:
             limits:
               cpu: 500m
               memory: 128Mi
+          volumeMounts:
+            - name: webhook-cert
+              mountPath: /tmp/k8s-webhook-server/serving-certs
+              readOnly: true
+      volumes:
+        - name: webhook-cert
+          secret:
+            secretName: aep-operator-webhook-server-cert
       terminationGracePeriodSeconds: 60  # allow in-flight reconciles + webhook requests to drain
