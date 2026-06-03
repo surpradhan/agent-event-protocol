@@ -1,0 +1,87 @@
+# ── Operator image ────────────────────────────────────────────────────────────
+image:
+  repository: ghcr.io/surpradhan/aep-operator
+  # tag defaults to .Chart.AppVersion when left empty
+  tag: ""
+  # Use Always for mutable tags (:latest); IfNotPresent for pinned semver tags.
+  pullPolicy: Always
+  pullSecrets: []
+
+# ── Sidecar image injected into opted-in agent pods ──────────────────────────
+sidecar:
+  image:
+    repository: ghcr.io/surpradhan/aep-sidecar
+    tag: latest
+
+# ── AEP ingest server URL (passed as --aep-server-url) ───────────────────────
+aepServerURL: http://aep-ingest.aep-system.svc.cluster.local:8787
+
+# ── Operator deployment ───────────────────────────────────────────────────────
+replicaCount: 1
+
+# Enable leader election for HA deployments (recommended for production).
+leaderElect: true
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Override the namespace for all resources. Defaults to .Release.Namespace.
+namespaceOverride: ""
+
+serviceAccount:
+  # Defaults to the chart fullname when empty.
+  name: ""
+  annotations: {}
+
+# Resource requests/limits for the operator container.
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 128Mi
+
+# Pod-level security context (applies to all containers in the operator pod).
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container-level security context for the operator container.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Extra environment variables for the operator container.
+extraEnv: []
+# - name: MY_VAR
+#   value: my-value
+
+# Extra labels to add to all resources.
+commonLabels: {}
+
+# ── Mutating webhook ──────────────────────────────────────────────────────────
+webhook:
+  # Set to false to disable the MutatingWebhookConfiguration and webhook Service.
+  # The operator will still run but no sidecar injection occurs.
+  enabled: true
+
+  # Use cert-manager to provision TLS for the webhook server.
+  # When false, you must supply a TLS Secret named aep-operator-webhook-server-cert
+  # in the operator namespace before deploying.
+  certManager:
+    enabled: true
+
+# ── CRD installation ──────────────────────────────────────────────────────────
+# CRDs are placed in helm/aep-operator/crds/ so Helm installs them before
+# other resources and skips re-installation on upgrades (Helm 3 behaviour).
+# Set crds.install=false only when managing CRDs externally (e.g. via GitOps).
+crds:
+  install: true

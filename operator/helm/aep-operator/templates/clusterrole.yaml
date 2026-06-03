@@ -1,0 +1,29 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "aep-operator.fullname" . }}
+  labels:
+    {{- include "aep-operator.labels" . | nindent 4 }}
+rules:
+  # AgentInstrumentation: read-only on the CR; patch on status subresource.
+  - apiGroups: [aep.dev]
+    resources: [agentinstrumentations]
+    verbs: [get, list, watch]
+  - apiGroups: [aep.dev]
+    resources: [agentinstrumentations/status]
+    verbs: [get, update, patch]
+  # Namespace + Pod reads for injectedCount reconciliation.
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+  # Leader election leases.
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # Kubernetes Event emission.
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]

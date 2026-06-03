@@ -1,0 +1,50 @@
+AEP Operator {{ .Chart.AppVersion }} installed in namespace {{ include "aep-operator.namespace" . }}.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+QUICK START
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Create an AgentInstrumentation resource to enable injection:
+
+   kubectl apply -f - <<EOF
+   apiVersion: aep.dev/v1alpha1
+   kind: AgentInstrumentation
+   metadata:
+     name: default
+   spec:
+     enabled: true
+     aepServerURL: {{ .Values.aepServerURL }}
+   EOF
+
+2. Annotate pods to opt in to sidecar injection:
+
+   kubectl annotate pod <pod-name> aep.dev/inject=true
+
+   Or add to your Deployment pod template:
+     annotations:
+       aep.dev/inject: "true"
+
+3. Monitor injection status:
+
+   kubectl get ainstr
+
+4. View operator logs:
+
+   kubectl logs -n {{ include "aep-operator.namespace" . }} \
+     deployment/{{ include "aep-operator.fullname" . }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{{- if .Values.webhook.enabled }}
+Webhook:  ENABLED  (failurePolicy=Ignore — pods start even if webhook is down)
+{{- else }}
+Webhook:  DISABLED — no sidecar injection will occur.
+          Re-enable with: helm upgrade {{ .Release.Name }} ... --set webhook.enabled=true
+{{- end }}
+{{- if and .Values.webhook.enabled .Values.webhook.certManager.enabled }}
+TLS:      Managed by cert-manager (self-signed issuer)
+{{- else if .Values.webhook.enabled }}
+TLS:      BYO — ensure Secret {{ include "aep-operator.webhookCertSecret" . }}
+          exists in namespace {{ include "aep-operator.namespace" . }} before pods are scheduled.
+{{- end }}
+AEP URL:  {{ .Values.aepServerURL }}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

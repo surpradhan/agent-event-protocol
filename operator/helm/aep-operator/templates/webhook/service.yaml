@@ -1,0 +1,16 @@
+{{- if .Values.webhook.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aep-operator.webhookServiceName" . }}
+  namespace: {{ include "aep-operator.namespace" . }}
+  labels:
+    {{- include "aep-operator.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "aep-operator.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: webhook
+      port: 443
+      targetPort: 9443
+{{- end }}

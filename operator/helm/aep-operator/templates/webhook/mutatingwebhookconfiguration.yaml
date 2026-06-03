@@ -1,0 +1,34 @@
+{{- if .Values.webhook.enabled }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ include "aep-operator.fullname" . }}-mutating-webhook-configuration
+  labels:
+    {{- include "aep-operator.labels" . | nindent 4 }}
+  {{- if .Values.webhook.certManager.enabled }}
+  annotations:
+    # cert-manager injects the CA bundle from the Certificate named below.
+    cert-manager.io/inject-ca-from: {{ include "aep-operator.namespace" . }}/{{ include "aep-operator.fullname" . }}-serving-cert
+  {{- end }}
+spec:
+  webhooks:
+    - name: mpod.aep.dev
+      admissionReviewVersions: [v1]
+      clientConfig:
+        service:
+          name: {{ include "aep-operator.webhookServiceName" . }}
+          namespace: {{ include "aep-operator.namespace" . }}
+          path: /mutate-core-v1-pod
+      rules:
+        - apiGroups: [""]
+          apiVersions: [v1]
+          operations: [CREATE]
+          resources: [pods]
+          scope: Namespaced
+      # Ignore: pods still start if the webhook is temporarily unavailable.
+      failurePolicy: Ignore
+      sideEffects: None
+      # NOTE: objectSelector is intentionally absent — the opt-in mechanism
+      # uses the aep.dev/inject ANNOTATION, not a label. Handle() gates
+      # injection on the annotation; unannotated pods are a fast no-op.
+{{- end }}
