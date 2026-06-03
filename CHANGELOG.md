@@ -4,6 +4,36 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Phase 9 — Go SDK (2026-06-03)
+
+No breaking changes to the event envelope schema or existing API contracts.
+
+**New: `aep-go` Go package** (`sdks/go/`)
+
+A production-ready Go SDK with full parity to JavaScript and Python SDKs:
+
+- **Types & Events** — `EventType` enum, `AgentRole` enum, 12 core event types, `CreateEvent()` factory with optional fields
+- **Validation** — JSON Schema validation via `jsonschema/v5`; payload `$schema` resolution with 1-hour TTL caching; graceful handling of invalid/relative URIs (warnings, not errors)
+- **Signing** — `SignEvent()` / `VerifySignature()` — HMAC-SHA256 with canonical JSON form (exact parity with JS/Python); `hmac.Equal()` for constant-time verification
+- **HTTP clients** — `Client` (sync) and `AsyncClient` (async with goroutines); both support context timeouts, API key auth, all endpoints; explicit HTTP 202/422 handling
+- **Error hierarchy** — `AEPError` base type + specific types: `ErrValidation`, `ErrAuth`, `ErrRateLimit`, `ErrNotFound`, `ErrConnection`, `ErrServer`
+- **CLI tool** (`cmd/aep-go/`) — `emit`, `session`, `validate`, `health`, `ready` commands with full flag coverage
+- **Examples** — `subagent_research.go` — multi-agent orchestrator + 3 parallel sub-agents with causation chains
+
+**Test suite** (`tests/`)
+
+80+ tests:
+- 69+ unit tests (event creation, validation, signing, client methods)
+- 11 integration tests (auto-skip if server unavailable) covering emit, batch, multi-agent workflows, signatures
+
+**Key improvements**
+- Payload schema cache with TTL prevents unbounded memory growth in long-running processes
+- Context cancellation detection in `AsyncClient.EmitBatch` prevents resource leaks
+- HTTP 422 handler extracts schema validation error messages from response body
+- Comprehensive error tests for network failures, invalid URIs, relative URIs
+
+---
+
 ## Phase 8 — Python SDK (2026-06-02)
 
 No breaking changes to the event envelope schema or existing API contracts.

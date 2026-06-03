@@ -75,6 +75,43 @@ python sdks/python/demos/subagent_research.py
 
 See [`sdks/python/README.md`](sdks/python/README.md) for the full Python SDK reference.
 
+### Go SDK
+
+```bash
+# Add to go.mod (or use github.com/surpradhan/aep-go)
+go get github.com/surpradhan/aep-go
+
+# Emit an event
+package main
+import (
+    "context"
+    "log"
+    "github.com/surpradhan/aep-go/aep"
+)
+
+func main() {
+    event, _ := aep.CreateEvent(
+        "agent://my-agent",
+        aep.EventTypeTaskCreated,
+        "ses_001",
+        "trc_001",
+        map[string]interface{}{"task": "analyze data"},
+        nil,
+    )
+    
+    client := aep.NewClient()
+    defer client.Close()
+    
+    resp, err := client.Emit(context.Background(), event)
+    if err != nil {
+        log.Fatal(err)
+    }
+    log.Printf("Emitted: %s", resp.ID)
+}
+```
+
+See [`sdks/go/README.md`](sdks/go/README.md) for the full Go SDK reference.
+
 ### Production Deployment (With Auth)
 
 ```bash
@@ -234,6 +271,7 @@ Typically indicates cross-tenant access attempt or insufficient scopes for the r
 | **[OpenAPI Docs](http://localhost:8787/docs)** | Interactive API reference (Swagger UI) |
 | **[openapi.json](http://localhost:8787/openapi.json)** | Machine-readable OpenAPI 3.1 spec |
 | **[sdks/python/README.md](./sdks/python/README.md)** | Python SDK reference — install, quick start, API, exceptions |
+| **[sdks/go/README.md](./sdks/go/README.md)** | Go SDK reference — install, quick start, API, CLI, examples |
 | **[AUTH.md](./AUTH.md)** | API key management, tenant scoping, HMAC signing |
 | **[CONTRIBUTING.md](./CONTRIBUTING.md)** | Development setup, code style, contribution workflow |
 | **[SECURITY.md](./SECURITY.md)** | Security guarantees, vulnerability disclosure, deployment checklist |
@@ -357,8 +395,9 @@ MIT License: see [LICENSE](./LICENSE) for details.
 
 ## 🔮 Roadmap
 
+- [x] JavaScript/TypeScript — Server + dashboard + CLI + docs
 - [x] Python SDK — [`sdks/python/`](sdks/python/) · sync + async clients, validator, HMAC signing, demo
-- [ ] Go SDK (`go get github.com/surpradhan/aep-go`)
+- [x] Go SDK — [`sdks/go/`](sdks/go/) · sync + async clients, validator, HMAC signing, CLI, demo
 - [ ] Kubernetes operator for automatic instrumentation
 - [ ] OTEL (OpenTelemetry) bridge
 - [ ] Advanced filtering & visualization in dashboard
