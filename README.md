@@ -5,7 +5,7 @@
 [![GitHub](https://img.shields.io/badge/GitHub-surpradhan/agent--event--protocol-blue?logo=github)](https://github.com/surpradhan/agent-event-protocol)
 [![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Tests: 92/92](https://img.shields.io/badge/tests-92%2F92-brightgreen)](#testing)
+[![Tests: 200+](https://img.shields.io/badge/tests-200%2B-brightgreen)](#testing)
 
 **Stop flying blind with AI agents.** AEP is a lightweight, structured observability framework for multi-agent systems. Capture causation chains, debug orchestration logic, visualize agent workflows: all in real time.
 
@@ -194,26 +194,18 @@ aep validate events.json
 
 Copy `.env.example` to `.env`. Key variables:
 
-| Variable | Default | Dev Behavior | Prod Behavior |
+| Variable | Default | Dev | Prod |
 |---|---|---|---|
-| `PORT` | `8787` | Same port | Same port (behind reverse proxy with TLS) |
-| `DATABASE_PATH` | `./data/aep.db` | Local SQLite | Should use durable storage + backups |
-| `DASHBOARD_TOKEN` | *(unset)* | Dashboard open (no auth) | **REQUIRED**: 503 if unset |
-| `ADMIN_TOKEN` | *(unset)* | `/admin/*` disabled | **REQUIRED**: 503 if unset |
-| `NODE_ENV` | *(unset)* | Optional | Set to `production` for structured logging |
+| `PORT` | `8787` | Same | Same (behind TLS reverse proxy) |
+| `DATABASE_PATH` | `./data/aep.db` | Local SQLite | Durable storage + backups |
+| `DASHBOARD_TOKEN` | (unset) | Open (no auth) | **REQUIRED** |
+| `ADMIN_TOKEN` | (unset) | Disabled | **REQUIRED** |
+| `NODE_ENV` | (unset) | Optional | Set to `production` |
 
-**Development mode** (all tokens unset):
-- Dashboard and read endpoints are open
-- Good for rapid iteration and demos
-- NOT suitable for shared/untrusted networks
+**Development mode:** Dashboard and read endpoints are open (rapid iteration, NOT for shared networks).  
+**Production mode:** All endpoints require auth, must deploy behind TLS reverse proxy with strong tokens (`openssl rand -hex 32`).
 
-**Production mode** (all tokens set):
-- Dashboard requires authentication
-- Admin endpoints require authentication
-- Must deploy behind TLS reverse proxy
-- Must configure strong tokens (use `openssl rand -hex 32`)
-
-See [AUTH.md](./AUTH.md) for auth setup, [SECURITY.md](./SECURITY.md) for production hardening, and [CHANGELOG.md](./CHANGELOG.md) for version history.
+See [AUTH.md](./AUTH.md) for auth setup, [SECURITY.md](./SECURITY.md) for hardening, and [SETUP.md](./SETUP.md) for troubleshooting.
 
 ---
 
@@ -274,9 +266,10 @@ Typically indicates cross-tenant access attempt or insufficient scopes for the r
 | **[sdks/go/README.md](./sdks/go/README.md)** | Go SDK reference — install, quick start, API, CLI, examples |
 | **[AUTH.md](./AUTH.md)** | API key management, tenant scoping, HMAC signing |
 | **[CONTRIBUTING.md](./CONTRIBUTING.md)** | Development setup, code style, contribution workflow |
-| **[SECURITY.md](./SECURITY.md)** | Security guarantees, vulnerability disclosure, deployment checklist |
-| **[CHANGELOG.md](./CHANGELOG.md)** | Version history and breaking changes |
-| **[SETUP.md](./SETUP.md)** | Detailed installation, configuration, troubleshooting |
+| **[SECURITY.md](./SECURITY.md)** | Threat model, vulnerability disclosure, production deployment checklist |
+| **[SETUP.md](./SETUP.md)** | Installation, configuration, troubleshooting |
+| **[CHANGELOG.md](./CHANGELOG.md)** | Version history (Phases 1-9) and breaking changes |
+| **[PRD.md](./PRD.md)** | Product vision, roadmap, and success metrics (Phases 10+) |
 | **[CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)** | Community standards and expectations |
 
 ---
@@ -320,15 +313,15 @@ Typically indicates cross-tenant access attempt or insufficient scopes for the r
 
 ## 🧪 Testing
 
-**JavaScript server (Node.js):**
+**JavaScript server (Node.js) — 82 tests**
 ```bash
-npm test                  # full suite (92 tests)
-npm run test:unit         # 87 unit tests (event protocol, validation, CLI)
-npm run test:integration  # 5 integration tests (HTTP server flow)
+npm test                  # full suite (55 unit + 27 integration)
+npm run test:unit         # 55 unit tests (event protocol, validation, CLI)
+npm run test:integration  # 27 integration tests (HTTP server flow)
 npm run lint              # ESLint checks
 ```
 
-**Python SDK:**
+**Python SDK — 118 tests**
 ```bash
 cd sdks/python
 pip install -e ".[dev]"
@@ -336,20 +329,21 @@ pytest tests/unit/        # 107 unit tests (no server needed)
 pytest tests/integration/ # 11 integration tests (auto-skip if server is down)
 ```
 
-**JS Test Coverage:**
-- ✅ Event protocol validation (14 types × 3 scenarios)
-- ✅ CLI argument parsing (parseArgs with flags, positionals, combinations)
-- ✅ API endpoint behavior (auth, rate limiting, validation)
-- ✅ Dashboard functionality (SSE, filters, exports)
-- ✅ Multi-tenant isolation (tenant_id enforcement)
-- ✅ Error handling (graceful degradation)
+**Go SDK — 80+ tests**
+```bash
+cd sdks/go
+go test ./...            # 69+ unit tests + 11 integration tests (auto-skip if server is down)
+```
 
-**Python SDK Test Coverage:**
-- ✅ Event creation, validation, HMAC sign/verify
-- ✅ Sync + async client: all endpoints, all error codes (400/401/403/404/429/5xx)
-- ✅ `emit_batch` partial-failure contract and concurrent execution
-- ✅ `__repr__` key masking, `ResourceWarning` on unclosed clients
-- ✅ Thread-safe schema caching, RFC 7231 `Retry-After` parsing
+**Test Coverage:**
+- ✅ Event protocol validation, creation, signing (all 12 event types)
+- ✅ JSON Schema validation with payload schema caching + TTL
+- ✅ API endpoints (auth, rate limiting, deduplication, exports)
+- ✅ Client libraries (sync + async, error handling, timeouts)
+- ✅ Multi-tenant isolation (per-API-key scoping)
+- ✅ HMAC-SHA256 signing and verification (constant-time)
+- ✅ CLI argument parsing and command behavior
+- ✅ Dashboard functionality (SSE, filtering, exports)
 
 ---
 
@@ -366,7 +360,6 @@ We welcome contributions! Here's how:
 
 **Areas we're looking for help:**
 - 📱 Mobile dashboard (React Native)
-- 🔗 Go SDK (`go get github.com/surpradhan/aep-go`)
 - 📈 Advanced metrics & analytics
 - 🌍 Internationalization
 - 🐳 Kubernetes operator for automatic instrumentation
