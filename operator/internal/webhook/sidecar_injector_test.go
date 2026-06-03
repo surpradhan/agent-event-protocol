@@ -92,7 +92,7 @@ func requireAllowed(t *testing.T, resp admission.Response) {
 	t.Helper()
 	if !resp.Allowed {
 		t.Fatalf("expected Allowed response, got denied: code=%v msg=%q",
-			resp.Result.GetCode(), resp.Result.GetMessage())
+			resp.Result.Code, resp.Result.Message)
 	}
 }
 
