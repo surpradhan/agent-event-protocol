@@ -16,14 +16,23 @@ import (
 //go:embed schemas/*.schema.json
 var schemaFS embed.FS
 
+// SchemaCacheEntry holds a cached schema with its expiration time
+type schemaCacheEntry struct {
+	schema    *jsonschema.Schema
+	expiresAt time.Time
+}
+
 var (
 	envelopeSchema   *jsonschema.Schema
 	coreEventsSchema *jsonschema.Schema
 	schemaMutex      sync.Mutex
 	schemasLoaded    bool
 	// Cache for fetched payload schemas to avoid repeated HTTP requests
-	payloadSchemaCache = make(map[string]*jsonschema.Schema)
+	// Schemas are cached with a 1-hour TTL to prevent unbounded growth
+	payloadSchemaCache = make(map[string]*schemaCacheEntry)
 	payloadSchemaMu    sync.RWMutex
+	// Schema cache TTL (1 hour)
+	schemaCacheTTL = 1 * time.Hour
 )
 
 // initSchemas loads the embedded schemas once, thread-safe.
@@ -118,7 +127,7 @@ func ValidateEvent(event *Event) (*ValidationResult, error) {
 }
 
 // validatePayloadSchema validates the event payload against a custom schema if provided.
-// Fetches the schema from the URI and caches it for future use.
+// Fetches the schema from the URI and caches it for future use (1-hour TTL).
 func validatePayloadSchema(event *Event) error {
 	if event.Schema == nil || *event.Schema == "" {
 		return nil
@@ -128,9 +137,14 @@ func validatePayloadSchema(event *Event) error {
 
 	// Check cache first
 	payloadSchemaMu.RLock()
-	if cachedSchema, exists := payloadSchemaCache[schemaURI]; exists {
-		payloadSchemaMu.RUnlock()
-		return validateAgainstSchema(event.Payload, cachedSchema)
+	if entry, exists := payloadSchemaCache[schemaURI]; exists {
+		// Check if cache entry has expired
+		if time.Now().Before(entry.expiresAt) {
+			schema := entry.schema
+			payloadSchemaMu.RUnlock()
+			return validateAgainstSchema(event.Payload, schema)
+		}
+		// Cache entry expired, will refetch below
 	}
 	payloadSchemaMu.RUnlock()
 
@@ -140,9 +154,12 @@ func validatePayloadSchema(event *Event) error {
 		return fmt.Errorf("failed to fetch schema from %s: %w", schemaURI, err)
 	}
 
-	// Cache the schema
+	// Cache the schema with TTL
 	payloadSchemaMu.Lock()
-	payloadSchemaCache[schemaURI] = schema
+	payloadSchemaCache[schemaURI] = &schemaCacheEntry{
+		schema:    schema,
+		expiresAt: time.Now().Add(schemaCacheTTL),
+	}
 	payloadSchemaMu.Unlock()
 
 	return validateAgainstSchema(event.Payload, schema)
