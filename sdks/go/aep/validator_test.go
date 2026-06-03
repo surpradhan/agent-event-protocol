@@ -390,3 +390,108 @@ func TestSchemasLoaded(t *testing.T) {
 		t.Fatalf("Second ValidateEvent call failed: %v", err)
 	}
 }
+
+func TestPayloadSchemaValidationWithoutSchema(t *testing.T) {
+	// Event without schema field should validate successfully
+	event, _ := CreateEvent(
+		"agent://test",
+		EventTypeTaskCreated,
+		"ses_001",
+		"trc_001",
+		map[string]interface{}{"data": "test"},
+		nil,
+	)
+
+	result, err := ValidateEvent(event)
+
+	if err != nil {
+		t.Fatalf("ValidateEvent failed: %v", err)
+	}
+
+	if !result.Valid {
+		t.Errorf("Expected valid event without schema, got errors: %v", result.Errors)
+	}
+}
+
+func TestPayloadSchemaValidationWithEmptySchema(t *testing.T) {
+	// Event with empty schema string should validate successfully
+	emptySchema := ""
+	event, _ := CreateEvent(
+		"agent://test",
+		EventTypeTaskCreated,
+		"ses_001",
+		"trc_001",
+		map[string]interface{}{"data": "test"},
+		&CreateEventOptions{
+			Schema: &emptySchema,
+		},
+	)
+
+	result, err := ValidateEvent(event)
+
+	if err != nil {
+		t.Fatalf("ValidateEvent failed: %v", err)
+	}
+
+	if !result.Valid {
+		t.Errorf("Expected valid event with empty schema, got errors: %v", result.Errors)
+	}
+}
+
+func TestPayloadSchemaValidationInvalidURI(t *testing.T) {
+	// Event with invalid schema URI should produce warning, not error
+	invalidSchema := "http://invalid.example.com/schema.json"
+	event, _ := CreateEvent(
+		"agent://test",
+		EventTypeTaskCreated,
+		"ses_001",
+		"trc_001",
+		map[string]interface{}{"data": "test"},
+		&CreateEventOptions{
+			Schema: &invalidSchema,
+		},
+	)
+
+	result, err := ValidateEvent(event)
+
+	// Validation should complete (not panic), with warnings about schema fetch failure
+	if err != nil {
+		t.Fatalf("ValidateEvent failed: %v", err)
+	}
+
+	// Invalid URI should produce a warning, not block validation
+	if !result.Valid {
+		t.Errorf("Expected event to be valid despite schema URI error, but got validation errors: %v", result.Errors)
+	}
+
+	// Should have warning about schema fetch
+	if len(result.Warnings) == 0 {
+		t.Errorf("Expected warning about schema fetch failure, got none")
+	}
+}
+
+func TestPayloadSchemaValidationRelativeURI(t *testing.T) {
+	// Event with relative URI (not valid for schema fetch) should produce warning
+	relativeSchema := "/schemas/task.json"
+	event, _ := CreateEvent(
+		"agent://test",
+		EventTypeTaskCreated,
+		"ses_001",
+		"trc_001",
+		map[string]interface{}{"data": "test"},
+		&CreateEventOptions{
+			Schema: &relativeSchema,
+		},
+	)
+
+	result, err := ValidateEvent(event)
+
+	if err != nil {
+		t.Fatalf("ValidateEvent failed: %v", err)
+	}
+
+	// Relative URI should produce warning but not fail validation
+	if len(result.Warnings) == 0 {
+		t.Errorf("Expected warning about relative URI, got none")
+	}
+}

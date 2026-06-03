@@ -58,6 +58,19 @@ func HandleResponse(resp *http.Response) (*HTTPResponse, error) {
 		return httpResp, NewAuthError("unauthorized", nil)
 	case http.StatusNotFound:
 		return httpResp, NewNotFoundError("resource not found", nil)
+	case http.StatusUnprocessableEntity:
+		// 422 Unprocessable Entity for schema validation errors
+		var errMsg string
+		var errData map[string]any
+		if err := json.Unmarshal(body, &errData); err == nil {
+			if msg, ok := errData["message"].(string); ok {
+				errMsg = msg
+			}
+		}
+		if errMsg == "" {
+			errMsg = "event schema validation failed"
+		}
+		return httpResp, NewValidationError(errMsg, nil)
 	case http.StatusTooManyRequests:
 		retryAfter := ParseRetryAfter(resp.Header.Get("Retry-After"))
 		return httpResp, NewRateLimitError("rate limit exceeded", retryAfter, nil)
