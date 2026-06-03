@@ -175,7 +175,7 @@ go test ./aep -cover -v
 
 ## Documentation
 
-- [Product Roadmap](../../PRD.md)
+- [AEP PRD](../../AEP_PRD.md)
 - [API Specification](../../README.md)
 - [Schema Reference](../../schemas/)
 

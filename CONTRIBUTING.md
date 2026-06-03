@@ -335,7 +335,7 @@ test("validateEvent rejects null input", () => {
 ## 🎓 Learning Resources
 
 ### Understanding AEP
-- [Product roadmap & vision](./PRD.md)
+- [Agent Event Protocol specification](./AEP_PRD.md)
 - [Setup guide with examples](./SETUP.md)
 - [Demo scenarios](./examples/demos/)
 
