@@ -20,7 +20,7 @@ LDFLAGS    := -s -w \
 # ── Go settings ───────────────────────────────────────────────────────────────
 GOBIN ?= $(shell go env GOPATH)/bin
 
-.PHONY: all build test lint tidy generate manifests install uninstall \
+.PHONY: all build test test-integration lint tidy generate manifests install uninstall \
         deploy undeploy docker-build docker-push controller-gen envtest help
 
 all: generate manifests build ## Run generate + manifests + build
@@ -30,8 +30,12 @@ all: generate manifests build ## Run generate + manifests + build
 build: ## Build the operator binary (with version ldflags)
 	go build -ldflags="$(LDFLAGS)" -o bin/operator ./cmd/operator/...
 
-test: ## Run all unit tests
-	go test ./... -v -count=1
+test: ## Run all unit tests (excludes integration tests)
+	go test $(shell go list ./... | grep -v /tests) -v -count=1
+
+test-integration: ## Run integration tests (requires: make envtest + KUBEBUILDER_ASSETS)
+	@echo "Ensure KUBEBUILDER_ASSETS is set: source <(setup-envtest use 1.29 -p env)"
+	go test -tags integration ./tests/... -v -count=1 -timeout 120s
 
 lint: ## Run golangci-lint
 	golangci-lint run ./...
