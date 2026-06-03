@@ -34,9 +34,8 @@ const (
 
 // AgentInstrumentationReconciler reconciles AgentInstrumentation resources.
 //
-// +kubebuilder:rbac:groups=aep.dev,resources=agentinstrumentations,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=aep.dev,resources=agentinstrumentations,verbs=get;list;watch
 // +kubebuilder:rbac:groups=aep.dev,resources=agentinstrumentations/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=aep.dev,resources=agentinstrumentations/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
