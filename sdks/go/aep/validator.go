@@ -5,7 +5,10 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"sync"
+	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
 )
@@ -14,10 +17,13 @@ import (
 var schemaFS embed.FS
 
 var (
-	envelopeSchema *jsonschema.Schema
+	envelopeSchema   *jsonschema.Schema
 	coreEventsSchema *jsonschema.Schema
-	schemaMutex    sync.Mutex
-	schemasLoaded  bool
+	schemaMutex      sync.Mutex
+	schemasLoaded    bool
+	// Cache for fetched payload schemas to avoid repeated HTTP requests
+	payloadSchemaCache = make(map[string]*jsonschema.Schema)
+	payloadSchemaMu    sync.RWMutex
 )
 
 // initSchemas loads the embedded schemas once, thread-safe.
@@ -112,12 +118,81 @@ func ValidateEvent(event *Event) (*ValidationResult, error) {
 }
 
 // validatePayloadSchema validates the event payload against a custom schema if provided.
+// Fetches the schema from the URI and caches it for future use.
 func validatePayloadSchema(event *Event) error {
 	if event.Schema == nil || *event.Schema == "" {
 		return nil
 	}
 
-	// For now, we skip custom schema validation as it requires fetching schemas by URI.
-	// This can be enhanced in the future with a schema registry.
-	return nil
+	schemaURI := *event.Schema
+
+	// Check cache first
+	payloadSchemaMu.RLock()
+	if cachedSchema, exists := payloadSchemaCache[schemaURI]; exists {
+		payloadSchemaMu.RUnlock()
+		return validateAgainstSchema(event.Payload, cachedSchema)
+	}
+	payloadSchemaMu.RUnlock()
+
+	// Fetch schema from URI
+	schema, err := fetchSchema(schemaURI)
+	if err != nil {
+		return fmt.Errorf("failed to fetch schema from %s: %w", schemaURI, err)
+	}
+
+	// Cache the schema
+	payloadSchemaMu.Lock()
+	payloadSchemaCache[schemaURI] = schema
+	payloadSchemaMu.Unlock()
+
+	return validateAgainstSchema(event.Payload, schema)
+}
+
+// fetchSchema fetches a JSON schema from a URI with timeout.
+func fetchSchema(schemaURI string) (*jsonschema.Schema, error) {
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+
+	resp, err := client.Get(schemaURI)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch schema: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("schema URI returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read schema body: %w", err)
+	}
+
+	schema, err := jsonschema.UnmarshalJSON(bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse schema: %w", err)
+	}
+
+	return schema, nil
+}
+
+// validateAgainstSchema validates payload data against a schema.
+func validateAgainstSchema(payload any, schema *jsonschema.Schema) error {
+	if payload == nil {
+		return nil
+	}
+
+	// Convert payload to map if needed
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	var payloadData any
+	if err := json.Unmarshal(payloadJSON, &payloadData); err != nil {
+		return fmt.Errorf("failed to unmarshal payload: %w", err)
+	}
+
+	return schema.Validate(payloadData)
 }

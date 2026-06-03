@@ -390,3 +390,50 @@ func TestSchemasLoaded(t *testing.T) {
 		t.Fatalf("Second ValidateEvent call failed: %v", err)
 	}
 }
+
+func TestPayloadSchemaValidationWithoutSchema(t *testing.T) {
+	// Event without schema field should validate successfully
+	event, _ := CreateEvent(
+		"agent://test",
+		EventTypeTaskCreated,
+		"ses_001",
+		"trc_001",
+		map[string]interface{}{"data": "test"},
+		nil,
+	)
+
+	result, err := ValidateEvent(event)
+
+	if err != nil {
+		t.Fatalf("ValidateEvent failed: %v", err)
+	}
+
+	if !result.Valid {
+		t.Errorf("Expected valid event without schema, got errors: %v", result.Errors)
+	}
+}
+
+func TestPayloadSchemaValidationWithEmptySchema(t *testing.T) {
+	// Event with empty schema string should validate successfully
+	emptySchema := ""
+	event, _ := CreateEvent(
+		"agent://test",
+		EventTypeTaskCreated,
+		"ses_001",
+		"trc_001",
+		map[string]interface{}{"data": "test"},
+		&CreateEventOptions{
+			Schema: &emptySchema,
+		},
+	)
+
+	result, err := ValidateEvent(event)
+
+	if err != nil {
+		t.Fatalf("ValidateEvent failed: %v", err)
+	}
+
+	if !result.Valid {
+		t.Errorf("Expected valid event with empty schema, got errors: %v", result.Errors)
+	}
+}
