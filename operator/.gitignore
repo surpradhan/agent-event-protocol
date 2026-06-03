@@ -1,0 +1,5 @@
+bin/
+testbin/
+*.test
+*.out
+cover.html
