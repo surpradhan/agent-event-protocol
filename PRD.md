@@ -26,6 +26,29 @@ AEP provides a unified observability framework for multi-agent AI systems. It en
 
 ---
 
+## 🏆 Market Position
+
+### What makes AEP different
+
+| Dimension | AEP | LangSmith / Langfuse / Arize | OpenTelemetry |
+|-----------|-----|-------------------------------|---------------|
+| **Model** | Open protocol — any language, any framework | Vendor SDK lock-in | Open standard, but microservice-native |
+| **Event semantics** | Agent-native: `handoff.started`, `policy.blocked`, `memory.read`, `tool.called` | LLM-focused spans and traces | Generic spans + attributes |
+| **Multi-agent hierarchy** | First-class: `session_id` → `parent_session_id` → `causation_id` + `agent_role` | Bolt-on parent span IDs | Parent span IDs only |
+| **Tamper-evident audit** | HMAC-SHA256 signatures on every event | No signing | No signing |
+| **Zero-code K8s** | Sidecar injection via operator | Not available | Requires SDK |
+| **Self-hostable** | Yes (SQLite → Postgres) | Limited / cloud-first | Yes |
+
+### The core thesis
+
+As agent frameworks proliferate (LangGraph, CrewAI, AutoGen, custom orchestrators), teams will need a **framework-neutral interoperability layer** rather than committing to one vendor's SDK. AEP is to multi-agent observability what CloudEvents is to serverless — an open envelope protocol that any emitter can speak and any consumer can understand.
+
+### The window
+
+OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) are being standardised now. The window to establish AEP as the reference vocabulary is approximately 6–12 months. The counter-move: **contribute AEP's event types to the OTEL GenAI SIG** so that AEP becomes the reference implementation rather than a competitor.
+
+---
+
 ## ✨ Completed Phases
 
 ### Phase 1-4: Core Server & Events (Q4 2025 → Q1 2026)
@@ -127,19 +150,73 @@ AEP provides a unified observability framework for multi-agent AI systems. It en
 
 ### Phase 11: OpenTelemetry Bridge (Q2 2026)
 
-**Objective:** Enable AEP to consume and emit traces via OpenTelemetry.
+**Objective:** Enable AEP to consume and emit traces via OpenTelemetry — positioned as complementary, not competing.
 
 - OTEL Collector receiver: consume traces from standard OTEL exporters
 - OTEL Collector exporter: push AEP events to the ingest API
 - Span-to-event mapping: translate OTEL spans to AEP events (preserving trace context)
 - Example: existing Datadog/NewRelic instrumentation → OTEL Collector → AEP ingest
+- Contribute AEP's agent-native event vocabulary to the OTEL GenAI SIG as the reference implementation
 
 **Success criteria:**
 - ✅ OTEL SDK can export traces to AEP
 - ✅ Trace context (trace ID, span ID, parent span ID) maps to AEP causation chains
 - ✅ Drop-in replacement for existing OTEL exporters
+- ✅ AEP event types proposed / accepted in OTEL GenAI semantic conventions
 
-### Phase 12: Advanced Dashboard Features (Q3 2026)
+### Phase 12: Framework Auto-Instrumentation (Q2 2026)
+
+**Objective:** Zero-friction adoption — instrument popular agent frameworks without any code changes.
+
+- **One-liner patching** for Python: `import aep; aep.instrument()` auto-patches LangGraph, CrewAI, AutoGen, and the Anthropic/OpenAI SDKs via monkey-patching
+- **Native integrations**: work with framework authors to emit AEP events as a first-party feature (LangGraph is the priority target)
+- **Node.js auto-instrumentation**: patch LangChain.js and Vercel AI SDK
+- **Demo**: 10-agent research workflow in LangGraph with full causation chain replay — shows the "before/after" that makes the value visceral
+
+**Why this matters:** The K8s operator covers infra teams; auto-instrumentation covers every developer running agents locally or in serverless. This is the highest-leverage adoption lever.
+
+**Success criteria:**
+- ✅ `aep.instrument()` works on LangGraph + CrewAI with no other code changes
+- ✅ At least one framework ships native AEP emission
+- ✅ Demo published that shows causation chain replay for a failed multi-agent workflow
+
+### Phase 13: Hosted SaaS — aep.dev (Q3 2026)
+
+**Objective:** Remove the self-hosting barrier and make AEP a product people depend on daily.
+
+- **Free tier**: unlimited events for individuals, 30-day retention, 1 project
+- **Team tier**: multi-tenant, 90-day retention, SSO, shared dashboards
+- **Enterprise tier**: unlimited retention, SAML, dedicated ingest endpoint, SLA
+- Postgres backend replacing SQLite for production durability
+- Multi-region ingest endpoints for low-latency global emission
+- Managed TLS, auth, and rate limiting — zero ops for users
+
+**Why this matters:** Nobody self-hosts observability. The hosted product converts "interesting open-source" into infrastructure teams depend on. It also funds ongoing development.
+
+**Success criteria:**
+- ✅ Public beta at aep.dev with functional free tier
+- ✅ <50ms p99 ingest latency globally
+- ✅ Zero-downtime deployments
+
+### Phase 14: Compliance & Audit Suite (Q3 2026)
+
+**Objective:** Own the enterprise compliance story that no other agent observability tool addresses.
+
+- **Immutable audit log**: HMAC-signed event chains with cryptographic proof of ordering and integrity
+- **Audit export**: export signed event logs as tamper-evident bundles (PDF + JSON) for legal/compliance review
+- **Policy enforcement reporting**: `policy.blocked` event analytics — what did the agent refuse to do, and when?
+- **Data residency controls**: choose region for event storage (EU, US, APAC)
+- **Compliance frameworks**: pre-built report templates for SOC2, HIPAA, GDPR, EU AI Act
+- **Access logs**: full API key usage audit trail
+
+**Why this matters:** Regulated industries (finance, healthcare, legal) are deploying AI agents now and have no way to prove to auditors what agents did and didn't do. AEP's HMAC signatures are uniquely positioned to answer this. No other agent observability tool has this story.
+
+**Success criteria:**
+- ✅ Audit export accepted by a compliance review in at least one regulated industry
+- ✅ `policy.blocked` analytics dashboard live
+- ✅ Data residency controls certified for EU AI Act
+
+### Phase 15: Advanced Dashboard Features (Q4 2026)
 
 **Objective:** Enhance real-time visualization and analytics.
 
@@ -149,7 +226,7 @@ AEP provides a unified observability framework for multi-agent AI systems. It en
 - **Anomaly detection**: alert when workflow deviates from expected patterns
 - **Custom analytics**: user-defined queries over event streams
 
-### Phase 13: Webhooks & Alerts (Q3 2026)
+### Phase 16: Webhooks & Alerts (Q4 2026)
 
 **Objective:** Trigger external actions based on events or patterns.
 
@@ -158,7 +235,7 @@ AEP provides a unified observability framework for multi-agent AI systems. It en
 - Filtering: subscribe to subsets of events (e.g., all `error.raised` events)
 - Signing: webhook payloads are HMAC-signed for verification
 
-### Phase 14: S3/Cloud Export (Q3 2026)
+### Phase 17: S3/Cloud Export (Q4 2026)
 
 **Objective:** Long-term archival and compliance.
 
@@ -171,14 +248,26 @@ AEP provides a unified observability framework for multi-agent AI systems. It en
 
 ## 📊 Success Metrics
 
+### Technical
+
 | Metric | Target | Status |
 |--------|--------|--------|
 | **SDK Language Coverage** | JS, Python, Go, Rust, Java | ✅ 3/5 (JS, Python, Go) |
 | **Test Coverage** | ≥80% | ✅ 90%+ |
 | **Event Latency (p99)** | <100ms | ✅ ~50ms (local) |
 | **Throughput** | ≥1000 events/sec | ✅ ~2000 events/sec |
-| **Uptime SLA** | ≥99.9% | ✅ N/A (research phase) |
+| **Uptime SLA** | ≥99.9% | ⏳ N/A (pre-SaaS) |
 | **Documentation** | All endpoints + SDKs | ✅ Complete |
+
+### Adoption
+
+| Metric | Target | Status |
+|--------|--------|--------|
+| **Framework integrations** | ≥3 major frameworks (LangGraph, CrewAI, AutoGen) | ⏳ Planned Phase 12 |
+| **GitHub stars** | 1,000 | ⏳ In progress |
+| **aep.dev free tier users** | 500 at launch | ⏳ Planned Phase 13 |
+| **OTEL GenAI SIG contribution** | AEP event types proposed | ⏳ Planned Phase 11 |
+| **Compliance case study** | 1 regulated industry deployment | ⏳ Planned Phase 14 |
 
 ---
 
@@ -277,10 +366,11 @@ AEP Ingest Server
 ## 🤝 Contributing
 
 We welcome contributions across:
-- **Additional SDKs** — Rust, Java, Ruby, Python (async improvements)
-- **Kubernetes Operator** — automatic instrumentation
-- **OpenTelemetry Bridge** — OTEL Collector plugin
-- **Dashboard Enhancements** — better visualization, advanced filtering
+- **Framework Integrations** — LangGraph, CrewAI, AutoGen, Vercel AI SDK auto-instrumentation patches
+- **Additional SDKs** — Rust, Java, Ruby, TypeScript (native, not Node.js)
+- **OpenTelemetry Bridge** — OTEL Collector plugin + GenAI SIG contributions
+- **Dashboard Enhancements** — better visualization, advanced filtering, causation DAG replay
+- **Compliance tooling** — audit export formats, policy analytics
 - **Performance** — query optimization, caching strategies
 - **Docs & Examples** — tutorials, case studies, best practices
 
@@ -317,4 +407,4 @@ Future phases will include:
 
 ---
 
-**Last Updated:** 2026-06-03 (Phase 10: Kubernetes Operator Complete)
+**Last Updated:** 2026-06-03 (Phase 10 complete; market strategy + Phases 12–14 added)
