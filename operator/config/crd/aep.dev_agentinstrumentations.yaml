@@ -261,7 +261,7 @@ spec:
                       status:
                         description: '"True", "False", or "Unknown".'
                         type: string
-                        enum: [True, False, Unknown]
+                        enum: ["True", "False", "Unknown"]
                       observedGeneration:
                         description: Generation at which this condition was set.
                         type: integer
