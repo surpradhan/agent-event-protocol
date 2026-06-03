@@ -1,4 +1,5 @@
 AEP Operator {{ .Chart.AppVersion }} installed in namespace {{ include "aep-operator.namespace" . }}.
+(If this was a first install, remember to use --create-namespace if the namespace did not exist.)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 QUICK START

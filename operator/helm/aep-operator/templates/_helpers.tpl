@@ -47,11 +47,11 @@ Common labels applied to every resource.
 */}}
 {{- define "aep-operator.labels" -}}
 helm.sh/chart: {{ include "aep-operator.chart" . }}
-{{ include "aep-operator.selectorLabels" . }}
+{{- include "aep-operator.selectorLabels" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- with .Values.commonLabels }}
-{{ toYaml . }}
+{{- toYaml . | nindent 0 }}
 {{- end }}
 {{- end }}
 

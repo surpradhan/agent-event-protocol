@@ -5,6 +5,10 @@ image:
   tag: ""
   # Use Always for mutable tags (:latest); IfNotPresent for pinned semver tags.
   pullPolicy: Always
+  # Image pull secrets must be a list of {name: <secret-name>} objects.
+  # Example:
+  #   pullSecrets:
+  #     - name: my-registry-secret
   pullSecrets: []
 
 # ── Sidecar image injected into opted-in agent pods ──────────────────────────
@@ -26,6 +30,8 @@ nameOverride: ""
 fullnameOverride: ""
 
 # Override the namespace for all resources. Defaults to .Release.Namespace.
+# Use with --create-namespace on first install:
+#   helm install aep-operator ./helm/aep-operator --create-namespace -n aep-system
 namespaceOverride: ""
 
 serviceAccount:
@@ -74,14 +80,30 @@ webhook:
   enabled: true
 
   # Use cert-manager to provision TLS for the webhook server.
-  # When false, you must supply a TLS Secret named aep-operator-webhook-server-cert
-  # in the operator namespace before deploying.
+  # When false, you must manually create a TLS Secret before deploying.
+  # The Secret name depends on the release name — run
+  #   helm template <release> ./helm/aep-operator | grep secretName
+  # to see the generated value (typically <release>-aep-operator-webhook-server-cert).
   certManager:
     enabled: true
 
+  # Kubernetes webhook admission timeout in seconds (1–30).
+  # With failurePolicy=Ignore, a timeout allows the pod to start without injection.
+  timeoutSeconds: 10
+
+  # namespaceSelector restricts which namespaces the webhook applies to.
+  # By default, system namespaces are excluded to avoid routing every kube-system
+  # pod create through the webhook. Customise to match your cluster layout.
+  namespaceSelector:
+    matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: NotIn
+        values:
+          - kube-system
+          - kube-public
+
 # ── CRD installation ──────────────────────────────────────────────────────────
-# CRDs are placed in helm/aep-operator/crds/ so Helm installs them before
-# other resources and skips re-installation on upgrades (Helm 3 behaviour).
-# Set crds.install=false only when managing CRDs externally (e.g. via GitOps).
-crds:
-  install: true
+# CRDs are in helm/aep-operator/crds/ and are managed by Helm's built-in CRD
+# lifecycle: installed before other resources, skipped on upgrades.
+# Helm values cannot gate crds/ directory installation. To skip CRDs entirely:
+#   helm install --skip-crds ...

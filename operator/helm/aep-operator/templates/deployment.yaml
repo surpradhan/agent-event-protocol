@@ -5,6 +5,7 @@ metadata:
   namespace: {{ include "aep-operator.namespace" . }}
   labels:
     {{- include "aep-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
