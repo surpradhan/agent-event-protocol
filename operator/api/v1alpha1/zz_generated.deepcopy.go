@@ -22,7 +22,7 @@ import (
 // AgentInstrumentation instance. Called by DeepCopy and DeepCopyObject.
 func (in *AgentInstrumentation) DeepCopyInto(out *AgentInstrumentation) {
 	*out = *in
-	out.TypeMeta = in.TypeMeta
+	// TypeMeta is already shallow-copied by *out = *in above.
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
 	in.Spec.DeepCopyInto(&out.Spec)
 	in.Status.DeepCopyInto(&out.Status)
@@ -50,7 +50,7 @@ func (in *AgentInstrumentation) DeepCopyObject() runtime.Object {
 // AgentInstrumentationList instance.
 func (in *AgentInstrumentationList) DeepCopyInto(out *AgentInstrumentationList) {
 	*out = *in
-	out.TypeMeta = in.TypeMeta
+	// TypeMeta is already shallow-copied by *out = *in above.
 	in.ListMeta.DeepCopyInto(&out.ListMeta)
 	if in.Items != nil {
 		in, out := &in.Items, &out.Items
@@ -93,6 +93,11 @@ func (in *AgentInstrumentationSpec) DeepCopyInto(out *AgentInstrumentationSpec) 
 	if in.PodSelector != nil {
 		in, out := &in.PodSelector, &out.PodSelector
 		*out = new(metav1.LabelSelector)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.APIKeySecretRef != nil {
+		in, out := &in.APIKeySecretRef, &out.APIKeySecretRef
+		*out = new(corev1.SecretKeySelector)
 		(*in).DeepCopyInto(*out)
 	}
 	// ResourceRequirements contains maps (Limits, Requests) — use its DeepCopyInto.

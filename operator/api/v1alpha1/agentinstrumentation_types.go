@@ -8,16 +8,34 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// Condition type constants for AgentInstrumentation.
+// Condition type and reason constants for AgentInstrumentation.
 const (
-	// ConditionReady indicates the instrumentation is active and healthy.
+	// ConditionReady is the sole condition type used by AgentInstrumentation.
+	// Use the Reason constants below to convey specific states rather than
+	// adding a separate Degraded condition (which can produce ambiguous
+	// Ready=True + Degraded=True combinations).
 	ConditionReady = "Ready"
 
-	// ConditionDegraded indicates injection failures on one or more pods.
-	ConditionDegraded = "Degraded"
+	// ReasonActive is set on Ready=True when injection is active and healthy.
+	ReasonActive = "Active"
+
+	// ReasonDisabled is set on Ready=False when spec.enabled is false.
+	ReasonDisabled = "Disabled"
+
+	// ReasonInjectionFailed is set on Ready=False when one or more pods
+	// failed sidecar injection.
+	ReasonInjectionFailed = "InjectionFailed"
+
+	// ReasonWebhookError is set on Ready=False when the mutating webhook
+	// could not be registered or becomes unreachable.
+	ReasonWebhookError = "WebhookError"
 )
 
 // AgentInstrumentationSpec defines the desired state of AgentInstrumentation.
+//
+// Selector overlap: if multiple AgentInstrumentation resources match the same
+// namespace or pod, the one whose name sorts first alphabetically takes
+// precedence. Operators should ensure selectors are non-overlapping.
 type AgentInstrumentationSpec struct {
 	// Enabled controls whether sidecar injection is active for this resource.
 	// Set to false to pause injection without deleting the resource.
@@ -42,6 +60,13 @@ type AgentInstrumentationSpec struct {
 	// +optional
 	// +kubebuilder:validation:Pattern=`^https?://.+`
 	AEPServerURL string `json:"aepServerURL,omitempty"`
+
+	// APIKeySecretRef references the Secret containing the AEP API key.
+	// The sidecar presents the value as an Authorization: Bearer <token> header
+	// on every event POST. When nil, the sidecar connects without authentication
+	// (only suitable for servers with no DASHBOARD_TOKEN / ADMIN_TOKEN set).
+	// +optional
+	APIKeySecretRef *corev1.SecretKeySelector `json:"apiKeySecretRef,omitempty"`
 
 	// SidecarImage is the container image for the injected AEP sidecar.
 	// Overrides the operator-level --sidecar-image flag.
@@ -78,9 +103,11 @@ type AgentInstrumentationStatus struct {
 
 	// Conditions represent the latest available observations of this resource.
 	//
-	// Known condition types:
-	//   - Ready:    instrumentation is active; injection is succeeding.
-	//   - Degraded: one or more pods failed sidecar injection.
+	// Known condition type: Ready.
+	//   Ready=True  (reason: Active)          — injection is active and healthy.
+	//   Ready=False (reason: Disabled)        — spec.enabled is false.
+	//   Ready=False (reason: InjectionFailed) — one or more pods failed injection.
+	//   Ready=False (reason: WebhookError)    — webhook registration failed.
 	//
 	// +patchMergeKey=type
 	// +patchStrategy=merge
@@ -94,7 +121,7 @@ type AgentInstrumentationStatus struct {
 // It configures which pods receive an injected AEP observability sidecar
 // and how that sidecar is configured.
 //
-// Example — instrument all pods in the "ai-workloads" namespace:
+// Example — instrument all pods in namespaces labelled aep.dev/instrumented=true:
 //
 //	apiVersion: aep.dev/v1alpha1
 //	kind: AgentInstrumentation
@@ -105,6 +132,9 @@ type AgentInstrumentationStatus struct {
 //	  namespaceSelector:
 //	    matchLabels:
 //	      aep.dev/instrumented: "true"
+//	  apiKeySecretRef:
+//	    name: aep-api-key
+//	    key: token
 //
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
@@ -117,7 +147,8 @@ type AgentInstrumentation struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   AgentInstrumentationSpec   `json:"spec,omitempty"`
+	// Spec is required. Create with at minimum spec.enabled=true (the default).
+	Spec   AgentInstrumentationSpec   `json:"spec"`
 	Status AgentInstrumentationStatus `json:"status,omitempty"`
 }
 

@@ -1,10 +1,10 @@
 ---
+# Hand-authored manifest — equivalent to `make manifests` output.
+# Regenerate with: make manifests  (requires controller-gen and go mod tidy)
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   name: agentinstrumentations.aep.dev
-  annotations:
-    controller-gen.kubebuilder.io/version: v0.14.0
 spec:
   group: aep.dev
   names:
@@ -42,7 +42,11 @@ spec:
             AgentInstrumentation configures which pods receive an injected AEP
             observability sidecar and how that sidecar is configured. Annotate
             a pod with aep.dev/inject=true to opt in to injection.
+            If multiple AgentInstrumentation resources match the same namespace
+            or pod, the one whose name sorts first alphabetically takes
+            precedence.
           type: object
+          required: [spec]
           properties:
             apiVersion:
               type: string
@@ -117,6 +121,24 @@ spec:
                     Overrides the operator-level --aep-server-url flag.
                   type: string
                   pattern: '^https?://.+'
+                apiKeySecretRef:
+                  description: >
+                    References the Secret containing the AEP API key.
+                    The sidecar presents the value as
+                    Authorization: Bearer <token> on every event POST.
+                    When absent, the sidecar connects without authentication.
+                  type: object
+                  required: [key]
+                  properties:
+                    name:
+                      description: Name of the Secret in the operator namespace.
+                      type: string
+                    key:
+                      description: Key within the Secret whose value is the API token.
+                      type: string
+                    optional:
+                      description: Whether the Secret must exist; defaults to false.
+                      type: boolean
                 sidecarImage:
                   description: >
                     Container image for the injected sidecar.
@@ -149,6 +171,8 @@ spec:
                     These supplement (and may override) operator-set defaults
                     (AEP_SERVER_URL, AEP_POD_NAME, AEP_NAMESPACE, etc.).
                   type: array
+                  x-kubernetes-list-map-keys: [name]
+                  x-kubernetes-list-type: map
                   items:
                     type: object
                     required: [name]
@@ -215,14 +239,22 @@ spec:
                   type: integer
                   format: int32
                 conditions:
-                  description: Latest available observations of this resource's state.
+                  description: >
+                    Latest available observations of this resource's state.
+                    Condition type: Ready.
+                      Ready=True  (reason: Active)          — healthy.
+                      Ready=False (reason: Disabled)        — spec.enabled=false.
+                      Ready=False (reason: InjectionFailed) — pod injection errors.
+                      Ready=False (reason: WebhookError)    — webhook unavailable.
                   type: array
+                  x-kubernetes-list-map-keys: [type]
+                  x-kubernetes-list-type: map
                   items:
                     type: object
                     required: [lastTransitionTime, message, reason, status, type]
                     properties:
                       type:
-                        description: Condition type (Ready or Degraded).
+                        description: Condition type (Ready).
                         type: string
                         maxLength: 316
                         pattern: '^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$'
@@ -240,7 +272,9 @@ spec:
                         type: string
                         format: date-time
                       reason:
-                        description: Machine-readable reason for the condition.
+                        description: >
+                          Machine-readable reason: Active | Disabled |
+                          InjectionFailed | WebhookError.
                         type: string
                         maxLength: 1024
                         minLength: 1
