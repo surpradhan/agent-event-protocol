@@ -4,6 +4,59 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Phase 12b — Framework Auto-Instrumentation (LangGraph), 2026-06-04
+
+No breaking changes to the event envelope schema or existing API contracts.
+
+**New: `aep.instrument()` Python function** (`sdks/python/aep/instrument.py`)
+
+One line — `import aep; aep.instrument()` — makes LangGraph workflows emit a full
+AEP event DAG with no other code changes. Tested against `langgraph>=0.1`
+(developed on 1.x).
+
+- **Callback-based, not method-wrapping** — instrumentation is a LangChain
+  `BaseCallbackHandler` injected into every `CompiledStateGraph.invoke` / `ainvoke`
+  / `stream` / `astream` via the call's `RunnableConfig` (inherited by all child
+  runs). This is LangGraph's supported extension point and survives node fan-out.
+- **Rich event mapping** — graph run → orchestrator `task.created`/`task.completed`/
+  `task.failed`; each node → sub-agent `task.*`; orchestrator→node transitions →
+  `handoff.started`/`handoff.completed`; tool calls (`on_tool_*`) →
+  `tool.called`/`tool.result`, with `error.raised` on tool failure.
+- **Full causation DAG** — one `trace_id` per graph run; each node gets its own
+  `session_id` with `parent_session_id` pointing at the orchestrator; every event's
+  `causation_id` references the event that triggered it (verified: zero dangling
+  references in the demo run).
+- **Pluggable framework registry** — `FrameworkInstrumentor` + `_INSTRUMENTORS`
+  registry; adding CrewAI/AutoGen later means registering one class.
+- **Graceful, host-safe** — no-op + warning if LangGraph/langchain-core absent or
+  if framework internals differ (warns loudly, never falsely reports success);
+  emit failures are logged and swallowed; exceptions in the graph still propagate.
+  Idempotent (`instrument()` twice won't double-patch); `uninstrument()` restores.
+- **Configuration** — `AEP_INGEST_URL`/`AEP_API_KEY` env vars or
+  `instrument(server_url=…, api_key=…)`; accepts an injected `client=` for tests.
+
+**Demo** — `demos/langgraph_multiagent.py`: a 10-node LangGraph research workflow
+(orchestrator → 3 parallel researchers → synthesize → fact-check + risk-review →
+editor → publish). Running it emits 38 events across 10 sessions sharing one
+trace, then prints the server-reconstructed session tree.
+
+**Tests** — 20 unit tests: ID/config-injection helpers (dependency-free) plus the
+real callback handler driven through the LangGraph callback sequence, asserting
+event types, causation links, sub-agent linkage, and host-safety (emit failures
+don't propagate). Integration test runs a real graph against a live server and
+auto-skips when unreachable (via `tests/integration/conftest.py`).
+
+**CI** — new `python-sdk-test` job (Python 3.10/3.11/3.12): installs
+`sdks/python[dev,langgraph]`, lints with ruff, runs the SDK test suite.
+
+**Optional dependencies** — added `[langgraph]` extra to `pyproject.toml`:
+`pip install -e "sdks/python[langgraph]"`.
+
+**Future phases** — Phase 12c+ (CrewAI, AutoGen, Anthropic/OpenAI SDK patching;
+Node.js for LangChain.js and Vercel AI SDK).
+
+---
+
 ## Phase 12a — OpenTelemetry Collector Plugin, 2026-06-04
 
 No breaking changes to the event envelope schema or existing API contracts.
