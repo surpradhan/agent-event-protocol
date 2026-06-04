@@ -5,7 +5,6 @@ Maps OpenTelemetry ReadableSpan to AEP events with causation chain preservation.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
 from aep._event import create_event
@@ -33,7 +32,6 @@ def map_span_to_event(
     span_kind = span.kind.name if hasattr(span.kind, "name") else "INTERNAL"
     attributes = dict(span.attributes) if span.attributes else {}
     trace_id = _format_trace_id(span.context.trace_id)
-    span_id = _format_span_id(span.context.span_id)
 
     # Safely extract parent span ID
     parent_span_id = None
