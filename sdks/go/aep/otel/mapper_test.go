@@ -115,7 +115,7 @@ func TestMapSpanToEvent(t *testing.T) {
 	spanRecorder := tracetest.NewSpanRecorder()
 	tp := trace.NewTracerProvider(trace.WithSpanProcessor(spanRecorder))
 	tracer := tp.Tracer("test")
-	ctx, span := tracer.Start(context.Background(), "my_task")
+	_, span := tracer.Start(context.Background(), "my_task")
 	span.End()
 	defer tp.Shutdown(context.Background())
 
@@ -144,8 +144,8 @@ func TestMapSpanToEvent(t *testing.T) {
 
 func TestBuildPayload(t *testing.T) {
 	attrs := map[string]interface{}{
-		"gen_ai.model":     "gpt-4",
-		"custom_attr":      "value",
+		"gen_ai.model": "gpt-4",
+		"custom_attr":  "value",
 	}
 
 	payload := buildPayload(attrs, "test_span", "CLIENT")

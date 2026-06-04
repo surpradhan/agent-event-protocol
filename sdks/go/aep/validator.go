@@ -23,10 +23,9 @@ type schemaCacheEntry struct {
 }
 
 var (
-	envelopeSchema   *jsonschema.Schema
-	coreEventsSchema *jsonschema.Schema
-	schemaMutex      sync.Mutex
-	schemasLoaded    bool
+	envelopeSchema *jsonschema.Schema
+	schemaMutex    sync.Mutex
+	schemasLoaded  bool
 	// Cache for fetched payload schemas to avoid repeated HTTP requests
 	// Schemas are cached with a 1-hour TTL to prevent unbounded growth
 	payloadSchemaCache = make(map[string]*schemaCacheEntry)
@@ -50,24 +49,33 @@ func initSchemas() error {
 		return fmt.Errorf("failed to read envelope schema: %w", err)
 	}
 
-	envelopeSchema, err = jsonschema.UnmarshalJSON(bytes.NewReader(envelopeData))
+	envelopeSchema, err = compileSchema("aep-envelope.schema.json", envelopeData)
 	if err != nil {
 		return fmt.Errorf("failed to parse envelope schema: %w", err)
 	}
 
-	// Load core events schema
-	coreEventsData, err := schemaFS.ReadFile("schemas/aep-core-events.schema.json")
-	if err != nil {
-		return fmt.Errorf("failed to read core events schema: %w", err)
-	}
-
-	coreEventsSchema, err = jsonschema.UnmarshalJSON(bytes.NewReader(coreEventsData))
-	if err != nil {
-		return fmt.Errorf("failed to parse core events schema: %w", err)
-	}
-
 	schemasLoaded = true
 	return nil
+}
+
+// utf8BOM is the UTF-8 byte order mark, which is invalid at the start of a JSON
+// document (RFC 8259) and rejected by the parser. Some schema sources emit it.
+var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
+
+// compileSchema compiles a JSON schema from raw bytes using the jsonschema v5
+// compiler API. The name is used as the in-memory resource URL. A leading
+// UTF-8 BOM, if present, is stripped so BOM-prefixed schemas still parse.
+func compileSchema(name string, data []byte) (*jsonschema.Schema, error) {
+	data = bytes.TrimPrefix(data, utf8BOM)
+	c := jsonschema.NewCompiler()
+	// Assert "format" keywords (e.g. date-time on the time field). Draft
+	// 2020-12 treats format as annotation-only by default; the AEP ingest
+	// server enforces formats via ajv-formats, so the SDK matches it.
+	c.AssertFormat = true
+	if err := c.AddResource(name, bytes.NewReader(data)); err != nil {
+		return nil, err
+	}
+	return c.Compile(name)
 }
 
 // ValidationResult holds the results of validation.
@@ -107,10 +115,8 @@ func ValidateEvent(event *Event) (*ValidationResult, error) {
 		result.Errors = append(result.Errors, err.Error())
 	}
 
-	// Validate event type against core events schema
-	typeValidator := jsonschema.NewValidator()
-	typeData := map[string]any{"type": string(event.Type)}
-	if err := coreEventsSchema.Validate(typeData); err != nil {
+	// Validate the event type against the set of core event types.
+	if !IsValidEventType(event.Type) {
 		result.Valid = false
 		result.Errors = append(result.Errors, fmt.Sprintf("invalid event type: %v", event.Type))
 	}
@@ -186,7 +192,7 @@ func fetchSchema(schemaURI string) (*jsonschema.Schema, error) {
 		return nil, fmt.Errorf("failed to read schema body: %w", err)
 	}
 
-	schema, err := jsonschema.UnmarshalJSON(bytes.NewReader(body))
+	schema, err := compileSchema(schemaURI, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse schema: %w", err)
 	}

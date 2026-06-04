@@ -1,3 +1,4 @@
+//go:build integration
 // +build integration
 
 package aep
@@ -10,9 +11,9 @@ import (
 	"time"
 )
 
-// TestIntegrationServerURL returns the server URL for integration tests.
+// integrationServerURL returns the server URL for integration tests.
 // Can be overridden with SERVER_URL env var.
-func TestIntegrationServerURL() string {
+func integrationServerURL() string {
 	if url := os.Getenv("SERVER_URL"); url != "" {
 		return url
 	}
@@ -29,7 +30,7 @@ func skipIfServerUnavailable(t *testing.T, serverURL string) {
 }
 
 func TestIntegrationEmitEvent(t *testing.T) {
-	serverURL := TestIntegrationServerURL()
+	serverURL := integrationServerURL()
 	skipIfServerUnavailable(t, serverURL)
 
 	client := NewClientWithURL(serverURL)
@@ -63,7 +64,7 @@ func TestIntegrationEmitEvent(t *testing.T) {
 }
 
 func TestIntegrationGetHealth(t *testing.T) {
-	serverURL := TestIntegrationServerURL()
+	serverURL := integrationServerURL()
 	skipIfServerUnavailable(t, serverURL)
 
 	client := NewClientWithURL(serverURL)
@@ -80,7 +81,7 @@ func TestIntegrationGetHealth(t *testing.T) {
 }
 
 func TestIntegrationGetReady(t *testing.T) {
-	serverURL := TestIntegrationServerURL()
+	serverURL := integrationServerURL()
 	skipIfServerUnavailable(t, serverURL)
 
 	client := NewClientWithURL(serverURL)
@@ -97,7 +98,7 @@ func TestIntegrationGetReady(t *testing.T) {
 }
 
 func TestIntegrationGetMetrics(t *testing.T) {
-	serverURL := TestIntegrationServerURL()
+	serverURL := integrationServerURL()
 	skipIfServerUnavailable(t, serverURL)
 
 	client := NewClientWithURL(serverURL)
@@ -114,7 +115,7 @@ func TestIntegrationGetMetrics(t *testing.T) {
 }
 
 func TestIntegrationEmitBatch(t *testing.T) {
-	serverURL := TestIntegrationServerURL()
+	serverURL := integrationServerURL()
 	skipIfServerUnavailable(t, serverURL)
 
 	client := NewClientWithURL(serverURL)
@@ -150,7 +151,7 @@ func TestIntegrationEmitBatch(t *testing.T) {
 }
 
 func TestIntegrationAsyncEmitBatch(t *testing.T) {
-	serverURL := TestIntegrationServerURL()
+	serverURL := integrationServerURL()
 	skipIfServerUnavailable(t, serverURL)
 
 	asyncClient := NewAsyncClientWithURL(serverURL)
@@ -186,7 +187,7 @@ func TestIntegrationAsyncEmitBatch(t *testing.T) {
 }
 
 func TestIntegrationEmitWithSignature(t *testing.T) {
-	serverURL := TestIntegrationServerURL()
+	serverURL := integrationServerURL()
 	skipIfServerUnavailable(t, serverURL)
 
 	client := NewClientWithURL(serverURL)
@@ -219,7 +220,7 @@ func TestIntegrationEmitWithSignature(t *testing.T) {
 }
 
 func TestIntegrationMultiAgentWorkflow(t *testing.T) {
-	serverURL := TestIntegrationServerURL()
+	serverURL := integrationServerURL()
 	skipIfServerUnavailable(t, serverURL)
 
 	client := NewClientWithURL(serverURL)
