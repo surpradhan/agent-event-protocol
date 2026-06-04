@@ -212,7 +212,12 @@ app.get("/ready", (_req, res) => {
 
 // Serve the OpenAPI spec as JSON
 app.get("/openapi.json", (_req, res) => {
-  res.sendFile(path.join(__dirname, "openapi.json"));
+  // Use the `root` option rather than a full absolute path: under Express 5,
+  // send() applies its dotfiles policy (default "ignore") to the whole resolved
+  // path when no root is set, so an absolute path containing a dot-directory
+  // (e.g. a `.claude/worktrees/...` checkout) 404s. The root prefix is trusted
+  // and exempt from that check; only the filename is policy-checked.
+  res.sendFile("openapi.json", { root: __dirname });
 });
 
 // Serve Swagger UI (via CDN) — no local bundle required
@@ -247,7 +252,9 @@ app.get("/docs", (_req, res) => {
 // ---------------------------------------------------------------------------
 
 app.get("/dashboard", requireDashboardAuth, (_req, res) => {
-  res.sendFile(path.join(__dirname, "public", "dashboard.html"));
+  // See /openapi.json above: pass a `root` so Express 5's send() dotfiles policy
+  // doesn't 404 the file when the checkout path contains a dot-directory.
+  res.sendFile("dashboard.html", { root: path.join(__dirname, "public") });
 });
 
 // Static assets served from public/
