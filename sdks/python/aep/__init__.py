@@ -31,6 +31,7 @@ from aep.exceptions import (
     AEPServerError,
     AEPValidationError,
 )
+from aep.instrument import flush, instrument, uninstrument
 
 __version__ = "0.2.0"
 
@@ -48,7 +49,10 @@ __all__ = [
     "CORE_EVENT_TYPES",
     "EventType",
     "create_event",
+    "flush",
+    "instrument",
     "sign_event",
+    "uninstrument",
     "validate_event",
     "verify_signature",
 ]

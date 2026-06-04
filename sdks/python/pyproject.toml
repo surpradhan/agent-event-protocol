@@ -20,6 +20,16 @@ dev = [
     "pytest-asyncio>=0.23",
     "respx>=0.21",
 ]
+langgraph = [
+    "langgraph>=0.1.0",
+    # langgraph pulls in langchain-core; pin it so the callback handler the
+    # instrumentation registers is always importable.
+    "langchain-core>=0.1.0",
+]
+otel = [
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
