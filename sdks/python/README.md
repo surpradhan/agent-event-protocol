@@ -122,6 +122,50 @@ with AEPClient() as client:
 
 ---
 
+## Auto-instrumentation (LangGraph)
+
+Emit the full multi-agent DAG from a [LangGraph](https://langchain-ai.github.io/langgraph/)
+workflow with **no changes to your graph** — one call patches LangGraph to emit
+AEP events for the graph, every node, each tool call, and the handoffs between
+them.
+
+```bash
+pip install -e "sdks/python[langgraph]"   # adds langgraph + langchain-core
+```
+
+```python
+import aep
+aep.instrument()          # reads AEP_INGEST_URL / AEP_API_KEY (or pass them in)
+
+# ... build and run your StateGraph exactly as usual ...
+app = graph.compile()
+app.invoke({"topic": "AI agent observability"})
+# aep.uninstrument()      # optional: restore original behavior
+```
+
+What gets emitted, with causation preserved (`trace_id`, `session_id`,
+`parent_session_id`, `causation_id`):
+
+| LangGraph event            | AEP event(s)                              | Role          |
+|----------------------------|-------------------------------------------|---------------|
+| graph run (root)           | `task.created` → `task.completed`/`failed`| orchestrator  |
+| node run                   | `task.created` → `task.completed`/`failed`| subagent      |
+| orchestrator → node        | `handoff.started` → `handoff.completed`   | orchestrator  |
+| tool call                  | `tool.called` → `tool.result`             | (caller)      |
+| tool / node error          | `error.raised` / `task.failed`            | (caller)      |
+
+Notes:
+- **Tested against `langgraph>=0.1`.** Internals vary across versions; if the
+  expected hook isn't found, `instrument()` logs a warning and is a no-op — it
+  never crashes your app, and it won't falsely report success.
+- Configuration: `aep.instrument(server_url=..., api_key=...)`, or
+  `AEP_INGEST_URL` / `AEP_API_KEY` env vars.
+- Implemented as a LangChain `BaseCallbackHandler` injected via `RunnableConfig`
+  (the supported extension point), so it survives parallel node fan-out.
+- See `demos/langgraph_multiagent.py` for a runnable 10-node example.
+
+---
+
 ## Client API
 
 ### `AEPClient` (sync) / `AsyncAEPClient` (async)

@@ -84,6 +84,38 @@ jobs:
       - name: Run otelbridge unit tests
         run: go test ./... -count=1
 
+  python-sdk-test:
+    name: Python SDK tests
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install the Python SDK (with dev + langgraph + otel extras)
+        # otel is needed so the full suite (incl. the Phase 11 aep.otel tests)
+        # can import opentelemetry; langgraph covers the instrumentation tests.
+        run: pip install -e "sdks/python[dev,langgraph,otel]"
+
+      - name: Lint the SDK package
+        run: |
+          pip install ruff
+          ruff check sdks/python/aep
+
+      - name: Run Python SDK tests
+        # Integration tests auto-skip when no AEP server is reachable
+        # (tests/integration/conftest.py). Unit tests cover the instrumentation
+        # handler, including the LangGraph callback mapping.
+        run: pytest sdks/python/tests -v
+
   test:
     runs-on: ubuntu-latest
 
