@@ -1,0 +1,35 @@
+# OpenTelemetry Collector Builder (ocb) configuration.
+#
+# The AEP exporter is a custom component, so it is NOT present in the prebuilt
+# otel/opentelemetry-collector-contrib image. To run it you must build a
+# Collector distribution that includes it, using ocb:
+#
+#   go install go.opentelemetry.io/collector/cmd/builder@v0.96.0
+#   builder --config builder-config.yaml
+#
+# This produces ./_build/aep-collector, a Collector binary with the standard
+# OTLP receiver + batch processor + the AEP exporter.
+
+dist:
+  name: aep-collector
+  description: OpenTelemetry Collector with the AEP exporter
+  output_path: ./_build
+  otelcol_version: 0.96.0
+
+receivers:
+  - gomod: go.opentelemetry.io/collector/receiver/otlpreceiver v0.96.0
+
+processors:
+  - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.96.0
+
+exporters:
+  - gomod: go.opentelemetry.io/collector/exporter/debugexporter v0.96.0
+  # The AEP exporter, sourced from this repository.
+  - gomod: github.com/surpradhan/aep-otel-bridge/exporters/aepexporter v0.0.0
+
+# Resolve the AEP exporter (and the SDK it depends on) from local source.
+# NOTE: ocb writes these into the generated go.mod under output_path (./_build),
+# so the paths are relative to _build/, not to this file.
+replaces:
+  - github.com/surpradhan/aep-otel-bridge => ../
+  - github.com/surpradhan/aep-go => ../../sdks/go

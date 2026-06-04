@@ -1,0 +1,36 @@
+# OpenTelemetry Collector config for the AEP demo: OTLP in -> batch -> AEP out.
+#
+# The `aep` exporter is a CUSTOM component; this config only works with a
+# Collector built via builder-config.yaml (ocb), not the prebuilt contrib image.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    send_batch_size: 100
+    timeout: 5s
+
+exporters:
+  aep:
+    server_url: http://aep-server:8787
+    api_key: ${env:AEP_API_KEY}   # provisioned by the aep-bootstrap step
+    batch_size: 100
+    flush_interval: 5s
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [aep, debug]
+  telemetry:
+    logs:
+      level: info

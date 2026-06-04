@@ -1,0 +1,96 @@
+# End-to-end demo: instrumented app -> OTEL Collector (with AEP exporter) -> AEP.
+#
+# Run from the repository ROOT so build contexts resolve:
+#   docker compose -f otelbridge/docker-compose.yml up --build
+#
+# ⚠️ STATUS: the AEP exporter Go code + unit tests are verified, but this full
+# compose stack (OCB collector build + live ingest) has NOT been run in CI yet.
+# Treat it as a reference to validate locally, not a guaranteed-green target.
+#
+# API KEY: POST /events requires a provisioned key — there is no dev bypass
+# (src/server.js: requireApiKey("write")). The aep-bootstrap service below mints
+# one via the admin API and writes it to a shared volume; the collector reads it.
+
+services:
+  # AEP ingest server.
+  aep-server:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "8787:8787"
+    environment:
+      - PORT=8787
+      - DATABASE_PATH=/data/aep.db
+      - ADMIN_TOKEN=demo-admin-token   # enables /admin/keys for the bootstrap step
+      - DASHBOARD_TOKEN=               # empty => dashboard open in this demo
+      - LOG_LEVEL=info
+    volumes:
+      - aep-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8787/health"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  # Mints a write-scoped API key via the admin API and writes it to /shared/api_key.
+  aep-bootstrap:
+    image: curlimages/curl:latest
+    depends_on:
+      aep-server:
+        condition: service_healthy
+    volumes:
+      - shared:/shared
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -e
+        key=$$(curl -s -X POST http://aep-server:8787/admin/keys \
+          -H "Authorization: Bearer demo-admin-token" \
+          -H "Content-Type: application/json" \
+          -d '{"tenantId":"demo","label":"otel-collector","scopes":["read","write"]}' \
+          | sed -n 's/.*"key":"\([^"]*\)".*/\1/p')
+        echo "$$key" > /shared/api_key
+        echo "Provisioned API key for the collector."
+
+  # OTEL Collector built (via ocb) with the AEP exporter. See otelbridge/Dockerfile.
+  collector:
+    build:
+      context: ..
+      dockerfile: otelbridge/Dockerfile
+    depends_on:
+      aep-bootstrap:
+        condition: service_completed_successfully
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    volumes:
+      - shared:/shared:ro
+      - ./collector-config.yaml:/etc/collector-config.yaml:ro
+    # The collector reads the bootstrapped key and injects it as AEP_API_KEY,
+    # which collector-config.yaml references via ${AEP_API_KEY}.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        export AEP_API_KEY="$$(cat /shared/api_key)"
+        exec /aep-collector --config /etc/collector-config.yaml
+
+  # Example instrumented application.
+  demo-app:
+    build:
+      context: ..
+      dockerfile: otelbridge/examples/Dockerfile
+    depends_on:
+      - collector
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317
+
+volumes:
+  aep-data:
+  shared:
+
+networks:
+  default:
+    name: aep-otel-demo
