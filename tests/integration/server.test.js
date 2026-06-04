@@ -489,6 +489,27 @@ describe("GET /openapi.json", () => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /dashboard
+// ---------------------------------------------------------------------------
+
+describe("GET /dashboard", () => {
+  // Regression: Express 5's send() applies its dotfiles policy to the whole
+  // resolved path when sendFile() gets an absolute path, so a checkout under a
+  // dot-directory (e.g. .claude/worktrees/...) used to 404. The route now uses
+  // the `root` option so the file is served regardless of the checkout path.
+  test("serves the dashboard HTML (200)", async () => {
+    // The harness sets DASHBOARD_TOKEN, so authenticate like a browser would.
+    const res = await fetch(`${baseUrl}/dashboard`, {
+      headers: { Authorization: `Bearer ${process.env.DASHBOARD_TOKEN}` },
+    });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") || "", /text\/html/);
+    const body = await res.text();
+    assert.match(body, /<!doctype html>/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // GET /rejections
 // ---------------------------------------------------------------------------
 
