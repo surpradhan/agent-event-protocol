@@ -209,7 +209,7 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 - Pluggable `FrameworkInstrumentor` registry so CrewAI/AutoGen can be added by registering one class
 - Host-safe: no-op + warning when LangGraph/langchain-core absent or framework internals differ (never falsely reports success); emit failures swallowed; graph exceptions still propagate; idempotent re-instrumentation
 - Demo (`demos/langgraph_multiagent.py`): 10-node research workflow emitting 38 events across 10 sessions on one trace
-- 20 unit tests + a live-server integration test (auto-skips when unreachable); `[langgraph]` extra; `python-sdk-test` CI job (3.10/3.11/3.12)
+- 24 unit tests + a live-server integration test (auto-skips when unreachable); `[langgraph]` extra; `python-sdk-test` CI job (3.10/3.11/3.12)
 
 **Success criteria:**
 - ✅ `aep.instrument()` works on LangGraph with no other code changes (verified end-to-end against an installed LangGraph 1.x)
@@ -244,7 +244,7 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 - every `causation_id` resolves to a real emitted event; one `trace_id` spans the whole kickoff (identical causation-DAG guarantees as 12b)
 
 **Deliverables:**
-- Refactored transport-neutral emission core, with the LangChain handler reimplemented on top of it and **all 20 Phase 12b unit tests + the integration test still green, unchanged**
+- Refactored transport-neutral emission core, with the LangChain handler reimplemented on top of it and **all existing Phase 12b unit + integration tests still green, unchanged**
 - `CrewAIInstrumentor` registered in `_INSTRUMENTORS`; `instrument(frameworks=["crewai"])` works with CrewAI installed and `langchain-core` absent
 - `[crewai]` extra in `pyproject.toml`; CrewAI added to the `python-sdk-test` CI matrix
 - Demo `demos/crewai_multiagent.py` — a multi-agent crew emitting a full causation DAG (multiple sessions, one trace, no dangling causation links), mirroring `langgraph_multiagent.py`
