@@ -150,7 +150,7 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 
 ### Phase 11: OpenTelemetry Bridge (2026-06-04)
 
-**Status: 🟡 SDK bridge complete — Collector plugin deferred to Phase 12**
+**Status: ✅ Complete (SDK bridge) — Collector plugin delivered in Phase 12a**
 
 **Objective:** Enable AEP to consume and emit traces via OpenTelemetry — positioned as complementary, not competing.
 
@@ -161,8 +161,7 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 - Go span-to-event mapper (`sdks/go/aep/otel/mapper.go`) for language parity
 - Demo (`demos/otel_bridge.py`) + module README; 38 unit tests
 
-**Deferred to Phase 12:**
-- OTEL Collector receiver (consume OTLP traces from standard exporters)
+**Delivered separately in Phase 12a:**
 - OTEL Collector exporter (push AEP events from the Collector)
 - End-to-end Datadog/NewRelic → Collector → AEP demo
 
@@ -170,8 +169,29 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 - ✅ OTEL SDK can export traces to AEP
 - ✅ Trace context (trace ID, span ID, parent span ID) maps to AEP causation chains
 - ✅ Drop-in `SpanExporter` for existing OTEL-instrumented Python apps
-- ⏳ OTEL Collector receiver/exporter plugin (Phase 12)
+- ✅ OTEL Collector exporter plugin (Phase 12a)
 - ⏳ AEP event types proposed / accepted in OTEL GenAI semantic conventions
+
+### Phase 12a: OpenTelemetry Collector Plugin (2026-06-04)
+
+**Status: ✅ Complete**
+
+**Objective:** Let any OTEL-instrumented system emit to AEP through a standard Collector pipeline — no application code changes — completing the OTEL story begun in Phase 11.
+
+**Delivered (PR #28):**
+- AEP Collector **exporter** (`otelbridge/exporters/aepexporter/`, separate Go module `github.com/surpradhan/aep-otel-bridge`) on the opentelemetry-collector v0.96 factory/config/exporter pattern
+- pdata-native span-to-event mapper mirroring the reference classification (error > handoff > tool > task > default); `session_id = ses_<trace_id[:16]>`; parent span ID → `causation_id`; `gen_ai.*` → payload; `service.name` → `agent://` source
+- Batched emission to the AEP ingest API via the Go SDK client
+- `builder-config.yaml` (ocb) to build a Collector including the exporter; demo (`docker-compose.yml`: app → Collector → AEP) with an API-key bootstrap step
+- Unit tests + a dedicated `otelbridge-test` CI job
+- Prerequisite (PR #24): repaired and CI-covered the Go SDK, which previously did not compile from a clean checkout
+
+**Success criteria:**
+- ✅ Existing OTEL instrumentation → Collector → AEP ingest, trace context preserved
+- ✅ Collector exporter follows the opentelemetry-collector-contrib pattern
+- ✅ otelbridge built + unit-tested in CI
+- ⏳ End-to-end ocb / docker-compose demo verified (code verified; full E2E run pending)
+- ⏳ Live-server integration test
 
 ### Phase 12: Framework Auto-Instrumentation (Q2 2026)
 

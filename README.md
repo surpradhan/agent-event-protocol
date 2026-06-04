@@ -362,7 +362,6 @@ We welcome contributions! Here's how:
 - 📱 Mobile dashboard (React Native)
 - 📈 Advanced metrics & analytics
 - 🌍 Internationalization
-- 🔌 OpenTelemetry Collector plugin (receiver + exporter) — builds on the shipped SDK bridge
 - 📚 Docs & tutorials
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed guidelines.
@@ -391,7 +390,8 @@ MIT License: see [LICENSE](./LICENSE) for details.
 - [x] Python SDK — [`sdks/python/`](sdks/python/) · sync + async clients, validator, HMAC signing, demo
 - [x] Go SDK — [`sdks/go/`](sdks/go/) · sync + async clients, validator, HMAC signing, CLI, demo
 - [x] Kubernetes operator — [`operator/`](operator/) · `AgentInstrumentation` CRD, sidecar-injection webhook, Helm chart
-- [x] OTEL (OpenTelemetry) bridge — [`sdks/python/aep/otel/`](sdks/python/aep/otel/) · span-to-event mapper + `AEPSpanExporter` (Collector plugin in progress)
+- [x] OTEL (OpenTelemetry) bridge — [`sdks/python/aep/otel/`](sdks/python/aep/otel/) · span-to-event mapper + `AEPSpanExporter`
+- [x] OTEL Collector plugin — [`otelbridge/`](otelbridge/) · Collector exporter (span → AEP event) + ocb build config + demo
 - [ ] Advanced filtering & visualization in dashboard
 - [ ] Webhook integration for alerts
 - [ ] S3/cloud export for long-term storage

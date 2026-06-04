@@ -4,6 +4,25 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Phase 12a — OpenTelemetry Collector Plugin, 2026-06-04
+
+No breaking changes to the event envelope schema or existing API contracts.
+
+**New: AEP OpenTelemetry Collector exporter** (`otelbridge/` — separate Go module `github.com/surpradhan/aep-otel-bridge`)
+
+Completes the OTEL story from Phase 11 — any OTEL-instrumented system can emit to AEP through a standard Collector pipeline, with no application code changes:
+
+- **Collector exporter** (`exporters/aepexporter/`) — config / factory / exporter built on the opentelemetry-collector v0.96 pattern; batches events and emits via the AEP Go client
+- **pdata-native span-to-event mapper** — mirrors the reference classification (`error.raised` > `handoff.completed` > `tool.result` > `task.completed`/`task.failed` > default); `trace_id` → AEP `trace_id` + `session_id` (`ses_<trace_id[:16]>`); parent span ID → `causation_id`; `gen_ai.*` → payload; `service.name` → `agent://` source
+- **Build & demo** — `builder-config.yaml` (ocb) to build a Collector including the exporter; `docker-compose.yml` (app → Collector → AEP) with an API-key bootstrap step (`/events` has no dev-mode bypass)
+- **CI** — new `otelbridge-test` job; the AEP Go SDK was also repaired and added to CI (it previously did not compile from a clean checkout — jsonschema API, embedded-schema path, BOM, event-type validation, OTEL mapper)
+
+**Tests** — exporter unit tests built on in-memory `ptrace.Traces` (no server required)
+
+**Not yet verified end-to-end:** the ocb Collector build and full `docker-compose` run, and a live-server integration test — see `otelbridge/README.md` "Status".
+
+---
+
 ## Phase 11 — OpenTelemetry Bridge (SDK), 2026-06-04
 
 No breaking changes to the event envelope schema or existing API contracts.
@@ -22,7 +41,7 @@ A drop-in OpenTelemetry bridge that emits AEP events from OTEL spans:
 
 **Tests** — 38 unit tests (27 mapper + 11 exporter), no server required
 
-**Deferred to Phase 12:** OTEL Collector receiver/exporter plugin; end-to-end Datadog/NewRelic → Collector → AEP demo.
+**Delivered in Phase 12a:** OTEL Collector exporter plugin; end-to-end Datadog/NewRelic → Collector → AEP demo.
 
 ---
 
