@@ -4,6 +4,23 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Fix — `/dashboard` & `/openapi.json` static serving under Express 5, 2026-06-04
+
+No breaking changes to the event envelope schema or existing API contracts.
+
+**Server** (`src/server.js`)
+
+- `res.sendFile()` was called with a full absolute path. Under Express 5, `send()`
+  applies its dotfiles policy (default `"ignore"`) to the whole resolved path when
+  no `root` is given, so a checkout whose path contains a dot-directory (e.g. a
+  `.claude/worktrees/...` git worktree) caused both routes to 404. Both now pass a
+  `root` option so the trusted prefix is exempt from the dotfiles check and only
+  the filename (no dot) is policy-checked.
+- Added a `GET /dashboard` → 200 regression test (the existing `/openapi.json`
+  test only failed from a dot-directory checkout; CI uses a clean path). (PR #27)
+
+---
+
 ## Phase 12b — Framework Auto-Instrumentation (LangGraph), 2026-06-04
 
 No breaking changes to the event envelope schema or existing API contracts.
