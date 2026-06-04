@@ -14,7 +14,7 @@ This guide walks you through setting up the AEP reference implementation and int
 4. [AEP Envelope Schema](#4-aep-envelope-schema)
 5. [Core Event Types](#5-core-event-types)
 6. [Integration Steps](#6-integration-steps)
-7. [The emit() Helper Function](#7-the-emit-helper-function)
+7. [Emitting Events (SDKs & Helper)](#7-emitting-events-sdks--helper)
 8. [Chaining Events with causation_id](#8-chaining-events-with-causation_id)
 9. [Mapping Agent Actions to Event Types](#9-mapping-agent-actions-to-event-types)
 10. [Multi-Agent Systems](#10-multi-agent-systems)
@@ -184,7 +184,7 @@ const traceId   = `trc_${crypto.randomUUID()}`;
 
 ### Step 2: Emit events at key moments
 
-Wherever your agent performs a meaningful action — receives a task, calls a tool, reads memory — construct an event and POST it to `/events`. Section 7 provides a ready-made helper function for this.
+Wherever your agent performs a meaningful action — receives a task, calls a tool, reads memory — construct an event and emit it to the ingest server. Section 7 covers the official SDKs (the recommended path) and a raw-HTTP helper for languages without an SDK.
 
 ### Step 3: Chain events with causation_id
 
@@ -192,11 +192,65 @@ When one event directly causes the next, pass the first event's `id` as the `cau
 
 ---
 
-## 7. The emit() Helper Function
+## 7. Emitting Events (SDKs & Helper)
 
-Below is a minimal helper function you can drop into any agent. It handles event construction, UUID generation, timestamping, and the HTTP POST to the ingest server.
+The recommended way to emit events is one of the **official AEP SDKs**, which build the envelope, validate it, sign it, handle retries and rate-limit back-off, and talk to the ingest server for you — so you don't hand-roll the envelope or HTTP. For languages without an SDK, a minimal raw-HTTP helper is shown at the end as a fallback.
 
-### JavaScript / Node.js
+| Language | Package | Reference |
+|---|---|---|
+| Python | `pip install -e "sdks/python[dev]"` | [sdks/python/README.md](./sdks/python/README.md) |
+| Go | `go get github.com/surpradhan/aep-go` | [sdks/go/README.md](./sdks/go/README.md) |
+
+The SDK READMEs are the canonical reference for each client — this guide cross-links to them rather than restating their APIs.
+
+### Python SDK (recommended)
+
+```python
+from aep import create_event, AEPClient
+
+# Build a spec-compliant event (id + time are auto-generated)
+event = create_event(
+    source="agent://my-agent",
+    type="task.created",
+    session_id=session_id,
+    trace_id=trace_id,
+    payload={"task": "summarise document"},
+    causation_id=prior_event_id,  # optional: chains to a prior event
+)
+
+# Emit to the ingest server
+with AEPClient(server_url="http://localhost:8787", api_key="aep_...") as client:
+    result = client.emit(event)
+    # {"accepted": True, "duplicate": False, "id": "evt_..."}
+```
+
+`AEPClient` reads `AEP_INGEST_URL` and `AEP_API_KEY` from the environment automatically. The package also provides `AsyncAEPClient` (async + `emit_batch`), `validate_event()`, and `sign_event()` / `verify_signature()`. See the [Python SDK README](./sdks/python/README.md) for the async client, batch emit, HMAC signing, and multi-agent helpers.
+
+### Go SDK (recommended)
+
+```go
+import "github.com/surpradhan/aep-go/aep"
+
+event, _ := aep.CreateEvent(
+    "agent://my-agent",
+    aep.EventTypeTaskCreated,
+    sessionID, traceID,
+    map[string]interface{}{"task": "analyze document"},
+    nil, // optional overrides (causation_id, agent_role, etc.)
+)
+
+client := aep.NewClient()
+client.SetAPIKey("aep_...")
+resp, _ := client.Emit(context.Background(), event)
+```
+
+The Go SDK also provides `AsyncClient` (concurrent `EmitBatch`), `ValidateEvent()`, and `SignEvent()` / `VerifySignature()`. See the [Go SDK README](./sdks/go/README.md) for full usage.
+
+### Raw HTTP fallback (any language)
+
+If there is no SDK for your language, emitting is a plain JSON POST to `/events`. The minimal Node.js helper below constructs the envelope, generates IDs and timestamps, and posts the event — port the same pattern to any HTTP-capable language.
+
+#### JavaScript / Node.js
 
 ```javascript
 const crypto = require("crypto");
@@ -238,47 +292,7 @@ async function emit(type, payload, causationId = null) {
 }
 ```
 
-### Python
-
-```python
-import uuid, datetime, os, requests
-
-AEP_URL     = os.getenv("AEP_INGEST_URL", "http://localhost:8787")
-AEP_API_KEY = os.getenv("AEP_API_KEY", "")
-SOURCE      = "agent://my-agent"
-
-session_id = None
-trace_id   = None
-
-def init_session():
-    global session_id, trace_id
-    session_id = f"ses_{uuid.uuid4()}"
-    trace_id   = f"trc_{uuid.uuid4()}"
-
-def emit(event_type, payload, causation_id=None):
-    event = {
-        "specversion": "0.2.0",
-        "id":          f"evt_{uuid.uuid4().hex}",
-        "time":        datetime.datetime.utcnow().isoformat() + "Z",
-        "source":      SOURCE,
-        "type":        event_type,
-        "session_id":  session_id,
-        "trace_id":    trace_id,
-        "payload":     payload
-    }
-    if causation_id:
-        event["causation_id"] = causation_id
-
-    headers = {
-        "Authorization": f"Bearer {AEP_API_KEY}",
-        "Content-Type":  "application/json"
-    }
-    resp = requests.post(f"{AEP_URL}/events", json=event, headers=headers)
-    body = resp.json()
-    return {**body, "eventId": event["id"]}
-```
-
-> **Other languages (Go, Rust, Java, etc.):** The pattern is identical — construct a JSON object matching the envelope schema and POST it to `/events`. AEP is language-agnostic.
+> **Using Python or Go?** Prefer the official SDKs above instead of a hand-rolled POST — they validate, sign, and retry for you. This raw helper is only for languages AEP doesn't yet ship a client for. For other languages (Rust, Java, etc.), the pattern is identical: construct a JSON object matching the envelope schema (Section 4) and POST it to `/events`. AEP is language-agnostic.
 
 ---
 
@@ -455,6 +469,8 @@ Run a pre-built version of this with:
 ```bash
 npm run demo:support
 ```
+
+> **SDK example apps:** For the same end-to-end pattern using the official clients, see the runnable multi-agent demos in [`sdks/python/demos/`](./sdks/python/demos/) and [`sdks/go/examples/`](./sdks/go/examples/).
 
 ---
 
