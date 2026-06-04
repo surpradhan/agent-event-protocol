@@ -71,15 +71,16 @@ func TestIntegrationExportToLiveServer(t *testing.T) {
 		sp.SetKind(ptrace.SpanKindClient)
 	}
 
+	ctx := context.Background()
 	cfg := &Config{ServerURL: serverURL(), APIKey: apiKey, BatchSize: 10}
 	exp := newAEPExporter(cfg, zap.NewNop())
-	if err := exp.consumeTraces(context.Background(), td); err != nil {
+	if err := exp.consumeTraces(ctx, td); err != nil {
 		t.Fatalf("consumeTraces: %v", err)
 	}
 
 	// Verify via GET /sessions/{id}/events. (The server implements
 	// /sessions/{id}/events but not a /sessions/{id} detail route.)
-	got := fetchSessionEvents(t, sessionID, apiKey)
+	got := fetchSessionEvents(ctx, t, sessionID, apiKey)
 	if len(got) != 3 {
 		t.Fatalf("got %d events for session %s, want 3", len(got), sessionID)
 	}
@@ -109,13 +110,17 @@ type sessionEvent struct {
 
 // fetchSessionEvents polls GET /sessions/{id}/events until at least 3 events
 // are visible (ingest is synchronous, but allow a brief settle window).
-func fetchSessionEvents(t *testing.T, sessionID, apiKey string) []sessionEvent {
+func fetchSessionEvents(ctx context.Context, t *testing.T, sessionID, apiKey string) []sessionEvent {
 	t.Helper()
 	var payload struct {
 		Events []sessionEvent `json:"events"`
 	}
+	url := serverURL() + "/sessions/" + sessionID + "/events"
 	for i := 0; i < 10; i++ {
-		req, _ := http.NewRequest("GET", serverURL()+"/sessions/"+sessionID+"/events", nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		resp, err := http.DefaultClient.Do(req)
 		if err == nil && resp.StatusCode == http.StatusOK {
