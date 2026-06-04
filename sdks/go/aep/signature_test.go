@@ -29,7 +29,7 @@ func TestSignEvent(t *testing.T) {
 		t.Errorf("Expected alg 'hmac-sha256', got %s", signedEvent.Signature.Alg)
 	}
 
-	if signedEvent.Signature.Val == "" {
+	if signedEvent.Signature.Value == "" {
 		t.Error("Expected signature value to be set")
 	}
 }
@@ -169,7 +169,7 @@ func TestSignatureConsistency(t *testing.T) {
 	signed2, _ := SignEvent(event, secret)
 
 	// Signatures should be the same for the same event and secret
-	if signed1.Signature.Val != signed2.Signature.Val {
+	if signed1.Signature.Value != signed2.Signature.Value {
 		t.Error("Signatures should be consistent for the same event")
 	}
 }

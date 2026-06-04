@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/surpradhan/aep-go/aep"
-	"go.opentelemetry.io/sdk/trace"
-	"go.opentelemetry.io/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 func TestIsTaskSpan(t *testing.T) {
@@ -91,15 +91,22 @@ func TestFormatSpanID(t *testing.T) {
 }
 
 func TestDeriveSessionID(t *testing.T) {
-	sid1 := deriveSessionID("my-service", "process_task")
-	sid2 := deriveSessionID("my-service", "process_task")
+	traceID := "0123456789abcdef0123456789abcdef"
+	sid1 := deriveSessionID(traceID)
+	sid2 := deriveSessionID(traceID)
 
 	if sid1 != sid2 {
 		t.Errorf("deriveSessionID should be deterministic, got %q and %q", sid1, sid2)
 	}
 
-	if !len(sid1) > 4 || sid1[:4] != "ses_" {
-		t.Errorf("deriveSessionID(%q, %q) = %q, want to start with 'ses_'", "my-service", "process_task", sid1)
+	if sid1 != "ses_0123456789abcdef" {
+		t.Errorf("deriveSessionID(%q) = %q, want %q", traceID, sid1, "ses_0123456789abcdef")
+	}
+
+	// Test short trace ID (edge case)
+	shortID := deriveSessionID("abc")
+	if shortID != "ses_abc" {
+		t.Errorf("deriveSessionID(%q) = %q, want %q", "abc", shortID, "ses_abc")
 	}
 }
 
@@ -108,7 +115,7 @@ func TestMapSpanToEvent(t *testing.T) {
 	spanRecorder := tracetest.NewSpanRecorder()
 	tp := trace.NewTracerProvider(trace.WithSpanProcessor(spanRecorder))
 	tracer := tp.Tracer("test")
-	ctx, span := tracer.Start(context.Background(), "my_task")
+	_, span := tracer.Start(context.Background(), "my_task")
 	span.End()
 	defer tp.Shutdown(context.Background())
 
@@ -137,8 +144,8 @@ func TestMapSpanToEvent(t *testing.T) {
 
 func TestBuildPayload(t *testing.T) {
 	attrs := map[string]interface{}{
-		"gen_ai.model":     "gpt-4",
-		"custom_attr":      "value",
+		"gen_ai.model": "gpt-4",
+		"custom_attr":  "value",
 	}
 
 	payload := buildPayload(attrs, "test_span", "CLIENT")

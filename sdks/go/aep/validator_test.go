@@ -276,9 +276,10 @@ func TestValidateEventNilPayload(t *testing.T) {
 		t.Fatalf("ValidateEvent failed: %v", err)
 	}
 
-	// Nil payload should be valid (payload is required but can be null)
-	if !result.Valid {
-		t.Errorf("Expected valid event with nil payload, got errors: %v", result.Errors)
+	// A nil payload serializes to JSON null, which violates the envelope schema
+	// (payload must be an object). The ingest server (ajv) rejects this too.
+	if result.Valid {
+		t.Error("Expected nil payload to fail validation (payload must be an object)")
 	}
 }
 
