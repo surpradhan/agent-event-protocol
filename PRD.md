@@ -148,20 +148,29 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 - ✅ Events include Kubernetes metadata (pod name, namespace, node, etc.)
 - ✅ Helm chart for easy deployment
 
-### Phase 11: OpenTelemetry Bridge (Q2 2026)
+### Phase 11: OpenTelemetry Bridge (2026-06-04)
+
+**Status: 🟡 SDK bridge complete — Collector plugin deferred to Phase 12**
 
 **Objective:** Enable AEP to consume and emit traces via OpenTelemetry — positioned as complementary, not competing.
 
-- OTEL Collector receiver: consume traces from standard OTEL exporters
-- OTEL Collector exporter: push AEP events to the ingest API
-- Span-to-event mapping: translate OTEL spans to AEP events (preserving trace context)
-- Example: existing Datadog/NewRelic instrumentation → OTEL Collector → AEP ingest
-- Contribute AEP's agent-native event vocabulary to the OTEL GenAI SIG as the reference implementation
+**Delivered (PR #20):**
+- Span-to-event mapper (`sdks/python/aep/otel/mapper.py`): translates OTEL spans to AEP events, preserving trace context; priority-ordered classification (error > handoff > tool > task)
+- Python SDK bridge (`aep.otel.AEPSpanExporter`): standard `SpanExporter` that dual-emits AEP events alongside OTEL spans via `AEPClient`
+- `trace_id` → AEP `trace_id` + `session_id`; parent span ID → `causation_id`; `service.name` → `agent://` source; `gen_ai.*` attributes → payload
+- Go span-to-event mapper (`sdks/go/aep/otel/mapper.go`) for language parity
+- Demo (`demos/otel_bridge.py`) + module README; 38 unit tests
+
+**Deferred to Phase 12:**
+- OTEL Collector receiver (consume OTLP traces from standard exporters)
+- OTEL Collector exporter (push AEP events from the Collector)
+- End-to-end Datadog/NewRelic → Collector → AEP demo
 
 **Success criteria:**
 - ✅ OTEL SDK can export traces to AEP
 - ✅ Trace context (trace ID, span ID, parent span ID) maps to AEP causation chains
-- ✅ Drop-in replacement for existing OTEL exporters
+- ✅ Drop-in `SpanExporter` for existing OTEL-instrumented Python apps
+- ⏳ OTEL Collector receiver/exporter plugin (Phase 12)
 - ⏳ AEP event types proposed / accepted in OTEL GenAI semantic conventions
 
 ### Phase 12: Framework Auto-Instrumentation (Q2 2026)
@@ -266,7 +275,7 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 | **Framework integrations** | ≥3 major frameworks (LangGraph, CrewAI, AutoGen) | ⏳ Planned Phase 12 |
 | **GitHub stars** | 1,000 | ⏳ In progress |
 | **aep.dev free tier users** | 500 at launch | ⏳ Planned Phase 13 |
-| **OTEL GenAI SIG contribution** | AEP event types proposed | ⏳ Planned Phase 11 |
+| **OTEL GenAI SIG contribution** | AEP event types proposed | ⏳ Planned Phase 12 |
 | **Compliance case study** | 1 regulated industry deployment | ⏳ Planned Phase 14 |
 
 ---
