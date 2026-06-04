@@ -588,6 +588,21 @@ Use the optional `schema` field in the envelope to version your payloads as they
 
 `GET /metrics/prometheus` exports event counters, per-type breakdowns, HTTP request counts, and latency histograms in Prometheus text format 0.0.4. Wire this into your existing Prometheus/Grafana stack for production monitoring.
 
+### OpenTelemetry
+
+Already instrumented with OpenTelemetry? You can export spans to AEP without rewriting your code — add the `AEPSpanExporter` to your tracer provider:
+
+```python
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from aep.otel import AEPSpanExporter
+
+provider.add_span_processor(
+    BatchSpanProcessor(AEPSpanExporter(server_url="http://localhost:8787", api_key="..."))
+)
+```
+
+Spans are mapped to AEP event types with trace context preserved — `trace_id` carries through to the AEP trace/session and the parent span ID becomes `causation_id`, so multi-agent causation chains are reconstructed automatically. For mapping rules, batch tuning, and full examples, see [`sdks/python/aep/otel/README.md`](./sdks/python/aep/otel/README.md).
+
 ---
 
 *End of guide. For the full version history and migration guides, see [CHANGELOG.md](./CHANGELOG.md).*
