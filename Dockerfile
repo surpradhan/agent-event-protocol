@@ -20,7 +20,9 @@ WORKDIR /app
 # Copy installed modules from deps stage.
 COPY --from=deps /app/node_modules ./node_modules
 
-# Copy application source.
+# Copy application source. package.json is required at runtime — src/server.js
+# reads its version via require("../package.json").
+COPY package.json ./
 COPY src/     ./src/
 COPY schemas/ ./schemas/
 

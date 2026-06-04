@@ -7,8 +7,11 @@
 #
 #   docker build -f otelbridge/Dockerfile -t aep-collector .
 #
-# NOTE: this OCB build has not yet been exercised in CI — see README "Status".
-FROM golang:1.21 AS build
+# Go 1.24 + GOTOOLCHAIN=auto: ocb runs an unpinned `go get`, which pulls
+# current transitive deps that require a newer toolchain than the collector's
+# declared go 1.21. Verified building a working binary with the aep exporter.
+FROM golang:1.24 AS build
+ENV GOTOOLCHAIN=auto
 RUN go install go.opentelemetry.io/collector/cmd/builder@v0.96.0
 
 WORKDIR /src
