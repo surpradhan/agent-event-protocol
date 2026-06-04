@@ -36,6 +36,8 @@ services:
   # Mints a write-scoped API key via the admin API and writes it to /shared/api_key.
   aep-bootstrap:
     image: curlimages/curl:latest
+    # Run as root so it can write the key to the root-owned shared volume.
+    user: root
     depends_on:
       aep-server:
         condition: service_healthy

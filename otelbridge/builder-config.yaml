@@ -5,10 +5,12 @@
 # Collector distribution that includes it, using ocb:
 #
 #   go install go.opentelemetry.io/collector/cmd/builder@v0.96.0
-#   builder --config builder-config.yaml
+#   GOTOOLCHAIN=auto builder --config builder-config.yaml   # needs Go >= 1.24
 #
 # This produces ./_build/aep-collector, a Collector binary with the standard
-# OTLP receiver + batch processor + the AEP exporter.
+# OTLP receiver + batch processor + the AEP exporter. (GOTOOLCHAIN=auto: ocb's
+# unpinned `go get` pulls transitive deps needing a newer toolchain than the
+# collector's declared go 1.21.)
 
 dist:
   name: aep-collector
@@ -24,8 +26,11 @@ processors:
 
 exporters:
   - gomod: go.opentelemetry.io/collector/exporter/debugexporter v0.96.0
-  # The AEP exporter, sourced from this repository.
-  - gomod: github.com/surpradhan/aep-otel-bridge/exporters/aepexporter v0.0.0
+  # The AEP exporter. `gomod` is the module (resolved locally via the replace
+  # below); `import` is the package path within that module, since the exporter
+  # is a package in the aep-otel-bridge module rather than its own module.
+  - gomod: github.com/surpradhan/aep-otel-bridge v0.0.0
+    import: github.com/surpradhan/aep-otel-bridge/exporters/aepexporter
 
 # Resolve the AEP exporter (and the SDK it depends on) from local source.
 # NOTE: ocb writes these into the generated go.mod under output_path (./_build),

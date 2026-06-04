@@ -72,9 +72,15 @@ The `aep` exporter is a custom component, so it is **not** in the prebuilt
 ```bash
 go install go.opentelemetry.io/collector/cmd/builder@v0.96.0
 cd otelbridge
-builder --config builder-config.yaml      # -> ./_build/aep-collector
-./_build/aep-collector --config collector-config.yaml
+GOTOOLCHAIN=auto builder --config builder-config.yaml   # needs Go >= 1.24; -> ./_build/aep-collector
+AEP_API_KEY=<key> ./_build/aep-collector --config collector-config.yaml
 ```
+
+Verified: the build produces a working binary with the `aep` exporter registered
+(`./_build/aep-collector components` lists it) and `validate --config
+collector-config.yaml` passes. `GOTOOLCHAIN=auto` is required because ocb's
+unpinned `go get` pulls transitive deps that need a newer toolchain than the
+collector's declared go 1.21.
 
 ## API key (important)
 
@@ -113,15 +119,12 @@ docker run --rm -v "$PWD/..":/src:ro golang:1.21 sh -c '
 
 ## Status
 
-**Verified (in Docker, `golang:1.21`):**
-- ✅ `exporters/aepexporter` builds, vets, and unit tests pass (classification, trace-context preservation, root-span handling, service-name fallback, payload separation, empty traces).
-- ✅ `examples/app.go` builds.
-- ✅ `gofmt` clean.
-
-**Not yet verified end-to-end (validate locally before relying on it):**
-- 🟡 The ocb Collector build (`builder-config.yaml` / `Dockerfile`).
-- 🟡 The full `docker-compose` stack (app → collector → AEP ingest), including the API-key bootstrap.
-- 🟡 An integration test against a live AEP server (unit tests cover mapping; an end-to-end emit test is still to come).
+**Verified (in Docker):**
+- ✅ `exporters/aepexporter` builds, vets, and unit tests pass (classification, trace-context preservation, root-span handling, service-name fallback, payload separation, empty traces) — `golang:1.21`.
+- ✅ `examples/app.go` builds; `gofmt` clean.
+- ✅ **ocb Collector build** (`builder-config.yaml`) produces a working binary with the `aep` exporter registered, and `validate --config collector-config.yaml` passes — `golang:1.24`, `GOTOOLCHAIN=auto`.
+- ✅ **Live-server integration test** (`integration_test.go`, `-tags integration`) — emits a 3-span trace through the exporter and confirms the events land in the right session via `GET /sessions/{id}/events` with the expected types, `trace_id`, and `source`.
+- ✅ **Full `docker-compose` E2E** — demo app → Collector (ocb-built) → AEP ingest: the demo's spans arrive as AEP events (202), grouped into trace-sessions under `agent://demo-agent`. The `aep-bootstrap` step provisions the API key.
 
 ## Dependencies
 

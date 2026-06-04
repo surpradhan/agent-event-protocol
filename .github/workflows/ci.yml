@@ -80,8 +80,11 @@ jobs:
         run: |
           go build ./...
           go vet ./...
+          go vet -tags integration ./...   # keep the tag-gated integration test compiling
 
       - name: Run otelbridge unit tests
+        # The live-server integration test is gated behind the `integration`
+        # build tag and is excluded from this server-less CI run.
         run: go test ./... -count=1
 
   python-sdk-test:
