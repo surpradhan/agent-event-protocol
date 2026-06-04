@@ -209,7 +209,7 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 - Pluggable `FrameworkInstrumentor` registry so CrewAI/AutoGen can be added by registering one class
 - Host-safe: no-op + warning when LangGraph/langchain-core absent or framework internals differ (never falsely reports success); emit failures swallowed; graph exceptions still propagate; idempotent re-instrumentation
 - Demo (`demos/langgraph_multiagent.py`): 10-node research workflow emitting 38 events across 10 sessions on one trace
-- 20 unit tests + a live-server integration test (auto-skips when unreachable); `[langgraph]` extra; `python-sdk-test` CI job (3.10/3.11/3.12)
+- 24 unit tests + a live-server integration test (auto-skips when unreachable); `[langgraph]` extra; `python-sdk-test` CI job (3.10/3.11/3.12)
 
 **Success criteria:**
 - ✅ `aep.instrument()` works on LangGraph with no other code changes (verified end-to-end against an installed LangGraph 1.x)
@@ -218,6 +218,51 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 - ✅ Unit + integration coverage wired into CI
 
 **Deferred to Phase 12c+:** CrewAI, AutoGen, and Anthropic/OpenAI SDK patching; Node.js auto-instrumentation (LangChain.js, Vercel AI SDK); native first-party emission with framework authors.
+
+### Phase 12c: Framework Auto-Instrumentation — CrewAI (planned)
+
+**Status: 📝 Spec — not started**
+
+**Objective:** Extend zero-code-change auto-instrumentation to **CrewAI**, the second major Python agent framework, and in doing so prove the `FrameworkInstrumentor` registry generalizes beyond the LangChain ecosystem. Success is `pip install "aep[crewai]"; aep.instrument()` emitting a full causation DAG from an unmodified `Crew.kickoff()`, exactly as Phase 12b does for LangGraph.
+
+**Why CrewAI next (over AutoGen / SDK patching):** The Phase 12b deferral list names CrewAI first, and the adoption metric ([Success Metrics](#-success-metrics)) targets ≥3 frameworks with CrewAI explicitly named. It is the most-requested LangGraph alternative and shares the same multi-agent orchestration shape (crew → agents → tools), so the existing event mapping transfers cleanly. AutoGen and Anthropic/OpenAI SDK patching follow in 12d+.
+
+**The core engineering problem (read before scoping):** Phase 12b's `FrameworkInstrumentor` docstring says adding a framework is "register one class," but that is only true *within the LangChain ecosystem*. The current design builds a **single LangChain `BaseCallbackHandler`** (`_build_callback_base()`) and hands that one handler to every instrumentor's `.instrument(handler)`. `aep.instrument()` is a hard no-op when `langchain-core` is absent (`instrument.py` ~L729). **CrewAI does not use LangChain callbacks** — it exposes its own `crewai.utilities.events` event bus (`@crewai_event_bus.on(...)` / `BaseEventListener`) plus `step_callback`/`task_callback` hooks. So 12c's real work is a **refactor + a new transport**, not a one-class addition.
+
+**Scope — three pieces of work, in order:**
+
+1. **Decouple the emission core from the LangChain transport.** Extract the framework-agnostic machinery — the background `_Emitter` queue, `_RunInfo` run bookkeeping, the ID helpers, and the lifecycle→event mapping (run-open → `task.created`/`tool.called`, run-close → `task.completed`/`tool.result`/`task.failed`, parent→child → `handoff.started`/`handoff.completed`, causation/trace/session threading) — into a transport-neutral `_EventBuilder`/emitter that both the LangChain handler and the new CrewAI listener call. The LangChain handler becomes a thin adapter over it; **this refactor must not change any Phase 12b event output** (regression-locked by the existing 12b tests).
+2. **Relax the `langchain-core` gate.** `instrument()` must only require LangChain when a LangChain-family framework is actually being instrumented. With only CrewAI installed, `aep.instrument()` must work without `langchain-core` present.
+3. **Add `CrewAIInstrumentor`.** Subscribe to the CrewAI event bus (the supported extension point — preferred over wrapping `Crew`/`Agent` internals, mirroring 12b's choice of LangGraph's `RunnableConfig` callbacks over monkey-patching internals). `available()` returns whether `crewai` imports; `uninstrument()` unsubscribes.
+
+**Event mapping (CrewAI → AEP):**
+
+- `Crew.kickoff()` (root) → orchestrator `task.created` / `task.completed` / `task.failed`; new `trace_id` + root `session_id`
+- each Agent / Task execution → sub-agent `task.*` with `parent_session_id` → crew session
+- crew → agent dispatch → `handoff.started` / `handoff.completed` on the crew session
+- tool usage → `tool.called` / `tool.result`, with `error.raised` on tool failure
+- every `causation_id` resolves to a real emitted event; one `trace_id` spans the whole kickoff (identical causation-DAG guarantees as 12b)
+
+**Deliverables:**
+- Refactored transport-neutral emission core, with the LangChain handler reimplemented on top of it and **all existing Phase 12b unit + integration tests still green, unchanged**
+- `CrewAIInstrumentor` registered in `_INSTRUMENTORS`; `instrument(frameworks=["crewai"])` works with CrewAI installed and `langchain-core` absent
+- `[crewai]` extra in `pyproject.toml`; CrewAI added to the `python-sdk-test` CI matrix
+- Demo `demos/crewai_multiagent.py` — a multi-agent crew emitting a full causation DAG (multiple sessions, one trace, no dangling causation links), mirroring `langgraph_multiagent.py`
+- Unit tests for the CrewAI event→AEP mapping + a live-server integration test (auto-skips when unreachable), matching 12b's coverage shape
+- Docs: README + SDK README updated; CHANGELOG + PRD status flipped to ✅; memory index updated
+
+**Success criteria:**
+- ✅ `aep.instrument()` emits a full causation DAG from an unmodified `Crew.kickoff()` with no other code changes, verified end-to-end against an installed CrewAI release
+- ✅ Tested against a pinned minimum CrewAI version (floor surfaced in warnings, as `MIN_LANGGRAPH_VERSION` is for 12b)
+- ✅ The 12b LangChain path is byte-for-byte unchanged in output (no event regressions from the refactor)
+- ✅ Host-safe: no-op + warning when CrewAI absent or its event API differs; emit failures swallowed; crew exceptions still propagate; idempotent re-instrumentation
+- ✅ Unit + integration coverage wired into CI; demo produces a clean DAG
+
+**Risks / open questions:**
+- **CrewAI event-bus stability** — CrewAI's event names/payloads have shifted across releases; pin a floor and degrade safely (warn + no-op) rather than assuming a schema, exactly as 12b guards LangGraph internals.
+- **Agent-vs-Task granularity** — CrewAI distinguishes Agents from Tasks; the spec maps both to sub-agent sessions, but the precise nesting (does a Task become a child session of its Agent, or peers under the crew?) should be settled against a real crew trace before finalizing the mapping.
+
+**Deferred to Phase 12d+:** AutoGen; Anthropic/OpenAI Agents SDK patching; Node.js auto-instrumentation (LangChain.js, Vercel AI SDK); native first-party emission with framework authors.
 
 ### Phase 13: Hosted SaaS — aep.dev (Q3 2026)
 
@@ -291,7 +336,7 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 
 | Metric | Target | Status |
 |--------|--------|--------|
-| **SDK Language Coverage** | JS, Python, Go, Rust, Java | ✅ 3/5 (JS, Python, Go) |
+| **SDK Language Coverage** | JS, Python, Go, Rust, Java | 🟡 3/5 (JS, Python, Go); Rust + Java not yet scheduled |
 | **Test Coverage** | ≥80% | ✅ 90%+ |
 | **Event Latency (p99)** | <100ms | ✅ ~50ms (local) |
 | **Throughput** | ≥1000 events/sec | ✅ ~2000 events/sec |
@@ -305,7 +350,7 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 | **Framework integrations** | ≥3 major frameworks (LangGraph, CrewAI, AutoGen) | 🟡 LangGraph done (Phase 12b); CrewAI/AutoGen planned (12c+) |
 | **GitHub stars** | 1,000 | ⏳ In progress |
 | **aep.dev free tier users** | 500 at launch | ⏳ Planned Phase 13 |
-| **OTEL GenAI SIG contribution** | AEP event types proposed | ⏳ Planned Phase 12 |
+| **OTEL GenAI SIG contribution** | AEP event types proposed | ⏳ Not yet scheduled — no phase delivers it (the OTEL bridge shipped in 11/12a, but upstreaming AEP's vocabulary to the SIG is unowned; needs its own phase) |
 | **Compliance case study** | 1 regulated industry deployment | ⏳ Planned Phase 14 |
 
 ---
