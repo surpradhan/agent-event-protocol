@@ -3,13 +3,11 @@
 package otel
 
 import (
-	"crypto/sha256"
 	"fmt"
 	"strings"
 
 	"github.com/surpradhan/aep-go/aep"
-	"go.opentelemetry.io/sdk/trace"
-	"go.opentelemetry.io/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/sdk/trace"
 )
 
 // MapSpanToEvent converts an OTEL ReadOnlySpan to an AEP event.
@@ -28,7 +26,7 @@ func MapSpanToEvent(span trace.ReadOnlySpan, resource map[string]string) (*aep.E
 	}
 
 	source := fmt.Sprintf("agent://%s", serviceName)
-	sessionID := deriveSessionID(serviceName, spanName)
+	sessionID := deriveSessionID(traceID)
 
 	payload := buildPayload(attrs, spanName, spanKind)
 
@@ -135,8 +133,12 @@ func formatSpanID(spanID [8]byte) string {
 	return fmt.Sprintf("%016x", spanID)
 }
 
-func deriveSessionID(serviceName, spanName string) string {
-	combined := fmt.Sprintf("%s::%s", serviceName, spanName)
-	hash := sha256.Sum256([]byte(combined))
-	return fmt.Sprintf("ses_%x", hash[:8])
+func deriveSessionID(traceID string) string {
+	// Derive session ID from trace_id to ensure sessions group by distributed execution.
+	// Use first 16 hex chars of trace_id (64 bits entropy) to prevent collisions
+	// while maintaining consistency across all spans in a trace.
+	if len(traceID) < 16 {
+		return fmt.Sprintf("ses_%s", traceID)
+	}
+	return fmt.Sprintf("ses_%s", traceID[:16])
 }
