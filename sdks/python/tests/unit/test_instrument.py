@@ -13,12 +13,14 @@ Split into two groups:
 
 from __future__ import annotations
 
+import threading
 import uuid
 
 import pytest
 
 from aep.instrument import (
     LangGraphInstrumentor,
+    _Emitter,
     _build_callback_base,
     _config_with_handler,
     _inject_handler,
@@ -144,6 +146,7 @@ def test_root_graph_emits_orchestrator_task_pair():
     root = uuid.uuid4()
     h.on_chain_start({"name": "g"}, {}, run_id=root, parent_run_id=None, name="g")
     h.on_chain_end({}, run_id=root)
+    assert h.flush(timeout=5.0)  # emission is buffered on a background thread
 
     types = [e["type"] for e in rec.events]
     assert types == ["task.created", "task.completed"]
@@ -164,6 +167,7 @@ def test_node_run_links_to_orchestrator_via_handoff():
     )
     h.on_chain_end({}, run_id=node)
     h.on_chain_end({}, run_id=root)
+    assert h.flush(timeout=5.0)
 
     by_id = _by_id(rec.events)
     types = [e["type"] for e in rec.events]
@@ -210,6 +214,7 @@ def test_node_error_emits_task_failed():
         {}, {}, run_id=node, parent_run_id=root, metadata={"langgraph_node": "bad"}
     )
     h.on_chain_error(ValueError("boom"), run_id=node)
+    assert h.flush(timeout=5.0)
 
     failed = [e for e in rec.events if e["type"] == "task.failed"]
     assert len(failed) == 1
@@ -234,6 +239,7 @@ def test_tool_call_emits_called_and_result():
         inputs={"q": "query text"},
     )
     h.on_tool_end("the result", run_id=tool)
+    assert h.flush(timeout=5.0)
 
     called = next(e for e in rec.events if e["type"] == "tool.called")
     result = next(e for e in rec.events if e["type"] == "tool.result")
@@ -257,6 +263,7 @@ def test_tool_error_emits_error_raised():
     h.on_chain_start({}, {}, run_id=root, parent_run_id=None, name="orch")
     h.on_tool_start({"name": "t"}, "in", run_id=tool, parent_run_id=root)
     h.on_tool_error(RuntimeError("nope"), run_id=tool)
+    assert h.flush(timeout=5.0)
 
     err = next(e for e in rec.events if e["type"] == "error.raised")
     assert err["payload"]["error_type"] == "RuntimeError"
@@ -268,6 +275,7 @@ def test_untracked_end_is_ignored():
     # on_chain_end for a run we never opened must not emit or crash.
     h, rec = _make_handler()
     h.on_chain_end({}, run_id=uuid.uuid4())
+    assert h.flush(timeout=5.0)
     assert rec.events == []
 
 
@@ -284,6 +292,119 @@ def test_emit_failure_does_not_propagate():
 
     h = base(Boom())
     root = uuid.uuid4()
-    # Should not raise despite emit() always failing.
+    # Should not raise despite emit() always failing — the failure happens on the
+    # background worker thread and is logged, not propagated to the host.
     h.on_chain_start({}, {}, run_id=root, parent_run_id=None, name="g")
     h.on_chain_end({}, run_id=root)
+    assert h.flush(timeout=5.0)
+
+
+# ── Background emitter (no deps) ─────────────────────────────────────────────
+
+
+class _Sink:
+    """Recording client for the emitter; emit runs on the worker thread."""
+
+    def __init__(self):
+        self.ids = []
+
+    def emit(self, event):
+        self.ids.append(event["id"])
+
+
+def test_emitter_sends_in_fifo_order():
+    sink = _Sink()
+    em = _Emitter(sink)
+    try:
+        for i in range(100):
+            em.submit({"id": i, "type": "x"})
+        assert em.flush(timeout=5.0)
+        assert sink.ids == list(range(100))  # single worker preserves order
+    finally:
+        em.close()
+
+
+def test_emitter_drops_when_full_and_counts():
+    # Block the worker so the bounded queue fills and excess events drop.
+    gate = threading.Event()
+
+    class Slow:
+        def emit(self, event):
+            gate.wait(2.0)
+
+    em = _Emitter(Slow(), max_queue=2)
+    try:
+        for i in range(50):
+            em.submit({"id": i, "type": "x"})
+        assert em._dropped > 0  # overflow was dropped, not buffered unbounded
+    finally:
+        gate.set()
+        em.close()
+
+
+@requires_langchain
+def test_runs_cap_evicts_oldest():
+    base = _build_callback_base()
+    rec = _Recorder()
+    h = base(rec, max_runs=3)  # tiny cap to force eviction
+    try:
+        root = uuid.uuid4()
+        h.on_chain_start({}, {}, run_id=root, parent_run_id=None, name="orch")
+        # Open more nodes than the cap, none of them ending → accumulation.
+        for _ in range(6):
+            h.on_chain_start(
+                {}, {}, run_id=uuid.uuid4(), parent_run_id=root,
+                metadata={"langgraph_node": "n"},
+            )
+        assert h.flush(timeout=5.0)
+        assert h._evicted > 0
+        assert len(h._runs) <= 3
+    finally:
+        h.close()
+
+
+# ── Async invocation path (real graph) ──────────────────────────────────────
+
+
+@requires_langchain
+async def test_ainvoke_emits_full_chain():
+    pytest.importorskip("langgraph")
+    from typing import TypedDict
+
+    from langgraph.graph import END, START, StateGraph
+
+    import aep
+    from aep.instrument import uninstrument
+
+    captured = []
+
+    class Rec:
+        _server_url = "mock"
+
+        def emit(self, event):
+            captured.append(event)
+
+    assert aep.instrument(client=Rec())
+    try:
+        class S(TypedDict):
+            v: int
+
+        g = StateGraph(S)
+        g.add_node("worker", lambda s: {"v": s["v"] + 1})
+        g.add_edge(START, "worker")
+        g.add_edge("worker", END)
+        app = g.compile()
+        app.name = "async-graph"
+
+        out = await app.ainvoke({"v": 1})
+        assert out["v"] == 2
+        assert aep.flush(timeout=5.0)
+    finally:
+        uninstrument()
+
+    types = [e["type"] for e in captured]
+    assert "task.created" in types and "task.completed" in types
+    assert "handoff.started" in types  # orchestrator handed off to the node
+    roles = {e.get("agent_role") for e in captured}
+    assert "orchestrator" in roles and "subagent" in roles
+    assert len({e["trace_id"] for e in captured}) == 1  # one trace for the run

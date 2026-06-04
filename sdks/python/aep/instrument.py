@@ -34,9 +34,12 @@ Design rules:
 
 from __future__ import annotations
 
+import atexit
 import logging
+import queue
 import threading
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -48,13 +51,99 @@ logger = logging.getLogger(__name__)
 # Tested-against version floor; surfaced in warnings to aid debugging.
 MIN_LANGGRAPH_VERSION = "0.1"
 
+# Defaults for the background emitter and run bookkeeping.
+DEFAULT_QUEUE_SIZE = 10_000   # max buffered events before we drop (and warn)
+DEFAULT_MAX_RUNS = 10_000     # max in-flight runs tracked before evicting oldest
+
 # Module-level registry of framework instrumentors, populated at import time.
 _INSTRUMENTORS: dict[str, "FrameworkInstrumentor"] = {}
 
-# The client used by all active instrumentation. Set by instrument().
+# The client + handler used by all active instrumentation. Set by instrument().
 _state_lock = threading.Lock()
 _active_client: Optional["AEPClient"] = None
+_active_handler: Any = None
 _owns_client = False
+
+
+# ── Background emitter ───────────────────────────────────────────────────────
+
+
+class _Emitter:
+    """Sends events on a background thread so callbacks never block on network I/O.
+
+    Event *ids* are generated synchronously by ``create_event`` before submission,
+    so causation chains are intact regardless of when the HTTP POST happens. A
+    single worker drains a FIFO queue, preserving emission order. The queue is
+    bounded: under sustained overload we drop events and log loudly (never
+    silently) rather than grow without limit or block the host workflow.
+    """
+
+    def __init__(self, client: Any, max_queue: int = DEFAULT_QUEUE_SIZE) -> None:
+        self._client = client
+        self._q: "queue.Queue[dict]" = queue.Queue(maxsize=max_queue)
+        self._dropped = 0
+        self._stop = threading.Event()
+        self._worker = threading.Thread(
+            target=self._run, name="aep-emit", daemon=True
+        )
+        self._worker.start()
+        # Flush on normal interpreter exit (the daemon worker would otherwise be
+        # killed with events still queued).
+        atexit.register(self._atexit_flush)
+
+    def submit(self, event: dict) -> None:
+        try:
+            self._q.put_nowait(event)
+        except queue.Full:
+            self._dropped += 1
+            # Log on the first drop and then sparsely, so we never spam but never
+            # hide that telemetry was lost.
+            if self._dropped == 1 or self._dropped % 100 == 0:
+                logger.warning(
+                    "AEP: emit queue full — dropped %d event(s) so far. "
+                    "The ingest endpoint may be slow or unreachable.",
+                    self._dropped,
+                )
+
+    def _run(self) -> None:
+        while not self._stop.is_set() or not self._q.empty():
+            try:
+                event = self._q.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            try:
+                self._client.emit(event)
+            except Exception as e:
+                logger.warning("AEP: failed to emit %s event: %s", event.get("type"), e)
+            finally:
+                self._q.task_done()
+
+    def flush(self, timeout: float = 5.0) -> bool:
+        """Block until queued events are sent (or ``timeout`` elapses).
+
+        Returns ``True`` if the queue drained within the timeout.
+        """
+        done = threading.Event()
+
+        def _waiter() -> None:
+            self._q.join()
+            done.set()
+
+        threading.Thread(target=_waiter, name="aep-flush", daemon=True).start()
+        return done.wait(timeout)
+
+    def close(self, timeout: float = 5.0) -> None:
+        """Flush, then stop the worker. Does not close the underlying client."""
+        self.flush(timeout)
+        self._stop.set()
+        self._worker.join(timeout=1.0)
+        try:
+            atexit.unregister(self._atexit_flush)
+        except Exception:
+            pass
+
+    def _atexit_flush(self) -> None:  # pragma: no cover - exercised at exit
+        self.flush(timeout=2.0)
 
 
 # ── ID helpers ──────────────────────────────────────────────────────────────
@@ -116,15 +205,32 @@ def _build_callback_base():
         # We never raise out of a callback — partial telemetry beats a crashed app.
         raise_error = False
 
-        def __init__(self, client: "AEPClient") -> None:
-            self._client = client
+        def __init__(self, client: "AEPClient", max_runs: int = DEFAULT_MAX_RUNS) -> None:
+            self._emitter = _Emitter(client)
             self._lock = threading.Lock()
-            self._runs: dict[str, _RunInfo] = {}
+            self._runs: "OrderedDict[str, _RunInfo]" = OrderedDict()
+            self._max_runs = max_runs
+            self._evicted = 0
+
+        # -- lifecycle --------------------------------------------------------
+
+        def flush(self, timeout: float = 5.0) -> bool:
+            """Block until queued telemetry is sent (or the timeout elapses)."""
+            return self._emitter.flush(timeout)
+
+        def close(self, timeout: float = 5.0) -> None:
+            """Flush pending telemetry and stop the background worker."""
+            self._emitter.close(timeout)
 
         # -- emission ---------------------------------------------------------
 
         def _emit(self, **kwargs: Any) -> Optional[str]:
-            """Create + emit an event. Returns its id, or None on failure."""
+            """Build an event and hand it to the background emitter.
+
+            The id is generated synchronously so callers can chain ``causation_id``
+            off it immediately, even though the HTTP POST happens off-thread.
+            Returns the event id, or None if the event could not be built.
+            """
             from aep import create_event
 
             try:
@@ -132,11 +238,8 @@ def _build_callback_base():
             except Exception as e:  # pragma: no cover - defensive
                 logger.warning("AEP: failed to build %s event: %s", kwargs.get("type"), e)
                 return None
-            try:
-                self._client.emit(event)
-            except Exception as e:
-                # Network/server hiccups must not break the host workflow.
-                logger.warning("AEP: failed to emit %s event: %s", event.get("type"), e)
+            # Hand off to the background worker; never blocks on the network here.
+            self._emitter.submit(event)
             return event["id"]
 
         def _get(self, run_id: Any) -> Optional[_RunInfo]:
@@ -146,6 +249,20 @@ def _build_callback_base():
         def _put(self, run_id: Any, info: _RunInfo) -> None:
             with self._lock:
                 self._runs[str(run_id)] = info
+                # Bound memory: if runs accumulate (e.g. a run never gets an
+                # end/error callback), evict the oldest. This can orphan that
+                # run's closing event, but only under abnormal accumulation —
+                # we warn so it's never a silent loss.
+                while len(self._runs) > self._max_runs:
+                    self._runs.popitem(last=False)
+                    self._evicted += 1
+                    if self._evicted == 1 or self._evicted % 100 == 0:
+                        logger.warning(
+                            "AEP: tracked-run cap (%d) exceeded — evicted %d stale "
+                            "run(s); some end events may be unmatched.",
+                            self._max_runs,
+                            self._evicted,
+                        )
 
         def _pop(self, run_id: Any) -> Optional[_RunInfo]:
             with self._lock:
@@ -607,7 +724,7 @@ def instrument(
     Never raises on a missing framework — it logs a warning and returns ``False``
     so adding ``aep.instrument()`` can't take down the host application.
     """
-    global _active_client, _owns_client
+    global _active_client, _owns_client, _active_handler
 
     base = _build_callback_base()
     if base is None:
@@ -655,7 +772,14 @@ def instrument(
 
     if not instrumented:
         logger.warning("AEP: instrumentation attempted but no framework was patched.")
+        handler.close(timeout=0.0)  # don't leak the emitter's worker thread
         return False
+
+    # Promote the new handler; retire any previous one's background worker.
+    with _state_lock:
+        previous, _active_handler = _active_handler, handler
+    if previous is not None and previous is not handler:
+        previous.close(timeout=1.0)
 
     logger.info(
         "AEP instrumentation enabled for: %s (server: %s)",
@@ -665,19 +789,41 @@ def instrument(
     return True
 
 
+def flush(timeout: float = 5.0) -> bool:
+    """Block until queued AEP telemetry has been sent (or ``timeout`` elapses).
+
+    Emission is buffered on a background thread, so call this before a short-lived
+    process exits (or before asserting on the server in a test) to be sure events
+    were delivered. Returns ``True`` if the buffer drained in time, ``False`` if it
+    timed out, and ``True`` immediately when instrumentation is not active.
+    """
+    handler = _active_handler
+    if handler is None:
+        return True
+    return handler.flush(timeout)
+
+
 def uninstrument() -> None:
-    """Undo all instrumentation and release an internally-created client."""
-    global _active_client, _owns_client
+    """Undo all instrumentation, flush pending telemetry, and release the client."""
+    global _active_client, _owns_client, _active_handler
     for inst in _INSTRUMENTORS.values():
         try:
             inst.uninstrument()
         except Exception as e:  # pragma: no cover - defensive
             logger.warning("AEP: failed to uninstrument %s: %s", inst.name, e)
     with _state_lock:
-        if _owns_client and _active_client is not None:
-            try:
-                _active_client.close()
-            except Exception:
-                pass
+        handler, _active_handler = _active_handler, None
+        client, owns = _active_client, _owns_client
         _active_client = None
         _owns_client = False
+    # Flush + stop the worker outside the lock (close() can join a thread).
+    if handler is not None:
+        try:
+            handler.close(timeout=5.0)
+        except Exception:
+            pass
+    if owns and client is not None:
+        try:
+            client.close()
+        except Exception:
+            pass

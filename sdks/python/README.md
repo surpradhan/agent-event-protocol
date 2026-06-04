@@ -140,7 +140,9 @@ aep.instrument()          # reads AEP_INGEST_URL / AEP_API_KEY (or pass them in)
 # ... build and run your StateGraph exactly as usual ...
 app = graph.compile()
 app.invoke({"topic": "AI agent observability"})
-# aep.uninstrument()      # optional: restore original behavior
+
+aep.flush()               # block until buffered telemetry is sent (see below)
+# aep.uninstrument()      # optional: restore original behavior (also flushes)
 ```
 
 What gets emitted, with causation preserved (`trace_id`, `session_id`,
@@ -162,6 +164,11 @@ Notes:
   `AEP_INGEST_URL` / `AEP_API_KEY` env vars.
 - Implemented as a LangChain `BaseCallbackHandler` injected via `RunnableConfig`
   (the supported extension point), so it survives parallel node fan-out.
+- **Emission is non-blocking** — events are sent on a background worker so they
+  never add network latency to your graph. Call `aep.flush()` before a
+  short-lived process exits (or rely on the atexit flush / `uninstrument()`) to
+  be sure they were delivered. The buffer is bounded and drops with a warning
+  under sustained overload rather than blocking your workflow.
 - See `demos/langgraph_multiagent.py` for a runnable 10-node example.
 
 ---

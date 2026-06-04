@@ -206,7 +206,8 @@ def main() -> None:
     print("\n=== Done ===")
     print("final:", result.get("final"))
 
-    time.sleep(0.5)  # let async emits flush
+    aep.flush(timeout=10.0)  # emission is buffered on a background thread
+    time.sleep(0.3)
     print("\n=== AEP workflow (from server) ===")
     _print_workflow(server_url, api_key)
     print("\nOpen the dashboard to replay the causation DAG: "

@@ -62,6 +62,7 @@ def test_langgraph_run_emits_dag_to_server(instrumented):
     result = app.invoke({"value": 5})
     assert result["value"] == 12  # (5 + 1) * 2
 
+    assert aep.flush(timeout=10.0)  # emission is buffered; wait for the POSTs
     time.sleep(0.5)  # allow ingest to settle
 
     with AEPClient(server_url=server_url, api_key=api_key) as client:
