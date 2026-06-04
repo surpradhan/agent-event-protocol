@@ -24,14 +24,17 @@ type EmitResponse struct {
 	ID        string `json:"id"`
 }
 
-// SessionResponse represents session data from the API.
+// SessionResponse represents session metadata from GET /sessions/{id}.
+// Fields mirror the server's session shape (src/db formatSession).
 type SessionResponse struct {
-	ID              string `json:"id"`
-	TraceID         string `json:"trace_id"`
-	ParentSessionID *string `json:"parent_session_id,omitempty"`
-	EventCount      int    `json:"event_count"`
-	FirstTime       string `json:"first_time"`
-	LastTime        string `json:"last_time"`
+	SessionID       string  `json:"session_id"`
+	TraceID         string  `json:"trace_id"`
+	Source          string  `json:"source"`
+	ParentSessionID *string `json:"parent_session_id"`
+	AgentRole       *string `json:"agent_role"`
+	EventCount      int     `json:"event_count"`
+	StartedAt       string  `json:"started_at"`
+	UpdatedAt       string  `json:"updated_at"`
 }
 
 // HandleResponse processes an HTTP response and returns an error if appropriate.

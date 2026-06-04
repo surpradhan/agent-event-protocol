@@ -5,6 +5,7 @@ package aep
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"testing"
@@ -267,5 +268,53 @@ func TestIntegrationMultiAgentWorkflow(t *testing.T) {
 
 	if !resp.Accepted {
 		t.Error("Expected sub-agent event to be accepted")
+	}
+}
+
+// TestIntegrationGetSession emits two events to a unique session and then reads
+// the session back via GET /sessions/{id}. Requires AEP_API_KEY (emitting needs
+// a write-scoped key).
+func TestIntegrationGetSession(t *testing.T) {
+	serverURL := integrationServerURL()
+	skipIfServerUnavailable(t, serverURL)
+
+	apiKey := os.Getenv("AEP_API_KEY")
+	if apiKey == "" {
+		t.Skip("AEP_API_KEY not set (write-scoped key required to emit)")
+	}
+
+	client := NewClientWithURL(serverURL)
+	client.SetAPIKey(apiKey)
+	ctx := context.Background()
+
+	ts := time.Now().UnixNano()
+	sessionID := fmt.Sprintf("ses_getsession_%d", ts)
+	traceID := fmt.Sprintf("trc_getsession_%d", ts)
+
+	for i := 0; i < 2; i++ {
+		ev, err := CreateEvent("agent://gs-test", EventTypeTaskCreated, sessionID, traceID, map[string]interface{}{}, nil)
+		if err != nil {
+			t.Fatalf("CreateEvent: %v", err)
+		}
+		if _, err := client.Emit(ctx, ev); err != nil {
+			t.Fatalf("Emit: %v", err)
+		}
+	}
+
+	sess, err := client.GetSession(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if sess.SessionID != sessionID {
+		t.Errorf("SessionID = %q, want %q", sess.SessionID, sessionID)
+	}
+	if sess.TraceID != traceID {
+		t.Errorf("TraceID = %q, want %q", sess.TraceID, traceID)
+	}
+	if sess.EventCount != 2 {
+		t.Errorf("EventCount = %d, want 2", sess.EventCount)
+	}
+	if sess.StartedAt == "" || sess.UpdatedAt == "" {
+		t.Errorf("started_at/updated_at empty: %q / %q", sess.StartedAt, sess.UpdatedAt)
 	}
 }
