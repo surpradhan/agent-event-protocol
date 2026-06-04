@@ -56,6 +56,34 @@ jobs:
         # live server, so they are excluded from this server-less CI run.
         run: go test ./... -count=1
 
+  otelbridge-test:
+    name: otelbridge unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: otelbridge
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: otelbridge/go.sum
+
+      # Resolves the OTEL Collector deps and the local AEP SDK
+      # (replace github.com/surpradhan/aep-go => ../sdks/go).
+      - name: Download dependencies
+        run: go mod tidy
+
+      - name: Build and vet
+        run: |
+          go build ./...
+          go vet ./...
+
+      - name: Run otelbridge unit tests
+        run: go test ./... -count=1
+
   test:
     runs-on: ubuntu-latest
 
