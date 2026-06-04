@@ -231,6 +231,45 @@ describe("GET /sessions", () => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /sessions/:sessionId
+// ---------------------------------------------------------------------------
+
+describe("GET /sessions/:sessionId", () => {
+  const SESSION_ID = `ses_detail_${Date.now()}`;
+  const TRACE_ID   = `trc_detail_${Date.now()}`;
+
+  before(async () => {
+    for (const type of ["task.created", "task.completed"]) {
+      await ingest(makeEvent({ session_id: SESSION_ID, trace_id: TRACE_ID, type }));
+    }
+  });
+
+  test("returns session metadata", async () => {
+    const res = await fetch(`${baseUrl}/sessions/${SESSION_ID}`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.session_id, SESSION_ID);
+    assert.equal(body.trace_id, TRACE_ID);
+    assert.equal(body.event_count, 2);
+    assert.ok("started_at" in body && "updated_at" in body);
+  });
+
+  test("returns 404 for an unknown session", async () => {
+    const res = await fetch(`${baseUrl}/sessions/ses_does_not_exist_999`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test("returns 401 without auth", async () => {
+    const res = await fetch(`${baseUrl}/sessions/${SESSION_ID}`);
+    assert.equal(res.status, 401);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // GET /sessions/:sessionId/events
 // ---------------------------------------------------------------------------
 

@@ -286,6 +286,22 @@ app.get("/sessions", requireReadAccess, validateQueryParams, (req, res) => {
 });
 
 /**
+ * GET /sessions/:sessionId
+ *
+ * Returns metadata for a single session (scoped to the caller's tenant), or
+ * 404 if it does not exist. Response shape matches each entry of GET /sessions:
+ *   { session_id, trace_id, source, parent_session_id, agent_role,
+ *     event_count, started_at, updated_at }
+ */
+app.get("/sessions/:sessionId", requireReadAccess, validatePathParams, (req, res) => {
+  const session = db.getSession(req.params.sessionId, req.tenant_id);
+  if (!session) {
+    return res.status(404).json({ error: "Session not found" });
+  }
+  res.json(session);
+});
+
+/**
  * GET /sessions/:sessionId/events
  *
  * Query params:

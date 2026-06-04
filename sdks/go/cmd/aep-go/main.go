@@ -107,11 +107,12 @@ func handleSession(args []string) {
 		log.Fatalf("Failed to get session: %v", err)
 	}
 
-	fmt.Printf("Session: %s\n", session.ID)
+	fmt.Printf("Session: %s\n", session.SessionID)
 	fmt.Printf("Trace ID: %s\n", session.TraceID)
+	fmt.Printf("Source: %s\n", session.Source)
 	fmt.Printf("Event Count: %d\n", session.EventCount)
-	fmt.Printf("First Time: %s\n", session.FirstTime)
-	fmt.Printf("Last Time: %s\n", session.LastTime)
+	fmt.Printf("Started At: %s\n", session.StartedAt)
+	fmt.Printf("Updated At: %s\n", session.UpdatedAt)
 }
 
 func handleValidate(args []string) {
