@@ -38,15 +38,28 @@ class TestSpanTypeDetection(unittest.TestCase):
         self.assertFalse(_is_handoff_span("task_complete"))
 
     def test_is_error_span(self):
+        # OK status should not be error
         span_ok = MagicMock()
+        span_ok.name = "error_handler"
         span_ok.status.is_ok = True
         self.assertFalse(_is_error_span(span_ok))
 
+        # Error status + "error" in name should be error
         span_error = MagicMock()
+        span_error.name = "error_handler"
         span_error.status.is_ok = False
         self.assertTrue(_is_error_span(span_error))
 
+        # Error status but NO "error" in name should NOT be error
+        # (it would be TASK_FAILED or similar)
+        span_other_error = MagicMock()
+        span_other_error.name = "database_query"
+        span_other_error.status.is_ok = False
+        self.assertFalse(_is_error_span(span_other_error))
+
+        # No status attribute should not be error
         span_no_status = MagicMock(spec=[])
+        span_no_status.name = "error_handler"
         self.assertFalse(_is_error_span(span_no_status))
 
 
@@ -116,14 +129,25 @@ class TestSessionIdDerivation(unittest.TestCase):
     """Test session ID derivation."""
 
     def test_derive_session_id_consistency(self):
-        sid1 = _derive_session_id("my-service", "process_task")
-        sid2 = _derive_session_id("my-service", "process_task")
+        trace_id = "0123456789abcdef0123456789abcdef"
+        sid1 = _derive_session_id(trace_id)
+        sid2 = _derive_session_id(trace_id)
         self.assertEqual(sid1, sid2)
 
     def test_derive_session_id_format(self):
-        sid = _derive_session_id("service", "span")
+        trace_id = "0123456789abcdef0123456789abcdef"
+        sid = _derive_session_id(trace_id)
         self.assertTrue(sid.startswith("ses_"))
         self.assertEqual(len(sid), 20)  # "ses_" + 16 hex chars
+
+    def test_derive_session_id_uses_trace_context(self):
+        # Same trace_id should produce same session_id regardless of service
+        trace_id = "fedcba9876543210fedcba9876543210"
+        sid1 = _derive_session_id(trace_id)
+        sid2 = _derive_session_id(trace_id)
+        self.assertEqual(sid1, sid2)
+        # Verify it uses trace_id prefix
+        self.assertEqual(sid1, f"ses_{trace_id[:16]}")
 
 
 class TestMapSpanToEvent(unittest.TestCase):
@@ -183,7 +207,7 @@ class TestMapSpanToEvent(unittest.TestCase):
         self.assertEqual(final["source"], "agent://my-agent")
 
     def test_map_error_span(self):
-        span = self._create_span("operation", is_ok=False)
+        span = self._create_span("error_handler", is_ok=False)
         span.status.description = "Timeout"
         intermediate, final = map_span_to_event(span, self.resource)
 
@@ -208,6 +232,63 @@ class TestMapSpanToEvent(unittest.TestCase):
 
         self.assertIn("gen_ai", final["payload"])
         self.assertEqual(final["payload"]["gen_ai"]["gen_ai.model"], "gpt-4")
+
+    def test_error_priority_over_task(self):
+        """Error status should take priority over task name."""
+        span = self._create_span("task_with_error", is_ok=False)
+        span.status.description = "Execution failed"
+        intermediate, final = map_span_to_event(span, self.resource)
+
+        # Should be ERROR_RAISED, not TASK_FAILED
+        self.assertEqual(final["type"], EventType.ERROR_RAISED)
+        self.assertEqual(final["payload"]["error_description"], "Execution failed")
+
+    def test_malformed_parent_span_handled(self):
+        """Span with parent but no span_id should not crash."""
+        span = self._create_span("task")
+        span.parent = MagicMock(spec=[])  # No span_id attribute
+        intermediate, final = map_span_to_event(span, self.resource)
+
+        # Should not crash and causation_id should be None
+        self.assertIsNone(final.get("causation_id"))
+
+    def test_span_without_kind_name(self):
+        """Span with kind but no .name attribute should use INTERNAL."""
+        span = self._create_span("tool_call")
+        span.kind = MagicMock(spec=[])  # No name attribute
+        intermediate, final = map_span_to_event(span, self.resource)
+
+        # Should not crash
+        self.assertIn("span_kind", final["payload"])
+        self.assertEqual(final["payload"]["span_kind"], "INTERNAL")
+
+    def test_span_with_null_name(self):
+        """Span with None name should default to 'unknown'."""
+        span = self._create_span()
+        span.name = None
+        intermediate, final = map_span_to_event(span, self.resource)
+
+        self.assertEqual(final["payload"]["span_name"], "unknown")
+
+    def test_source_prefix_customizable(self):
+        """Source prefix should be configurable."""
+        span = self._create_span("task")
+        intermediate, final = map_span_to_event(
+            span, self.resource, source_prefix="service://"
+        )
+
+        self.assertEqual(final["source"], "service://my-agent")
+
+    def test_session_id_from_trace_context(self):
+        """Session ID should be derived from trace_id, not span name."""
+        span = self._create_span("task1", trace_id=0x11111111)
+        span2 = self._create_span("task2", trace_id=0x11111111)
+
+        _, final1 = map_span_to_event(span, self.resource)
+        _, final2 = map_span_to_event(span2, self.resource)
+
+        # Same trace_id should produce same session_id
+        self.assertEqual(final1["session_id"], final2["session_id"])
 
 
 if __name__ == "__main__":

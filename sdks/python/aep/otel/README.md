@@ -11,15 +11,22 @@ The bridge provides:
 
 ## Span-to-Event Mapping
 
-The mapper uses span names and attributes to determine the appropriate AEP event type:
+The mapper uses span names and attributes to determine the appropriate AEP event type.
+Classification follows a **priority order** to ensure error conditions are not masked:
 
-| Span Pattern | AEP Event Type | Rules |
-|--------------|--------|-------|
-| Name contains "task" | `task.created` → `task.completed`/`task.failed` | Span status determines success/failure |
-| Name contains "tool" + kind = CLIENT/SERVER | `tool.called` → `tool.result` | Captures tool invocations |
-| Name contains "handoff" | `handoff.started` → `handoff.completed` | Multi-agent handoffs |
-| Has error status | `error.raised` | Non-OK span status |
-| Default | `task.completed` | Unmapped spans default to task completion |
+| Priority | Span Pattern | AEP Event Type | Rules |
+|----------|--------------|--------|-------|
+| 1 (highest) | Name contains "error" + error status | `error.raised` | Exceptional conditions |
+| 2 | Name contains "handoff" | `handoff.completed` | Multi-agent handoffs |
+| 3 | Name contains "tool" + kind ∈ {CLIENT, SERVER} | `tool.result` | Tool invocations |
+| 4 | Name contains "task" + error status | `task.failed` | Task-specific failures |
+| 4 | Name contains "task" + ok status | `task.completed` | Task success |
+| 5 (lowest) | Default (unmatched) | `task.completed` | Unmapped spans |
+
+**Key semantics:**
+- `error.raised`: Only for spans explicitly named with "error" AND in error status
+- `task.failed`: For "task" spans that fail (error status but no "error" in name)
+- Order ensures error conditions are classified correctly, not masked by task context
 
 ### Attribute Mapping
 
@@ -35,8 +42,11 @@ The bridge separates `gen_ai.*` attributes (OpenTelemetry GenAI SIG) from custom
 ### Trace Context Mapping
 
 - OTEL `trace_id` → AEP `trace_id` (hex string, same value)
+- OTEL `trace_id` → AEP `session_id` (derived as `ses_{trace_id[:16]}`)
+  - Ensures all spans in a trace share the same session ID
+  - Prevents collisions across invocations of similar operations
 - OTEL `parent span_id` → AEP `causation_id` (enables parent-child linking)
-- OTEL `Resource.service.name` → AEP `source` (as `agent://service.name`)
+- OTEL `Resource.service.name` → AEP `source` (as `agent://service.name`, customizable via `source_prefix`)
 
 ## Usage
 
@@ -225,9 +235,31 @@ Maps to: `error.raised` event with exception details in payload.
 ## Limitations
 
 - The bridge maps spans **on span end** (final events), not on span start
-- Session IDs are derived from service name + span name (not from OTEL context)
 - GenAI attributes follow the [OpenTelemetry GenAI SIG](https://opentelemetry.io/docs/specs/semconv/gen-ai/) conventions
 - Error mapping only triggers if span status is non-OK AND span name contains "error"
+- Currently uses SimpleSpanProcessor for immediate export; BatchSpanProcessor supported via standard OTEL config
+
+## Design Decisions
+
+### Session ID from Trace Context
+Session IDs are **derived from OTEL trace_id**, not service name + span name. This:
+- **Prevents collisions** across invocations of similar operations
+- **Groups causation chains** correctly within a distributed trace
+- **Maintains consistency** across all spans in a trace
+
+Previously, using (service_name, span_name) caused multiple invocations of identical spans to generate different session IDs, breaking session grouping.
+
+### Error Priority Order
+Classification follows a priority order: error > handoff > tool > task > default. This:
+- **Ensures error conditions are not masked** by task context
+- **Distinguishes `error.raised` from `task.failed`**: the former is for exceptional conditions ("error_handler"), the latter for task failures ("task" with error status)
+- **Prevents ambiguity**: a "task_error_recovery" span with error status maps to ERROR_RAISED, not TASK_FAILED
+
+### Event Validation
+Generated events are validated against the AEP schema before being returned. This:
+- **Catches schema violations early** during mapping, not during emission
+- **Provides clear error messages** for debugging span classification issues
+- **Fails fast** if there are schema mismatches
 
 ## Contributing
 

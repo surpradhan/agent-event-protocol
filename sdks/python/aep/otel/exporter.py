@@ -5,12 +5,15 @@ Implements the OTEL SpanExporter interface to emit AEP events from OTEL spans.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Sequence
 
 from opentelemetry.sdk.trace.export import ReadableSpan, SpanExporter, SpanExportResult
 
 from aep.client import AEPClient
 from aep.otel.mapper import map_span_to_event
+
+logger = logging.getLogger(__name__)
 
 
 class AEPSpanExporter(SpanExporter):
@@ -61,6 +64,7 @@ class AEPSpanExporter(SpanExporter):
             if self._resource and hasattr(self._resource, "attributes"):
                 resource_attrs = dict(self._resource.attributes)
 
+            failed_spans = 0
             for span in spans:
                 try:
                     _, event = map_span_to_event(span, resource_attrs)
@@ -68,12 +72,32 @@ class AEPSpanExporter(SpanExporter):
                         self._client.emit(event)
                 except Exception as e:
                     # Log but continue processing other spans
-                    print(f"Warning: failed to map span {span.name}: {e}")
+                    failed_spans += 1
+                    logger.warning(
+                        "Failed to export span %s: %s",
+                        span.name,
+                        e,
+                        exc_info=True,
+                    )
+
+            if failed_spans == len(spans):
+                # All spans failed
+                logger.error("All %d spans failed to export", len(spans))
+                return SpanExportResult.FAILURE
+            elif failed_spans > 0:
+                # Partial failure (some succeeded, some failed)
+                logger.warning(
+                    "Exported %d/%d spans (failed: %d)",
+                    len(spans) - failed_spans,
+                    len(spans),
+                    failed_spans,
+                )
+                return SpanExportResult.SUCCESS
 
             return SpanExportResult.SUCCESS
 
         except Exception as e:
-            print(f"Error exporting spans: {e}")
+            logger.error("Unexpected error exporting spans: %s", e, exc_info=True)
             return SpanExportResult.FAILURE
 
     def shutdown(self) -> None:

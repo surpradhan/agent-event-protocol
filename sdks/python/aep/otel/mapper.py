@@ -15,19 +15,30 @@ from aep._types import EventType
 def map_span_to_event(
     span: Any,
     resource: Any | dict,
+    source_prefix: str = "agent://",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Map an OTEL ReadableSpan to AEP event(s).
 
     Returns a tuple of (intermediate_events, final_event) where:
-    - intermediate_events: list of events emitted during span (e.g., on start)
+    - intermediate_events: list of events emitted during span (currently empty;
+                           reserved for future span-start events)
     - final_event: event emitted on span end
+
+    Args:
+        span: OpenTelemetry ReadableSpan
+        resource: Resource attributes (dict or object with .attributes)
+        source_prefix: Prefix for event source URI (default: "agent://")
     """
     span_name = span.name or "unknown"
     span_kind = span.kind.name if hasattr(span.kind, "name") else "INTERNAL"
     attributes = dict(span.attributes) if span.attributes else {}
     trace_id = _format_trace_id(span.context.trace_id)
     span_id = _format_span_id(span.context.span_id)
-    parent_span_id = _format_span_id(span.parent.span_id) if span.parent else None
+
+    # Safely extract parent span ID
+    parent_span_id = None
+    if span.parent and hasattr(span.parent, "span_id"):
+        parent_span_id = _format_span_id(span.parent.span_id)
 
     # Handle both dict and object resources
     if isinstance(resource, dict):
@@ -37,19 +48,32 @@ def map_span_to_event(
     else:
         service_name = "unknown"
 
-    source = f"agent://{service_name}"
-    session_id = _derive_session_id(service_name, span.name)
+    source = f"{source_prefix}{service_name}"
+    # Derive session ID from trace context (prevents collisions across invocations)
+    session_id = _derive_session_id(trace_id)
 
-    intermediate_events = []
+    # Currently only emit on span end; intermediate_events reserved for future expansion
+    intermediate_events: list[dict[str, Any]] = []
     final_event = None
 
     payload = _build_payload(attributes, span_name, span_kind)
 
-    if _is_task_span(span_name):
-        if span.status.is_ok if hasattr(span.status, "is_ok") else True:
-            final_type = EventType.TASK_COMPLETED
-        else:
-            final_type = EventType.TASK_FAILED
+    # Priority order: error > handoff > tool > task > default
+    # This ensures error conditions are not masked by other classification.
+    if _is_error_span(span):
+        final_type = EventType.ERROR_RAISED
+        final_event = create_event(
+            source=source,
+            type=final_type,
+            session_id=session_id,
+            trace_id=trace_id,
+            payload=_build_error_payload(span, attributes),
+            causation_id=parent_span_id,
+            subject=span_name,
+        )
+
+    elif _is_handoff_span(span_name):
+        final_type = EventType.HANDOFF_COMPLETED
         final_event = create_event(
             source=source,
             type=final_type,
@@ -72,26 +96,17 @@ def map_span_to_event(
             subject=span_name,
         )
 
-    elif _is_handoff_span(span_name):
-        final_type = EventType.HANDOFF_COMPLETED
+    elif _is_task_span(span_name):
+        if span.status.is_ok if hasattr(span.status, "is_ok") else True:
+            final_type = EventType.TASK_COMPLETED
+        else:
+            final_type = EventType.TASK_FAILED
         final_event = create_event(
             source=source,
             type=final_type,
             session_id=session_id,
             trace_id=trace_id,
             payload=payload,
-            causation_id=parent_span_id,
-            subject=span_name,
-        )
-
-    elif _is_error_span(span):
-        final_type = EventType.ERROR_RAISED
-        final_event = create_event(
-            source=source,
-            type=final_type,
-            session_id=session_id,
-            trace_id=trace_id,
-            payload=_build_error_payload(span, attributes),
             causation_id=parent_span_id,
             subject=span_name,
         )
@@ -107,6 +122,14 @@ def map_span_to_event(
             causation_id=parent_span_id,
             subject=span_name,
         )
+
+    # Validate the generated event before returning
+    from aep._validator import validate_event
+
+    try:
+        validate_event(final_event)
+    except Exception as e:
+        raise ValueError(f"Generated invalid AEP event: {e}") from e
 
     return intermediate_events, final_event
 
@@ -127,13 +150,21 @@ def _is_handoff_span(name: str) -> bool:
 
 
 def _is_error_span(span: Any) -> bool:
-    """Check if span has error status."""
+    """Check if span represents an error event (not just failure).
+
+    Maps to ERROR_RAISED only if:
+    - Span has non-OK status, AND
+    - Span name contains "error"
+
+    (Task spans with error status map to TASK_FAILED, not ERROR_RAISED.
+     Only spans explicitly named "error*" map to ERROR_RAISED.)
+    """
     if not hasattr(span, "status"):
         return False
     status = span.status
-    if hasattr(status, "is_ok"):
-        return not status.is_ok
-    return False
+    has_error_status = hasattr(status, "is_ok") and not status.is_ok
+    has_error_name = "error" in span.name.lower() if span.name else False
+    return has_error_status and has_error_name
 
 
 def _build_payload(attributes: dict[str, Any], span_name: str, span_kind: str) -> dict[str, Any]:
@@ -187,10 +218,12 @@ def _format_span_id(span_id: int | str | None) -> str | None:
     return f"{span_id:016x}"
 
 
-def _derive_session_id(service_name: str, span_name: str) -> str:
-    """Derive a session ID from service name and span name."""
-    import hashlib
+def _derive_session_id(trace_id: str) -> str:
+    """Derive a session ID from trace context.
 
-    combined = f"{service_name}::{span_name}"
-    hash_obj = hashlib.sha256(combined.encode())
-    return f"ses_{hash_obj.hexdigest()[:16]}"
+    Uses the OTEL trace_id to ensure sessions group by distributed execution,
+    not by span name. This prevents collisions across invocations while
+    maintaining consistency across all spans in a trace.
+    """
+    # Use first 16 hex chars of trace_id (64 bits entropy)
+    return f"ses_{trace_id[:16]}"

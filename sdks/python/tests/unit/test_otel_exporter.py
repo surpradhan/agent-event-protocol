@@ -1,11 +1,12 @@
 """Unit tests for OTEL SpanExporter."""
 
+import logging
 import unittest
 from unittest.mock import MagicMock, patch
 
 from opentelemetry.sdk.trace.export import SpanExportResult
 
-from aep.otel.exporter import AEPSpanExporter
+from aep.otel.exporter import AEPSpanExporter, logger
 
 
 class TestAEPSpanExporter(unittest.TestCase):
@@ -86,11 +87,11 @@ class TestAEPSpanExporter(unittest.TestCase):
         mock_client = MagicMock()
         self.exporter._client = mock_client
 
-        # Export span - should return SUCCESS but skip the problematic span
+        # Export span - should return FAILURE when all spans fail
         result = self.exporter.export([span])
 
-        # Verify it continues despite the error
-        self.assertEqual(result, SpanExportResult.SUCCESS)
+        # Verify it returns FAILURE when all spans fail
+        self.assertEqual(result, SpanExportResult.FAILURE)
 
     @patch("aep.otel.exporter.AEPClient")
     def test_export_client_error(self, mock_client_class):
@@ -108,9 +109,69 @@ class TestAEPSpanExporter(unittest.TestCase):
             event = {"type": "task.completed"}
             mock_mapper.return_value = ([], event)
 
-            # Export should continue despite client error
+            # Export should return FAILURE when client fails to emit
             result = self.exporter.export([span])
+            self.assertEqual(result, SpanExportResult.FAILURE)
+
+    @patch("aep.otel.exporter.map_span_to_event")
+    def test_export_partial_failure(self, mock_mapper):
+        """Test handling of partial failures (some spans succeed, some fail)."""
+        span1 = MagicMock()
+        span1.name = "task1"
+        span2 = MagicMock()
+        span2.name = "task2"
+
+        # First span succeeds, second fails
+        event1 = {"type": "task.completed", "id": "evt_1"}
+        mock_mapper.side_effect = [([], event1), ValueError("Bad span")]
+
+        mock_client = MagicMock()
+        self.exporter._client = mock_client
+
+        with patch("aep.otel.exporter.logger") as mock_logger:
+            result = self.exporter.export([span1, span2])
+
+            # Should return SUCCESS for partial success
             self.assertEqual(result, SpanExportResult.SUCCESS)
+            # Should have logged a warning
+            self.assertTrue(mock_logger.warning.called)
+
+    @patch("aep.otel.exporter.map_span_to_event")
+    def test_export_all_failures(self, mock_mapper):
+        """Test handling when all spans fail to map."""
+        span1 = MagicMock()
+        span1.name = "task1"
+        span2 = MagicMock()
+        span2.name = "task2"
+
+        # All spans fail
+        mock_mapper.side_effect = [ValueError("Bad span 1"), ValueError("Bad span 2")]
+
+        mock_client = MagicMock()
+        self.exporter._client = mock_client
+
+        with patch("aep.otel.exporter.logger") as mock_logger:
+            result = self.exporter.export([span1, span2])
+
+            # Should return FAILURE when all fail
+            self.assertEqual(result, SpanExportResult.FAILURE)
+            # Should have logged errors
+            self.assertTrue(mock_logger.error.called)
+
+    def test_export_uses_logging(self):
+        """Verify that logger is used, not print()."""
+        span = MagicMock()
+        span.name = "task"
+
+        with patch("aep.otel.exporter.map_span_to_event") as mock_mapper:
+            mock_mapper.side_effect = ValueError("Mapping error")
+            mock_client = MagicMock()
+            self.exporter._client = mock_client
+
+            with patch("aep.otel.exporter.logger") as mock_logger:
+                self.exporter.export([span])
+                # Should have called logger.warning
+                self.assertTrue(mock_logger.warning.called)
 
 
 if __name__ == "__main__":
