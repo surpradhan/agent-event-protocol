@@ -4,6 +4,44 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Phase 11 — OpenTelemetry Bridge (SDK), 2026-06-04
+
+No breaking changes to the event envelope schema or existing API contracts.
+
+**New: `aep.otel` Python module** (`sdks/python/aep/otel/`)
+
+A drop-in OpenTelemetry bridge that emits AEP events from OTEL spans:
+
+- **Span-to-event mapper** (`mapper.py`) — `map_span_to_event()` translates an OTEL `ReadableSpan` to an AEP event. Priority-ordered classification: `error.raised` (error status + "error" in name) > `handoff.completed` > `tool.result` (CLIENT/SERVER + "tool") > `task.completed`/`task.failed` > default
+- **Span exporter** (`exporter.py`) — `AEPSpanExporter` implements the OTEL `SpanExporter` interface; works with `SimpleSpanProcessor` and `BatchSpanProcessor`; structured logging; partial-failure handling (SUCCESS if any span exports, FAILURE if all fail)
+- **Trace context preservation** — `trace_id` → AEP `trace_id` and `session_id` (`ses_<trace_id[:16]>`, so all spans in a trace share a session); parent span ID → `causation_id`; `Resource.service.name` → `agent://<service>` source (configurable prefix); `gen_ai.*` attributes (OTEL GenAI SIG) → payload
+- **Event validation** — generated events are validated against the AEP schema before emission
+- **Go mapper** (`sdks/go/aep/otel/mapper.go`) — span-to-event logic for language parity
+
+**Demo** — `demos/otel_bridge.py`: multi-agent orchestrator instrumented with OTEL, exporting to AEP
+
+**Tests** — 38 unit tests (27 mapper + 11 exporter), no server required
+
+**Deferred to Phase 12:** OTEL Collector receiver/exporter plugin; end-to-end Datadog/NewRelic → Collector → AEP demo.
+
+---
+
+## Phase 10 — Kubernetes Operator (2026-06-03)
+
+No breaking changes to the event envelope schema or existing API contracts.
+
+**New: AEP Operator** (`operator/` — separate Go module `github.com/surpradhan/aep-operator`)
+
+Zero-code instrumentation of agent workloads via sidecar injection:
+
+- **`AgentInstrumentation` CRD** (cluster-scoped) — `namespaceSelector`, `podSelector`, `apiKeySecretRef`, `sidecarImage`, `resources`, and `env` overrides
+- **Mutating webhook** — opt-in via `aep.dev/inject=true` annotation; injects the AEP sidecar with downward-API env vars, Secret-backed API key, configurable resources, and a hardened `SecurityContext`
+- **Controller** — reconciles `AgentInstrumentation` CRs; maintains `status.injectedCount` and `status.conditions` (Ready/Disabled/InjectionFailed)
+- **Helm chart** (`operator/helm/aep-operator/`) — cert-manager TLS, configurable `namespaceSelector`, all values documented
+- **Tests** — 22 unit (10 controller + 12 webhook) + 4 envtest integration tests
+
+---
+
 ## Phase 9 — Go SDK (2026-06-03)
 
 No breaking changes to the event envelope schema or existing API contracts.

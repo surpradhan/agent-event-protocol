@@ -268,8 +268,8 @@ Typically indicates cross-tenant access attempt or insufficient scopes for the r
 | **[CONTRIBUTING.md](./CONTRIBUTING.md)** | Development setup, code style, contribution workflow |
 | **[SECURITY.md](./SECURITY.md)** | Threat model, vulnerability disclosure, production deployment checklist |
 | **[SETUP.md](./SETUP.md)** | Installation, configuration, troubleshooting |
-| **[CHANGELOG.md](./CHANGELOG.md)** | Version history (Phases 1-9) and breaking changes |
-| **[PRD.md](./PRD.md)** | Product vision, roadmap, and success metrics (Phases 10+) |
+| **[CHANGELOG.md](./CHANGELOG.md)** | Version history (Phases 1-11) and breaking changes |
+| **[PRD.md](./PRD.md)** | Product vision, roadmap, and success metrics (Phases 12+) |
 | **[CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)** | Community standards and expectations |
 
 ---
@@ -362,8 +362,7 @@ We welcome contributions! Here's how:
 - 📱 Mobile dashboard (React Native)
 - 📈 Advanced metrics & analytics
 - 🌍 Internationalization
-- 🐳 Kubernetes operator for automatic instrumentation
-- 🔌 OpenTelemetry (OTEL) bridge
+- 🔌 OpenTelemetry Collector plugin (receiver + exporter) — builds on the shipped SDK bridge
 - 📚 Docs & tutorials
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed guidelines.
@@ -391,8 +390,8 @@ MIT License: see [LICENSE](./LICENSE) for details.
 - [x] JavaScript/TypeScript — Server + dashboard + CLI + docs
 - [x] Python SDK — [`sdks/python/`](sdks/python/) · sync + async clients, validator, HMAC signing, demo
 - [x] Go SDK — [`sdks/go/`](sdks/go/) · sync + async clients, validator, HMAC signing, CLI, demo
-- [ ] Kubernetes operator for automatic instrumentation
-- [ ] OTEL (OpenTelemetry) bridge
+- [x] Kubernetes operator — [`operator/`](operator/) · `AgentInstrumentation` CRD, sidecar-injection webhook, Helm chart
+- [x] OTEL (OpenTelemetry) bridge — [`sdks/python/aep/otel/`](sdks/python/aep/otel/) · span-to-event mapper + `AEPSpanExporter` (Collector plugin in progress)
 - [ ] Advanced filtering & visualization in dashboard
 - [ ] Webhook integration for alerts
 - [ ] S3/cloud export for long-term storage
