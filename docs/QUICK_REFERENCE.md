@@ -163,6 +163,8 @@ require('dotenv').config();
 const apiKey = process.env.AEP_API_KEY;
 ```
 
+> Note: `AEP_INGEST_URL` is used in examples and SDK-style usage, while the Node CLI uses `AEP_SERVER`.
+
 ---
 
 ## Using API Keys
@@ -293,8 +295,15 @@ curl -s -X DELETE http://localhost:8787/admin/keys/f47ac10b-58cc-4372-a567-0e02b
 
 **Response:**
 ```
-HTTP 204 No Content
+HTTP 200 OK
+{
+  "ok": true,
+  "message": "API key revoked",
+  "id": "<key-id>"
+}
 ```
+
+If the key does not exist, the endpoint may return `404`. If the key is already revoked, a `409` response is also possible.
 
 After revocation:
 - All subsequent requests with that key receive HTTP 401 (Unauthorized)
