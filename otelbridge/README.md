@@ -123,10 +123,8 @@ docker run --rm -v "$PWD/..":/src:ro golang:1.21 sh -c '
 - ✅ `exporters/aepexporter` builds, vets, and unit tests pass (classification, trace-context preservation, root-span handling, service-name fallback, payload separation, empty traces) — `golang:1.21`.
 - ✅ `examples/app.go` builds; `gofmt` clean.
 - ✅ **ocb Collector build** (`builder-config.yaml`) produces a working binary with the `aep` exporter registered, and `validate --config collector-config.yaml` passes — `golang:1.24`, `GOTOOLCHAIN=auto`.
-
-**Not yet verified end-to-end (validate locally before relying on it):**
-- 🟡 The full `docker-compose` stack (app → collector → AEP ingest), including the API-key bootstrap.
-- 🟡 An integration test against a live AEP server (unit tests cover mapping; an end-to-end emit test is still to come).
+- ✅ **Live-server integration test** (`integration_test.go`, `-tags integration`) — emits a 3-span trace through the exporter and confirms the events land in the right session via `GET /sessions/{id}/events` with the expected types, `trace_id`, and `source`.
+- ✅ **Full `docker-compose` E2E** — demo app → Collector (ocb-built) → AEP ingest: the demo's spans arrive as AEP events (202), grouped into trace-sessions under `agent://demo-agent`. The `aep-bootstrap` step provisions the API key.
 
 ## Dependencies
 

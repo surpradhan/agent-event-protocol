@@ -21,7 +21,10 @@ COPY otelbridge/ ./otelbridge/
 WORKDIR /src/otelbridge
 RUN builder --config builder-config.yaml
 
-FROM gcr.io/distroless/static:nonroot
+# debian-slim (not distroless) so the demo's compose entrypoint can use a shell
+# to read the bootstrapped API key; glibc matches the golang:1.24 build image
+# (the collector is built with cgo, so a musl/alpine runtime would not load it).
+FROM debian:bookworm-slim
 COPY --from=build /src/otelbridge/_build/aep-collector /aep-collector
 COPY otelbridge/collector-config.yaml /etc/collector-config.yaml
 ENTRYPOINT ["/aep-collector"]
