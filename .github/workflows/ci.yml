@@ -183,3 +183,28 @@ jobs:
 
       - name: Verify Docker image
         run: docker images | grep agent-event-protocol
+
+  check-sync:
+    name: Required checks in sync
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      # Verifies the CI job contexts, the CONTRIBUTING.md required-checks block,
+      # and (when CHECKS_SYNC_TOKEN is set) the live branch-protection list all
+      # agree. CHECKS_SYNC_TOKEN is optional: the default GITHUB_TOKEN cannot
+      # read branch protection, so without an admin PAT only the workflow<->docs
+      # comparison runs (which is the part that matters most and works on forks).
+      - name: Verify required checks are in sync
+        env:
+          CHECKS_SYNC_TOKEN: ${{ secrets.CHECKS_SYNC_TOKEN }}
+        run: python3 .github/scripts/check_required_checks.py
