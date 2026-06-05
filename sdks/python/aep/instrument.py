@@ -47,6 +47,7 @@ Design rules:
 
 from __future__ import annotations
 
+import asyncio
 import atexit
 import json
 import logging
@@ -1139,6 +1140,7 @@ class _AutoGenRunContext:
         self._orch_key = f"{token}:team"
         self._open_agents: set[str] = set()
         self._started = False
+        self._done = False
 
     def _agent_key(self, source: str) -> str:
         return f"{self._token}:agent:{source}"
@@ -1177,10 +1179,16 @@ class _AutoGenRunContext:
         ``.content``) — it never imports autogen, so the mapping is unit-testable
         with fabricated events.
         """
+        if self._done:
+            return
         # The stream's terminal item is a TaskResult (carries the full message
-        # list + a stop reason, and has no ``source``); the run is closed by
-        # finish(), so there's nothing to map here.
+        # list + a stop reason, and has no ``source``). Closing here — at the
+        # actual completion signal — makes a fully-consumed run close
+        # deterministically, rather than relying on generator exhaustion reaching
+        # wrap_stream's ``finally`` (which remains the backstop for error/cleanup
+        # paths). `finish` is idempotent, so the backstop is a safe no-op.
         if hasattr(item, "messages") and hasattr(item, "stop_reason"):
+            self.finish("completed")
             return
         source = getattr(item, "source", None)
         # The echoed task input has source "user"; skip it (and anything sourceless).
@@ -1228,6 +1236,9 @@ class _AutoGenRunContext:
         are inferred from message sources, so a run-level failure marks only the
         orchestrator ``task.failed``; observed sub-agents close ``task.completed``.
         """
+        if self._done:
+            return
+        self._done = True
         for source in list(self._open_agents):
             self._core.close_agent_run(self._agent_key(source), status="completed")
         self._open_agents.clear()
@@ -1269,8 +1280,16 @@ class AEPAutoGenTracer:
 
         Transparent to the caller — yields exactly what ``gen`` yields, in order.
         A mapping error on any single item is swallowed (telemetry is best-effort
-        and must never break the host run); a failure raised by the run itself
-        closes the orchestrator as ``task.failed`` and propagates unchanged.
+        and must never break the host run); a failure (or cancellation) raised by
+        the run itself closes the orchestrator as ``task.failed`` and propagates
+        unchanged.
+
+        Completion is closed deterministically when the terminal ``TaskResult`` is
+        observed; the ``finally`` is the backstop for error / cancellation paths.
+        Note: if a caller abandons ``run_stream`` early (``break``s before the
+        ``TaskResult``), the run closes only when this async generator is
+        finalized (``aclose`` / loop shutdown), not promptly — the fully-consumed
+        ``team.run()`` / ``run_stream()`` paths are unaffected.
         """
         ctx = _AutoGenRunContext(
             self._core, _new_run_token(), getattr(instance, "name", None)
@@ -1292,7 +1311,11 @@ class AEPAutoGenTracer:
                         e,
                     )
                 yield item
-        except Exception as e:
+        except (Exception, asyncio.CancelledError) as e:
+            # CancelledError is a BaseException (not Exception) — list it
+            # explicitly so a cancelled run is recorded as failed rather than
+            # silently closing "completed". It is always re-raised, so
+            # cancellation semantics are preserved.
             status, error = "failed", e
             raise
         finally:
