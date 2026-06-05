@@ -32,6 +32,14 @@ crewai = [
     # matches MIN_CREWAI_VERSION in aep/instrument.py.
     "crewai>=1.0.0",
 ]
+autogen = [
+    # AutoGen AgentChat's typed run_stream event model (ToolCallRequestEvent /
+    # ToolCallExecutionEvent) the tracer maps landed in the 0.4 rewrite; the
+    # >=0.4 floor matches MIN_AUTOGEN_VERSION in aep/instrument.py. The offline
+    # demo + tool integration test use autogen-ext's ReplayChatCompletionClient.
+    "autogen-agentchat>=0.4",
+    "autogen-ext>=0.4",
+]
 otel = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",

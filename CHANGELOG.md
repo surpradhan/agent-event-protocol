@@ -4,6 +4,77 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Phase 12d — Framework Auto-Instrumentation (AutoGen), 2026-06-05
+
+No breaking changes to the event envelope schema or existing API contracts, and
+**no change to the LangGraph (12b) or CrewAI (12c) event output** (both are
+regression-locked by their unchanged test suites). This is purely additive: a
+third framework registered alongside the existing two.
+
+**New: AutoGen AgentChat auto-instrumentation** (`sdks/python/aep/instrument.py`)
+
+`import aep; aep.instrument()` now also instruments **AutoGen AgentChat** — an
+unmodified `team.run()` / `team.run_stream()` emits a full AEP causation DAG with
+no other code changes. Tested against `autogen-agentchat>=0.4` (developed on 0.7.x).
+AutoGen is the third major framework, satisfying the PRD's ≥3-framework metric
+(LangGraph, CrewAI, AutoGen).
+
+- **Stream tracer, not a callback/bus** — AutoGen AgentChat has neither a callback
+  registry nor an event bus; a team surfaces its activity only as the async stream
+  of messages/events yielded by `BaseGroupChat.run_stream`. The instrumentor wraps
+  that method (which `BaseGroupChat.run` consumes internally, so one tap covers
+  both) with an `AEPAutoGenTracer` that re-yields every item unchanged while
+  translating it into `_EmissionCore` calls — mirroring 12b/12c's choice of the
+  supported observation surface over monkey-patching internals. `uninstrument()`
+  restores the original method.
+- **Event mapping (settled against a real trace)** — the **team** is the
+  orchestrator `task.*` (new `trace_id` + root `session_id`); each distinct message
+  `source` (an agent name) is opened lazily as a **sub-agent** `task.*` with
+  `parent_session_id` → team, reached via `handoff.started`/`handoff.completed` on
+  the team session; a `ToolCallRequestEvent` → `tool.called` and the matching
+  `ToolCallExecutionEvent` → `tool.result` (or `error.raised` when `is_error`).
+  One `trace_id` spans the run; every `causation_id` resolves to a real emitted
+  event. A run-level exception closes the orchestrator `task.failed` and
+  propagates unchanged; observed sub-agents close `task.completed`.
+- **Exact tool pairing by `call_id`** — AutoGen tags each `FunctionExecutionResult`
+  with the `call_id` of its `FunctionCall`, so tool starts/closes are matched
+  exactly (even for parallel tool calls returned out of order) — no LIFO heuristics
+  needed. In-team agents run through the AgentChat runtime (not
+  `BaseChatAgent.run_stream`), so there is no double-counting.
+- **Concurrency-safe** — each `run_stream` invocation gets a fresh run context
+  whose run-table keys are namespaced by a unique token, so concurrent team runs
+  never collide on the shared (bounded) core run table.
+- **Graceful, host-safe** — no-op + warning when AutoGen is absent or its team base
+  class has drifted (availability is claimed only when
+  `BaseGroupChat` imports — so 0.2-era `pyautogen` degrades cleanly); per-item
+  mapping errors are swallowed so a telemetry bug never breaks the host stream;
+  emit failures swallowed; run exceptions still propagate; idempotent
+  re-instrumentation. A `MIN_AUTOGEN_VERSION` floor (tested against 0.7.x) and the
+  installed version are surfaced in warnings.
+
+**Demo** — `demos/autogen_multiagent.py`: a 2-agent round-robin team
+(researcher → writer) with a `web_search` tool. Runs **offline with no LLM API
+key** via `autogen-ext`'s `ReplayChatCompletionClient` (set `AEP_DEMO_OPENAI=1`
+for a real model), emitting a clean DAG — orchestrator + 2 sub-agent sessions +
+a tool pair on one trace — then prints the server-reconstructed session tree.
+
+**Tests** — 19 unit tests drive the `AEPAutoGenTracer` mapping with fabricated
+AutoGen-shaped events and a recorder client (runnable without AutoGen installed) —
+including parallel-tool `call_id` matching, orphan tool close, run-failure,
+run-cap bound, transparent passthrough, and stream-mapping-error host-safety
+cases — plus a real class-patch/restore test. Two integration tests run a real
+`team.run()` against a live server (one verifies the team/agent/handoff DAG; one
+drives a real tool call via the offline replay client and asserts a linked
+`tool.called` → `tool.result` pair) and auto-skip when unreachable. All Phase 12b
+and 12c tests remain green and unchanged.
+
+**CI** — `python-sdk-test` now installs `sdks/python[dev,langgraph,crewai,autogen,otel]`.
+
+**Optional dependencies** — added `[autogen]` extra to `pyproject.toml`:
+`pip install -e "sdks/python[autogen]"`.
+
+---
+
 ## Phase 12c — Framework Auto-Instrumentation (CrewAI), 2026-06-05
 
 No breaking changes to the event envelope schema or existing API contracts, and

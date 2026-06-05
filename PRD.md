@@ -262,7 +262,45 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 - **CrewAI event-bus stability** — confirmed drift: the event bus moved from `crewai.utilities.events` (named in the original spec) to `crewai.events` in the 1.x line. The `CrewAIInstrumentor` only reports `available()` when `crewai.events` is importable, and `subscribe()` warns + no-ops (surfacing the `MIN_CREWAI_VERSION` floor) if the event classes it maps are absent — so an API drift degrades cleanly rather than crashing.
 - **Agent-vs-Task granularity** — settled by inspecting a real kickoff trace: CrewAI fires `TaskStarted` *then* `AgentExecutionStarted` inside it, i.e. a Task **wraps** its Agent execution (they are not peers). We therefore make the **Task** the sub-agent session — named for the agent assigned to it — and fold the agent execution into it (no double-counting, no synthetic task→agent handoff). An `AgentExecution` that runs outside any tracked task (e.g. a hierarchical manager agent) opens its own agent-keyed sub-agent session as a fallback.
 
-**Deferred to Phase 12d+:** AutoGen; Anthropic/OpenAI Agents SDK patching; Node.js auto-instrumentation (LangChain.js, Vercel AI SDK); native first-party emission with framework authors.
+**Deferred to Phase 12d+:** ~~AutoGen~~ (done in 12d); Anthropic/OpenAI Agents SDK patching; Node.js auto-instrumentation (LangChain.js, Vercel AI SDK); native first-party emission with framework authors.
+
+### Phase 12d: Framework Auto-Instrumentation — AutoGen (2026-06-05)
+
+**Status: ✅ Complete** — merged in Phase 12d. `pip install "aep[autogen]"; aep.instrument()` emits a full causation DAG from an unmodified AutoGen AgentChat `team.run()`, exactly as 12b does for LangGraph and 12c for CrewAI.
+
+**Objective:** Extend zero-code-change auto-instrumentation to **AutoGen AgentChat**, the third major Python agent framework. This is the framework named in the [Success Metrics](#-success-metrics) ≥3-framework adoption target (LangGraph, CrewAI, AutoGen), so 12d closes that metric.
+
+**Why AutoGen (over SDK patching / Node.js):** The 12c deferral list names AutoGen first; it is a major, actively-developed multi-agent framework (Microsoft) that stays inside the existing Python SDK and `_INSTRUMENTORS` registry, where the established `_EmissionCore` transferred cleanly. Anthropic/OpenAI Agents SDK patching and the Node.js runtime (a separate, larger lift) follow in 12e+.
+
+**The core engineering problem (settled against a real trace):** AutoGen AgentChat (the 0.4+ rewrite) has **neither a callback registry (like LangGraph/LangChain) nor an event bus (like CrewAI)**. A team's only observation surface is the async stream of typed messages/events yielded by `BaseGroupChat.run_stream`. So 12d's transport is a **stream tap**, not a callback handler or bus listener: the instrumentor wraps `run_stream` (which `BaseGroupChat.run` consumes internally, so one tap covers both `run()` and `run_stream()`) with an `AEPAutoGenTracer` that transparently re-yields every item while translating it into `_EmissionCore` calls. No emission-core changes were needed — the third transport drops onto the existing core.
+
+**Event mapping (AutoGen AgentChat → AEP):**
+
+- team `run_stream` (root) → orchestrator `task.created` / `task.completed` / `task.failed`; new `trace_id` + root `session_id`, named for the team
+- each distinct message `source` (an agent name), opened lazily on first sight → sub-agent `task.*` with `parent_session_id` → team session
+- team → agent dispatch → `handoff.started` / `handoff.completed` on the team session
+- `ToolCallRequestEvent` → `tool.called`; matching `ToolCallExecutionEvent` (paired exactly by `call_id`) → `tool.result`, or `error.raised` when `is_error`
+- every `causation_id` resolves to a real emitted event; one `trace_id` spans the whole run (identical causation-DAG guarantees as 12b/12c)
+
+**Deliverables:**
+- `AutoGenInstrumentor` + `AEPAutoGenTracer` / `_AutoGenRunContext` registered in `_INSTRUMENTORS`; `instrument(frameworks=["autogen"])` works with AutoGen installed and `langchain-core` absent. **No change to the 12b/12c emission core or their event output** (regression-locked by their unchanged tests).
+- `[autogen]` extra in `pyproject.toml`; AutoGen added to the `python-sdk-test` CI install line
+- Demo `demos/autogen_multiagent.py` — a 2-agent round-robin team with a tool, emitting a full causation DAG, runnable offline with no LLM key via `autogen-ext`'s `ReplayChatCompletionClient`
+- 19 unit tests for the AutoGen event→AEP mapping (runnable without AutoGen installed) + 2 live-server integration tests (auto-skip when unreachable), matching 12b/12c's coverage shape
+- Docs: README + SDK README updated; CHANGELOG + PRD status flipped to ✅; memory index updated
+
+**Success criteria:**
+- ✅ `aep.instrument()` emits a full causation DAG from an unmodified `team.run()` with no other code changes, verified end-to-end against installed AutoGen AgentChat 0.7.x (1 trace, N sessions, 0 dangling causation links)
+- ✅ Tested against a pinned minimum version (`MIN_AUTOGEN_VERSION`, surfaced in warnings)
+- ✅ The 12b/12c paths are byte-for-byte unchanged in output (no event regressions)
+- ✅ Host-safe: no-op + warning when AutoGen absent or its team base class differs; per-item mapping errors swallowed (host stream never broken); emit failures swallowed; run exceptions still propagate; idempotent re-instrumentation
+- ✅ Unit + integration coverage wired into CI; demo produces a clean DAG
+
+**Resolved open questions (settled against a real AutoGen 0.7.x trace):**
+- **Observation surface** — confirmed AutoGen AgentChat exposes no callback registry or event bus; the typed `run_stream` event stream is the supported surface. Tapping `run_stream` (not `run`) is sufficient because `BaseGroupChat.run` consumes `run_stream` internally — verified by reading `BaseGroupChat.run`'s source — so a single patch instruments both entry points with no double-counting.
+- **Agent boundaries** — AutoGen emits no explicit per-agent start/stop events; agent activity is inferred from each message's `source`. A sub-agent session is therefore opened lazily on an agent's first message and closed at run end. Consequence (documented caveat): a run-level failure marks only the orchestrator `task.failed`; observed sub-agents close `task.completed`, since AutoGen surfaces no per-agent failure signal in the stream.
+- **In-team vs standalone agents** — in-team agents run through the AgentChat runtime, not `BaseChatAgent.run_stream`, so instrumenting only the team boundary captures them once. Standalone single-agent `BaseChatAgent` runs (no team) are intentionally out of scope for 12d — teams are the multi-agent surface, directly analogous to CrewAI's crew and LangGraph's graph.
+- **Tool pairing under concurrency** — AutoGen tags every `FunctionExecutionResult` with the `call_id` of its `FunctionCall`, so tool pairing is **exact** (even for parallel tool calls returned out of order) without the LIFO/scope-fallback heuristics CrewAI needed.
 
 ### Phase 13: Hosted SaaS — aep.dev (Q3 2026)
 
@@ -347,7 +385,7 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 
 | Metric | Target | Status |
 |--------|--------|--------|
-| **Framework integrations** | ≥3 major frameworks (LangGraph, CrewAI, AutoGen) | 🟡 LangGraph (Phase 12b) + CrewAI (Phase 12c) done; AutoGen planned (12d+) |
+| **Framework integrations** | ≥3 major frameworks (LangGraph, CrewAI, AutoGen) | 🟢 LangGraph (12b) + CrewAI (12c) + AutoGen (12d) done — target met |
 | **GitHub stars** | 1,000 | ⏳ In progress |
 | **aep.dev free tier users** | 500 at launch | ⏳ Planned Phase 13 |
 | **OTEL GenAI SIG contribution** | AEP event types proposed | ⏳ Not yet scheduled — no phase delivers it (the OTEL bridge shipped in 11/12a, but upstreaming AEP's vocabulary to the SIG is unowned; needs its own phase) |
