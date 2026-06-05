@@ -59,11 +59,27 @@ logger = logging.getLogger(__name__)
 
 # Tested-against version floors; surfaced in warnings to aid debugging.
 MIN_LANGGRAPH_VERSION = "0.1"
+# Floor at which the `crewai.events` bus layout this listener maps was verified.
+# Developed and tested against 1.14.x; earlier 1.x releases (where the event API
+# may differ) degrade to a clean no-op via CrewAIInstrumentor.available(), so this
+# is a best-effort hint, not a hard gate — the real gate is "do the event classes
+# import?". Bump this if a lower release is confirmed working.
 MIN_CREWAI_VERSION = "1.0"
 
 # Defaults for the background emitter and run bookkeeping.
 DEFAULT_QUEUE_SIZE = 10_000   # max buffered events before we drop (and warn)
 DEFAULT_MAX_RUNS = 10_000     # max in-flight runs tracked before evicting oldest
+
+
+def _crewai_version() -> str:
+    """Best-effort installed CrewAI version, for diagnostics in warnings."""
+    try:
+        import crewai
+
+        return str(getattr(crewai, "__version__", "unknown"))
+    except Exception:
+        return "not installed"
+
 
 # Module-level registry of framework instrumentors, populated at import time.
 _INSTRUMENTORS: dict[str, "FrameworkInstrumentor"] = {}
@@ -700,6 +716,15 @@ class AEPCrewListener:
         self._lock = threading.Lock()
         # Stack of open crew run keys; the top is the parent for new tasks/agents.
         self._crew_stack: list[str] = []
+        # Open tool invocations as a LIFO of (scope_token, run_key). Each tool
+        # gets a unique run_key (via _tool_seq) so concurrent or repeated tools
+        # in the same scope never collide on the run table, and a close event
+        # matches the most-recent open tool in its scope — falling back to
+        # global LIFO if the close event resolved a different scope than the
+        # open (e.g. CrewAI omitted from_task on the finished event). See
+        # _push_tool_run / _pop_tool_run.
+        self._open_tools: list[tuple[str, str]] = []
+        self._tool_seq = 0
         self._registered: list[tuple[Any, Any]] = []
         self._bus: Any = None
 
@@ -747,9 +772,10 @@ class AEPCrewListener:
             )
         except Exception as e:
             logger.warning(
-                "AEP: CrewAI event API not found (crewai>=%s expected); "
+                "AEP: CrewAI event API not found (crewai>=%s expected, installed: %s); "
                 "instrumentation disabled: %s",
                 MIN_CREWAI_VERSION,
+                _crewai_version(),
                 e,
             )
             return False
@@ -838,6 +864,9 @@ class AEPCrewListener:
         task = getattr(event, "task", None) or source
         tid = self._task_id(event, task)
         if tid is None:
+            # No stable id to key the task by — skip rather than risk mismatched
+            # open/close. Logged (not silent) so event-shape drift is diagnosable.
+            logger.debug("AEP: TaskStarted with no resolvable task id; skipping.")
             return
         name = (
             self._agent_role(getattr(task, "agent", None))
@@ -856,6 +885,7 @@ class AEPCrewListener:
         task = getattr(event, "task", None) or source
         tid = self._task_id(event, task)
         if tid is None:
+            logger.debug("AEP: Task%s with no resolvable task id; skipping.", status.title())
             return
         self._core.close_agent_run(
             f"task:{tid}", status=status, error=getattr(event, "error", None)
@@ -890,17 +920,58 @@ class AEPCrewListener:
         tool_name = getattr(event, "tool_name", None) or "tool"
         args = getattr(event, "tool_args", None)
         arguments = args if isinstance(args, dict) else {"input": _stringify(args)}
+        run_key = self._push_tool_run(scope)
         self._core.open_tool_run(
-            f"tool:{scope}", name=tool_name, arguments=arguments, parent_key=parent_key
+            run_key, name=tool_name, arguments=arguments, parent_key=parent_key
         )
 
     def _on_tool_end(self, source: Any, event: Any) -> None:
-        scope, _ = self._tool_scope(event)
-        self._core.close_tool_run(f"tool:{scope}", output=getattr(event, "output", None))
+        run_key = self._pop_tool_run(event)
+        if run_key is None:
+            return
+        self._core.close_tool_run(run_key, output=getattr(event, "output", None))
 
     def _on_tool_error(self, source: Any, event: Any) -> None:
-        scope, _ = self._tool_scope(event)
-        self._core.fail_tool_run(f"tool:{scope}", error=getattr(event, "error", None))
+        run_key = self._pop_tool_run(event)
+        if run_key is None:
+            return
+        self._core.fail_tool_run(run_key, error=getattr(event, "error", None))
+
+    def _push_tool_run(self, scope: Any) -> str:
+        """Register a new open tool invocation under ``scope`` and return its key.
+
+        The key is unique per invocation (a monotonic sequence), so two tools in
+        the same scope — concurrent or back-to-back — never share a run-table key.
+        """
+        with self._lock:
+            self._tool_seq += 1
+            run_key = f"tool:{scope}:{self._tool_seq}"
+            self._open_tools.append((str(scope), run_key))
+        return run_key
+
+    def _pop_tool_run(self, event: Any) -> Optional[str]:
+        """Return the run key the closing ``event`` should close, or None.
+
+        Prefers the most-recent open tool whose scope matches the closing event.
+        If none matches — the close event resolved a different scope than the
+        open (e.g. CrewAI didn't echo ``from_task`` on the finished event) — it
+        falls back to the most-recent open tool on *any* scope so the pair still
+        closes instead of leaving a dangling ``tool.called``. Returns None only
+        when no tool is open at all.
+        """
+        scope = str(self._tool_scope(event)[0])
+        with self._lock:
+            for i in range(len(self._open_tools) - 1, -1, -1):
+                if self._open_tools[i][0] == scope:
+                    return self._open_tools.pop(i)[1]
+            if self._open_tools:
+                logger.debug(
+                    "AEP: tool close resolved scope %r with no matching open "
+                    "tool; closing most-recent open tool instead.",
+                    scope,
+                )
+                return self._open_tools.pop()[1]
+        return None
 
     # -- field extraction (defensive against CrewAI version drift) -----------
 
@@ -1292,6 +1363,9 @@ def instrument(
 
     instrumented: list[str] = []
     for fw in available:
+        # Each instrumentor builds its own transport (and thus its own background
+        # emitter thread) over the shared client. flush()/uninstrument() below
+        # fan out across all instrumentors, so both transports are drained/closed.
         try:
             if _INSTRUMENTORS[fw].instrument(active_client):
                 instrumented.append(fw)

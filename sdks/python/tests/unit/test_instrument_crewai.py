@@ -231,6 +231,76 @@ def test_tool_error_emits_error_raised():
     assert err["session_id"] == task_open["session_id"]
 
 
+def test_repeated_tools_in_same_task_each_get_their_own_pair():
+    """Two tool calls in one task must not collide on a shared run key.
+
+    Both invocations resolve to the same scope (the task), so a single coarse
+    ``tool:<scope>`` key would let the second open overwrite the first and the
+    first's result would be lost. Each call must produce its own
+    called→result pair with correctly linked causation.
+    """
+    lis, rec = _listener()
+    crew = _crew()
+    task = _task("t1", role="researcher")
+    lis._on_crew_start(crew, SimpleNamespace(crew=crew))
+    lis._on_task_start(task, SimpleNamespace(task=task, task_id="t1"))
+
+    lis._on_tool_start(None, SimpleNamespace(tool_name="search", tool_args={"q": "a"}, from_task=task))
+    lis._on_tool_end(None, SimpleNamespace(tool_name="search", from_task=task, output="r1"))
+    lis._on_tool_start(None, SimpleNamespace(tool_name="search", tool_args={"q": "b"}, from_task=task))
+    lis._on_tool_end(None, SimpleNamespace(tool_name="search", from_task=task, output="r2"))
+    assert lis.flush(timeout=5.0)
+
+    called = [e for e in rec.events if e["type"] == "tool.called"]
+    result = [e for e in rec.events if e["type"] == "tool.result"]
+    assert len(called) == 2 and len(result) == 2
+    # Each result chains off a distinct call; no dangling links.
+    by_id = _by_id(rec.events)
+    for res in result:
+        assert res["causation_id"] in by_id
+        assert by_id[res["causation_id"]]["type"] == "tool.called"
+    assert {r["payload"]["output"] for r in result} == {"r1", "r2"}
+    assert not _no_dangling(rec.events)
+
+
+def test_tool_finish_without_from_task_still_closes_the_pair():
+    """Scope drift: the close event lacks ``from_task`` (only the start had it).
+
+    A naive re-resolution would key the close to the crew scope, mismatch the
+    task-scoped open, and leave a dangling ``tool.called``. The listener must
+    fall back to the most-recent open tool so the pair still closes cleanly.
+    """
+    lis, rec = _listener()
+    crew = _crew()
+    task = _task("t1", role="researcher")
+    lis._on_crew_start(crew, SimpleNamespace(crew=crew))
+    lis._on_task_start(task, SimpleNamespace(task=task, task_id="t1"))
+
+    # Start carries from_task; finish does NOT (as some CrewAI events do).
+    lis._on_tool_start(None, SimpleNamespace(tool_name="search", tool_args={"q": "x"}, from_task=task))
+    lis._on_tool_end(None, SimpleNamespace(tool_name="search", output="42 hits"))
+    assert lis.flush(timeout=5.0)
+
+    called = next(e for e in rec.events if e["type"] == "tool.called")
+    result = next(e for e in rec.events if e["type"] == "tool.result")
+    # Pair closed and linked, on the task's session (not a stray crew/standalone one).
+    assert result["causation_id"] == called["id"]
+    assert result["session_id"] == called["session_id"]
+    assert result["payload"]["output"] == "42 hits"
+    assert not _no_dangling(rec.events)
+
+
+def test_tool_close_with_no_open_tool_is_ignored():
+    """A finish/error with nothing open must neither emit nor crash."""
+    lis, rec = _listener()
+    crew = _crew()
+    lis._on_crew_start(crew, SimpleNamespace(crew=crew))
+    lis._on_tool_end(None, SimpleNamespace(tool_name="ghost", output="x"))
+    lis._on_tool_error(None, SimpleNamespace(tool_name="ghost", error="boom"))
+    assert lis.flush(timeout=5.0)
+    assert not any(e["type"] in ("tool.result", "error.raised") for e in rec.events)
+
+
 # ── Agent execution outside a tracked task (hierarchical / standalone) ───────
 
 

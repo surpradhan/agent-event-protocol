@@ -45,8 +45,14 @@ Tested against `crewai>=1.0` (developed on 1.14).
 - **Graceful, host-safe** — no-op + warning when CrewAI is absent or its event API
   has drifted (the instrumentor only claims availability when `crewai.events` is
   importable); emit failures swallowed; crew exceptions still propagate;
-  idempotent re-instrumentation. A `MIN_CREWAI_VERSION` floor is surfaced in
-  warnings, like `MIN_LANGGRAPH_VERSION`.
+  idempotent re-instrumentation. A `MIN_CREWAI_VERSION` floor (tested against
+  1.14.x) and the installed CrewAI version are surfaced in warnings.
+- **Robust tool pairing** — each tool invocation is tracked under a unique key, so
+  repeated or concurrent tools in the same scope never collide; a `tool.result`/
+  `error.raised` matches the most-recent open tool in its scope and falls back to
+  global LIFO if the close event resolved a different scope than the open (e.g.
+  CrewAI omitted `from_task` on the finished event) — so a tool pair always closes
+  instead of leaving a dangling `tool.called`.
 
 **Demo** — `demos/crewai_multiagent.py`: a 3-agent sequential research crew
 (researcher → analyst → writer) with two tools. Runs **offline with no LLM API
@@ -54,11 +60,14 @@ key** via a tiny scripted stub LLM (set `AEP_DEMO_OPENAI=1` for a real model),
 emitting a clean DAG — orchestrator + 3 sub-agent sessions + tool pairs on one
 trace — then prints the server-reconstructed session tree.
 
-**Tests** — 14 unit tests drive the `AEPCrewListener` mapping with fabricated
-CrewAI-shaped events and a mock client (runnable without CrewAI installed), plus
-a real-bus subscribe/unsubscribe test. Integration test runs a real
-`Crew.kickoff()` against a live server and auto-skips when unreachable. All
-Phase 12b tests remain green and unchanged.
+**Tests** — 17 unit tests drive the `AEPCrewListener` mapping with fabricated
+CrewAI-shaped events and a mock client (runnable without CrewAI installed) —
+including repeated-tool, scope-drift, and orphan-close cases — plus a real-bus
+subscribe/unsubscribe test. Two integration tests run a real `Crew.kickoff()`
+against a live server (one verifies the crew/task/handoff DAG; one drives a real
+tool call via an offline scripted LLM and asserts a linked `tool.called` →
+`tool.result` pair) and auto-skip when unreachable. All Phase 12b tests remain
+green and unchanged.
 
 **CI** — `python-sdk-test` now installs `sdks/python[dev,langgraph,crewai,otel]`.
 
