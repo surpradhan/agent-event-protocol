@@ -3,14 +3,18 @@
 ``aep.instrument()`` patches supported agent frameworks so that running a
 workflow automatically emits AEP events — no other code changes required.
 
-Two frameworks are supported today:
+Three frameworks are supported today:
 
 - **LangGraph** (``langgraph>=0.1``) — instrumented via a LangChain
   ``BaseCallbackHandler`` injected into every ``CompiledStateGraph`` execution.
 - **CrewAI** (``crewai>=1.0``) — instrumented by subscribing to CrewAI's own
   event bus (``crewai.events``); CrewAI does *not* use LangChain callbacks.
+- **AutoGen AgentChat** (``autogen-agentchat>=0.4``) — instrumented by tapping
+  the async event stream a team exposes from ``BaseGroupChat.run_stream`` (which
+  ``BaseGroupChat.run`` also drives); AutoGen has neither a callback registry nor
+  an event bus, so the stream is the observation surface.
 
-Both transports map framework lifecycle onto the same AEP event vocabulary:
+All transports map framework lifecycle onto the same AEP event vocabulary:
 
 - run open (root)         → ``task.created``                       (orchestrator)
 - run open (sub-agent)    → ``handoff.started`` + ``task.created``  (subagent)
@@ -44,6 +48,7 @@ Design rules:
 from __future__ import annotations
 
 import atexit
+import json
 import logging
 import queue
 import threading
@@ -65,6 +70,12 @@ MIN_LANGGRAPH_VERSION = "0.1"
 # is a best-effort hint, not a hard gate — the real gate is "do the event classes
 # import?". Bump this if a lower release is confirmed working.
 MIN_CREWAI_VERSION = "1.0"
+# Floor at which the AutoGen AgentChat message/event stream this tracer maps was
+# verified. The 0.4 rewrite introduced the typed ``run_stream`` event model
+# (``ToolCallRequestEvent`` / ``ToolCallExecutionEvent``) we depend on; developed
+# and tested against 0.7.x. Earlier 0.2-era ``pyautogen`` has an entirely
+# different API and degrades to a clean no-op via AutoGenInstrumentor.available().
+MIN_AUTOGEN_VERSION = "0.4"
 
 # Defaults for the background emitter and run bookkeeping.
 DEFAULT_QUEUE_SIZE = 10_000   # max buffered events before we drop (and warn)
@@ -77,6 +88,21 @@ def _crewai_version() -> str:
         import crewai
 
         return str(getattr(crewai, "__version__", "unknown"))
+    except Exception:
+        return "not installed"
+
+
+def _autogen_version() -> str:
+    """Best-effort installed AutoGen AgentChat version, for diagnostics in warnings."""
+    try:
+        import autogen_agentchat
+
+        version = getattr(autogen_agentchat, "__version__", None)
+        if version:
+            return str(version)
+        import importlib.metadata as _md
+
+        return _md.version("autogen-agentchat")
     except Exception:
         return "not installed"
 
@@ -180,6 +206,17 @@ def _new_session_id() -> str:
 
 def _new_trace_id() -> str:
     return f"trc_{uuid.uuid4().hex[:16]}"
+
+
+def _new_run_token() -> str:
+    """An opaque per-run token used to namespace a run's keys in the run table.
+
+    AutoGen agent/tool keys are derived from message ``source`` names and tool
+    ``call_id``s, which are only unique *within* a single team run; prefixing them
+    with a fresh token keeps concurrent team runs from colliding on the (global)
+    core run table.
+    """
+    return uuid.uuid4().hex[:16]
 
 
 def _stringify(value: Any) -> Any:
@@ -1063,6 +1100,208 @@ class AEPCrewListener:
         return str(name) if name else "crew"
 
 
+# ── AutoGen AgentChat stream tracer (AutoGen transport) ─────────────────────
+
+
+def _coerce_tool_args(arguments: Any) -> dict:
+    """Normalise an AutoGen ``FunctionCall.arguments`` into a JSON-safe dict.
+
+    AutoGen passes tool arguments as a JSON string; decode it to a dict when it
+    parses to one, and otherwise wrap the raw value under ``input`` so the
+    ``tool.called`` payload shape stays uniform with the other transports.
+    """
+    if isinstance(arguments, dict):
+        return arguments
+    if isinstance(arguments, str):
+        try:
+            decoded = json.loads(arguments)
+        except Exception:
+            return {"input": arguments}
+        return decoded if isinstance(decoded, dict) else {"input": decoded}
+    return {"input": _stringify(arguments)}
+
+
+class _AutoGenRunContext:
+    """Tracks one ``team.run_stream`` invocation.
+
+    Maps the run onto AEP's vocabulary: the team is the **orchestrator**; each
+    distinct message ``source`` (an agent name) is a **sub-agent** opened lazily
+    on first sight; each ``FunctionCall`` (keyed by its ``call_id``) is a tool
+    run. A fresh context is created per ``run_stream`` call and namespaces every
+    core run-table key with a unique token, so concurrent team runs never share
+    mutable state or collide on the (global) run table.
+    """
+
+    def __init__(self, core: _EmissionCore, token: str, team_name: Optional[str]) -> None:
+        self._core = core
+        self._token = token
+        self._team_name = team_name or "team"
+        self._orch_key = f"{token}:team"
+        self._open_agents: set[str] = set()
+        self._started = False
+
+    def _agent_key(self, source: str) -> str:
+        return f"{self._token}:agent:{source}"
+
+    def _tool_key(self, call_id: Any) -> str:
+        return f"{self._token}:tool:{call_id}"
+
+    def start(self) -> None:
+        """Open the orchestrator run for the team (new trace + root session)."""
+        self._core.open_agent_run(
+            self._orch_key,
+            name=self._team_name,
+            framework="autogen",
+            kind="team",
+            parent_key=None,
+        )
+        self._started = True
+
+    def _ensure_agent(self, source: str) -> None:
+        """Open a sub-agent run for ``source`` the first time it speaks."""
+        if not source or source in self._open_agents:
+            return
+        self._core.open_agent_run(
+            self._agent_key(source),
+            name=source,
+            framework="autogen",
+            kind="agent",
+            parent_key=self._orch_key,
+        )
+        self._open_agents.add(source)
+
+    def observe(self, item: Any) -> None:
+        """Translate one streamed message/event into core emission calls.
+
+        Duck-typed against the AutoGen message shape (``.source`` / ``.type`` /
+        ``.content``) — it never imports autogen, so the mapping is unit-testable
+        with fabricated events.
+        """
+        # The stream's terminal item is a TaskResult (carries the full message
+        # list + a stop reason, and has no ``source``); the run is closed by
+        # finish(), so there's nothing to map here.
+        if hasattr(item, "messages") and hasattr(item, "stop_reason"):
+            return
+        source = getattr(item, "source", None)
+        # The echoed task input has source "user"; skip it (and anything sourceless).
+        if not source or source == "user":
+            return
+
+        kind = getattr(item, "type", None)
+        if kind == "ToolCallRequestEvent":
+            # content is a list of FunctionCall(id, name, arguments).
+            self._ensure_agent(source)
+            for call in getattr(item, "content", None) or []:
+                call_id = getattr(call, "id", None)
+                if call_id is None:
+                    continue
+                self._core.open_tool_run(
+                    self._tool_key(call_id),
+                    name=getattr(call, "name", None) or "tool",
+                    arguments=_coerce_tool_args(getattr(call, "arguments", None)),
+                    parent_key=self._agent_key(source),
+                )
+            return
+        if kind == "ToolCallExecutionEvent":
+            # content is a list of FunctionExecutionResult(call_id, content, is_error).
+            # Matched to its open tool exactly by call_id — no LIFO heuristics.
+            for result in getattr(item, "content", None) or []:
+                call_id = getattr(result, "call_id", None)
+                if call_id is None:
+                    continue
+                key = self._tool_key(call_id)
+                if getattr(result, "is_error", False):
+                    self._core.fail_tool_run(key, error=getattr(result, "content", None))
+                else:
+                    self._core.close_tool_run(key, output=getattr(result, "content", None))
+            return
+
+        # Any other message from a real agent (TextMessage, ToolCallSummaryMessage,
+        # HandoffMessage, …) just marks that agent as active.
+        self._ensure_agent(source)
+
+    def finish(self, status: str, error: Any = None) -> None:
+        """Close every open sub-agent, then the orchestrator.
+
+        Idempotent: the core pops runs on close, so a second call is a no-op
+        (``run_stream``'s wrapper closes in a ``finally``). Sub-agent boundaries
+        are inferred from message sources, so a run-level failure marks only the
+        orchestrator ``task.failed``; observed sub-agents close ``task.completed``.
+        """
+        for source in list(self._open_agents):
+            self._core.close_agent_run(self._agent_key(source), status="completed")
+        self._open_agents.clear()
+        if self._started:
+            self._core.close_agent_run(self._orch_key, status=status, error=error)
+            self._started = False
+
+
+class AEPAutoGenTracer:
+    """Translates an AutoGen AgentChat team's event stream into AEP events.
+
+    AutoGen AgentChat has neither a callback registry nor an event bus — a team
+    surfaces its activity only as the async stream of messages/events yielded by
+    ``BaseGroupChat.run_stream`` (which ``BaseGroupChat.run`` consumes
+    internally). This tracer taps that stream transparently via
+    :meth:`wrap_stream`: it re-yields every item unchanged while translating it
+    into :class:`_EmissionCore` calls through a per-run :class:`_AutoGenRunContext`.
+
+    The mapping never imports autogen, so it is unit-testable with fabricated
+    events; only :class:`AutoGenInstrumentor` (available()/instrument()) touches
+    the framework.
+    """
+
+    def __init__(self, client: Any, max_runs: int = DEFAULT_MAX_RUNS) -> None:
+        self._core = _EmissionCore(client, max_runs=max_runs)
+
+    @property
+    def _runs(self):  # exposed for tests + run-cap assertions
+        return self._core._runs
+
+    def flush(self, timeout: float = 5.0) -> bool:
+        return self._core.flush(timeout)
+
+    def close(self, timeout: float = 5.0) -> None:
+        self._core.close(timeout)
+
+    async def wrap_stream(self, instance: Any, gen: Any):
+        """Wrap a team's ``run_stream`` generator: emit telemetry, re-yield items.
+
+        Transparent to the caller — yields exactly what ``gen`` yields, in order.
+        A mapping error on any single item is swallowed (telemetry is best-effort
+        and must never break the host run); a failure raised by the run itself
+        closes the orchestrator as ``task.failed`` and propagates unchanged.
+        """
+        ctx = _AutoGenRunContext(
+            self._core, _new_run_token(), getattr(instance, "name", None)
+        )
+        try:
+            ctx.start()
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("AEP: failed to open AutoGen run: %s", e)
+
+        status, error = "completed", None
+        try:
+            async for item in gen:
+                try:
+                    ctx.observe(item)
+                except Exception as e:  # pragma: no cover - defensive
+                    logger.warning(
+                        "AEP: AutoGen stream mapping error on %s: %s",
+                        type(item).__name__,
+                        e,
+                    )
+                yield item
+        except Exception as e:
+            status, error = "failed", e
+            raise
+        finally:
+            try:
+                ctx.finish(status, error)
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning("AEP: failed to close AutoGen run: %s", e)
+
+
 # ── Framework instrumentors ─────────────────────────────────────────────────
 
 
@@ -1237,6 +1476,115 @@ class CrewAIInstrumentor(FrameworkInstrumentor):
         super().uninstrument()
 
 
+class AutoGenInstrumentor(FrameworkInstrumentor):
+    """Wraps ``BaseGroupChat.run_stream`` to tap AutoGen AgentChat team runs."""
+
+    def __init__(self) -> None:
+        super().__init__(name="autogen")
+        self._original: Any = None
+
+    def available(self) -> bool:
+        # Only claim availability when the team base class we patch is importable,
+        # so an AutoGen release whose layout has drifted (or 0.2-era pyautogen)
+        # degrades to a clean no-op.
+        try:
+            import autogen_agentchat  # noqa: F401
+
+            from autogen_agentchat.teams._group_chat._base_group_chat import (  # noqa: F401
+                BaseGroupChat,
+            )
+        except Exception:
+            return False
+        return True
+
+    def _target(self):
+        from autogen_agentchat.teams._group_chat._base_group_chat import BaseGroupChat
+
+        return BaseGroupChat
+
+    def instrument(self, client: Any) -> bool:
+        try:
+            target = self._target()
+        except Exception as e:
+            logger.warning(
+                "AEP: could not locate AutoGen BaseGroupChat "
+                "(autogen-agentchat>=%s expected, installed: %s): %s",
+                MIN_AUTOGEN_VERSION,
+                _autogen_version(),
+                e,
+            )
+            return False
+
+        tracer = AEPAutoGenTracer(client)
+
+        if getattr(target, "_aep_instrumented", False):
+            # Already patched in this process; refresh the active tracer and
+            # retire the previous one's background worker.
+            previous = getattr(target, "_aep_tracer", None)
+            target._aep_tracer = tracer  # type: ignore[attr-defined]
+            self._transport = tracer
+            if previous is not None and previous is not tracer:
+                try:
+                    previous.close(timeout=1.0)
+                except Exception:  # pragma: no cover - defensive
+                    pass
+            return True
+
+        original = getattr(target, "run_stream", None)
+        if original is None:
+            logger.warning(
+                "AEP: AutoGen BaseGroupChat exposes no run_stream — AutoGen "
+                "internals may have changed; instrumentation disabled."
+            )
+            tracer.close(timeout=0.0)  # don't leak the emitter's worker thread
+            return False
+
+        self._original = original
+        target.run_stream = _make_run_stream_wrapper(target, original)  # type: ignore[attr-defined]
+        target._aep_instrumented = True  # type: ignore[attr-defined]
+        target._aep_tracer = tracer  # type: ignore[attr-defined]
+        self._transport = tracer
+        return True
+
+    def uninstrument(self) -> None:
+        try:
+            target = self._target()
+        except Exception:
+            target = None
+        if target is not None:
+            if self._original is not None:
+                target.run_stream = self._original  # type: ignore[attr-defined]
+            for attr in ("_aep_instrumented", "_aep_tracer"):
+                if hasattr(target, attr):
+                    delattr(target, attr)
+        self._original = None
+        super().uninstrument()
+
+
+def _make_run_stream_wrapper(target_cls: Any, original: Any):
+    """Wrap ``BaseGroupChat.run_stream`` so the active tracer taps its stream.
+
+    The tracer is read from the class at call time (``target_cls._aep_tracer``)
+    so re-instrumenting with a new client takes effect without re-patching. The
+    wrapper returns the same async generator of items the original yields — fully
+    transparent to callers (including ``BaseGroupChat.run``, which consumes
+    ``run_stream`` internally).
+    """
+
+    def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        tracer = getattr(target_cls, "_aep_tracer", None)
+        gen = original(self, *args, **kwargs)
+        if tracer is None:
+            return gen
+        return tracer.wrap_stream(self, gen)
+
+    wrapper.__name__ = getattr(original, "__name__", "run_stream")
+    wrapper.__qualname__ = getattr(original, "__qualname__", "run_stream")
+    wrapper.__doc__ = getattr(original, "__doc__", None)
+    wrapper.__wrapped__ = original  # type: ignore[attr-defined]
+    return wrapper
+
+
 def _make_config_injector(target_cls: Any, original: Any):
     """Wrap a CompiledStateGraph method to inject the active AEP handler.
 
@@ -1315,6 +1663,7 @@ def _config_with_handler(config: Any, handler: Any) -> dict:
 # Register built-in instrumentors.
 _INSTRUMENTORS["langgraph"] = LangGraphInstrumentor()
 _INSTRUMENTORS["crewai"] = CrewAIInstrumentor()
+_INSTRUMENTORS["autogen"] = AutoGenInstrumentor()
 
 
 # ── Public API ──────────────────────────────────────────────────────────────
@@ -1329,11 +1678,12 @@ def instrument(
 ) -> bool:
     """Enable AEP auto-instrumentation for supported agent frameworks.
 
-    Supports **LangGraph** (``langgraph>=0.1``) and **CrewAI** (``crewai>=1.0``).
-    Running a graph / crew after calling this emits AEP events for the run, each
-    sub-agent, every tool call, and agent-to-agent handoffs — with full causation
-    chains — and requires no other code changes. Only the frameworks you actually
-    use need be installed: instrumenting CrewAI does not require ``langchain``.
+    Supports **LangGraph** (``langgraph>=0.1``), **CrewAI** (``crewai>=1.0``), and
+    **AutoGen AgentChat** (``autogen-agentchat>=0.4``). Running a graph / crew /
+    team after calling this emits AEP events for the run, each sub-agent, every
+    tool call, and agent-to-agent handoffs — with full causation chains — and
+    requires no other code changes. Only the frameworks you actually use need be
+    installed: instrumenting CrewAI does not require ``langchain``.
 
     Args:
         server_url: AEP ingest URL (falls back to ``AEP_INGEST_URL`` env var,
@@ -1357,10 +1707,12 @@ def instrument(
     if not available:
         logger.warning(
             "AEP: no supported framework found (looked for: %s); aep.instrument() "
-            "is a no-op. Install LangGraph (>=%s) or CrewAI (>=%s).",
+            "is a no-op. Install LangGraph (>=%s), CrewAI (>=%s), or "
+            "AutoGen AgentChat (>=%s).",
             ", ".join(targets),
             MIN_LANGGRAPH_VERSION,
             MIN_CREWAI_VERSION,
+            MIN_AUTOGEN_VERSION,
         )
         return False
 

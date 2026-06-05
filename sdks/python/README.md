@@ -122,13 +122,14 @@ with AEPClient() as client:
 
 ---
 
-## Auto-instrumentation (LangGraph & CrewAI)
+## Auto-instrumentation (LangGraph, CrewAI & AutoGen)
 
-Emit the full multi-agent DAG from a [LangGraph](https://langchain-ai.github.io/langgraph/)
-or [CrewAI](https://docs.crewai.com/) workflow with **no changes to your code** —
-one `aep.instrument()` call wires AEP events to the run, every sub-agent, each
-tool call, and the handoffs between them. Only the frameworks you actually use
-need be installed; instrumenting CrewAI does **not** require LangChain.
+Emit the full multi-agent DAG from a [LangGraph](https://langchain-ai.github.io/langgraph/),
+[CrewAI](https://docs.crewai.com/), or [AutoGen AgentChat](https://microsoft.github.io/autogen/)
+workflow with **no changes to your code** — one `aep.instrument()` call wires AEP
+events to the run, every sub-agent, each tool call, and the handoffs between them.
+Only the frameworks you actually use need be installed; instrumenting CrewAI or
+AutoGen does **not** require LangChain.
 
 ```bash
 pip install -e "sdks/python[langgraph]"   # adds langgraph + langchain-core
@@ -209,6 +210,49 @@ Notes:
   best-effort (the events don't always carry a per-call id).
 - See `demos/crewai_multiagent.py` for a runnable 3-agent example that works
   offline with no LLM API key.
+
+### AutoGen AgentChat
+
+```bash
+pip install -e "sdks/python[autogen]"   # adds autogen-agentchat + autogen-ext (no LangChain needed)
+```
+
+```python
+import aep
+aep.instrument()          # or aep.instrument(frameworks=["autogen"])
+
+# ... build and run your team exactly as usual ...
+await team.run(task="research and write a report")   # or team.run_stream(...)
+
+aep.flush()
+```
+
+| AutoGen event                          | AEP event(s)                              | Role          |
+|----------------------------------------|-------------------------------------------|---------------|
+| team `run` / `run_stream` (root)       | `task.created` → `task.completed`/`failed`| orchestrator  |
+| each agent (by message `source`)       | `task.created` → `task.completed`         | subagent      |
+| team → agent dispatch                  | `handoff.started` → `handoff.completed`   | orchestrator  |
+| `ToolCallRequestEvent` → `…ExecutionEvent` | `tool.called` → `tool.result`         | (agent)       |
+| tool execution error (`is_error`)      | `error.raised`                            | (agent)       |
+
+Notes:
+- **Tested against `autogen-agentchat>=0.4`** (developed on 0.7.x). AutoGen
+  AgentChat has no callback registry or event bus, so the tracer taps the async
+  event stream `BaseGroupChat.run_stream` yields (which `team.run()` consumes
+  internally — so both entry points are covered). If the team base class has
+  drifted, `instrument()` warns and is a no-op (never crashes your app).
+- **Teams are the instrumented surface.** A team is the orchestrator; each agent
+  that speaks becomes a sub-agent session. In-team agents run through the AgentChat
+  runtime, so they're captured once with no double-counting. A standalone single
+  `AssistantAgent` run with no team is not instrumented — wrap it in a team.
+- **Tool pairing is exact**, even for parallel tool calls returned out of order:
+  AutoGen tags each result with the `call_id` of its request, so no LIFO guessing
+  is needed (unlike CrewAI).
+- Agent boundaries are inferred from message `source` (AutoGen emits no per-agent
+  start/stop event), so a run-level failure marks only the orchestrator
+  `task.failed`; observed sub-agents close `task.completed`.
+- See `demos/autogen_multiagent.py` for a runnable 2-agent team example that works
+  offline with no LLM API key (via `autogen-ext`'s `ReplayChatCompletionClient`).
 
 ---
 
