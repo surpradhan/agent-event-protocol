@@ -121,6 +121,47 @@ jobs:
         # handler, including the LangGraph callback mapping.
         run: pytest sdks/python/tests -v
 
+  node-sdk-test:
+    name: Node SDK tests
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: ["20.x", "22.x"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+          cache-dependency-path: sdks/node/package-lock.json
+
+      - name: Install dependencies
+        working-directory: sdks/node
+        run: npm ci
+
+      - name: Check formatting
+        working-directory: sdks/node
+        run: npm run format:check
+
+      - name: Typecheck
+        working-directory: sdks/node
+        run: npm run typecheck
+
+      - name: Build (dual ESM + CJS)
+        working-directory: sdks/node
+        run: npm run build
+
+      - name: Run tests
+        # Integration tests auto-skip when no AEP server is reachable
+        # (tests/integration/*.test.ts). Unit tests cover event/validate/sign/
+        # client incl. the cross-language HMAC signature parity check.
+        working-directory: sdks/node
+        run: npm test
+
   test:
     runs-on: ubuntu-latest
 

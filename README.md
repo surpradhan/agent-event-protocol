@@ -151,6 +151,32 @@ func main() {
 
 See [`sdks/go/README.md`](sdks/go/README.md) for the full Go SDK reference.
 
+### Node.js / TypeScript SDK
+
+```bash
+npm install @surpradhan/aep   # from sdks/node/ (Node >= 20, dual ESM + CJS)
+```
+
+```ts
+import { AEPClient, createEvent } from "@surpradhan/aep";
+
+const event = createEvent(
+  "agent://my-agent",
+  "task.created",
+  "ses_001",
+  "trc_001",
+  { task: "analyze data" },
+  { agentRole: "orchestrator" },
+);
+
+// Reads AEP_INGEST_URL / AEP_API_KEY from the environment when not passed in.
+const client = new AEPClient({ apiKey: process.env.AEP_API_KEY });
+await client.emit(event);
+```
+
+See [`sdks/node/README.md`](sdks/node/README.md) for the full Node SDK reference.
+Zero-code framework auto-instrumentation for **LangChain.js** lands next (Phase 12g PR2).
+
 ### Production Deployment (With Auth)
 
 ```bash
@@ -428,6 +454,7 @@ MIT License: see [LICENSE](./LICENSE) for details.
 - [x] JavaScript/TypeScript — Server + dashboard + CLI + docs
 - [x] Python SDK — [`sdks/python/`](sdks/python/) · sync + async clients, validator, HMAC signing, demo
 - [x] Go SDK — [`sdks/go/`](sdks/go/) · sync + async clients, validator, HMAC signing, CLI, demo
+- [x] Node.js / TypeScript SDK core — [`sdks/node/`](sdks/node/) · `@surpradhan/aep` · event factory, validator, HMAC signing (cross-language parity), `fetch` client, dual ESM+CJS (Phase 12g PR1)
 - [x] Kubernetes operator — [`operator/`](operator/) · `AgentInstrumentation` CRD, sidecar-injection webhook, Helm chart
 - [x] OTEL (OpenTelemetry) bridge — [`sdks/python/aep/otel/`](sdks/python/aep/otel/) · span-to-event mapper + `AEPSpanExporter`
 - [x] OTEL Collector plugin — [`otelbridge/`](otelbridge/) · Collector exporter (span → AEP event) + ocb build config + demo
@@ -436,7 +463,7 @@ MIT License: see [LICENSE](./LICENSE) for details.
 - [x] **AutoGen auto-instrumentation** — [`aep.instrument()`](sdks/python/aep/instrument.py) · zero-code `run_stream` tap for AutoGen AgentChat teams (Phase 12d)
 - [x] **OpenAI Agents SDK auto-instrumentation** — [`aep.instrument()`](sdks/python/aep/instrument.py) · zero-code tracing-processor registration for `Runner.run` (Phase 12e)
 - [x] **Anthropic Claude Agent SDK auto-instrumentation** — [`aep.instrument()`](sdks/python/aep/instrument.py) · zero-code hook injection for `query()` / `ClaudeSDKClient` (Phase 12f)
-- [ ] Node.js auto-instrumentation (LangChain.js, Vercel AI SDK)
+- [ ] Node.js auto-instrumentation (LangChain.js, Vercel AI SDK) — SDK core landed (Phase 12g PR1); LangChain.js instrumentor next (PR2)
 - [ ] Advanced filtering & visualization in dashboard
 - [ ] Webhook integration for alerts
 - [ ] S3/cloud export for long-term storage

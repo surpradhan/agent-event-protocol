@@ -4,6 +4,51 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Phase 12g (PR1) — Node.js / TypeScript SDK core, 2026-06-05
+
+No breaking changes to the event envelope schema or existing API contracts, and
+no change to any other SDK. Purely additive: a new third-language SDK.
+
+**New: `@surpradhan/aep` — the AEP Node.js / TypeScript SDK** (`sdks/node/`)
+
+The first JS/TS SDK, mirroring the Python and Go SDKs (same envelope, same client
+surface, same cross-language HMAC signing contract). Greenfield package — there
+was no JS SDK before this. This is **PR1 of Phase 12g (the SDK core)**; zero-code
+LangChain.js auto-instrumentation (`instrument()`) follows in PR2.
+
+- **Core modules** (TypeScript, `src/`): `createEvent()` (v0.2.0 envelope factory,
+  auto id/time, validates type + agent_role); `validateEvent()` (ajv 2020-12
+  against the bundled envelope schema + optional `payload.$schema`, with
+  non-blocking `[warn]` entries); `signEvent()` / `verifySignature()` /
+  `canonicalize()` (HMAC-SHA256, `node:crypto`, timing-safe); `AEPClient` (async
+  `fetch`-based: `emit` / `emitBatch` / `getSessions` / `getSessionEvents` /
+  `getSessionTree` / `getSessionExport` / `getWorkflow` / `getMetrics` / `health` /
+  `ready`); full `AEPError` hierarchy.
+- **Cross-language signing parity** — the canonical form is byte-identical to the
+  Python/Go SDKs and the server (`src/signature.js`): envelope minus `signature`,
+  top-level keys sorted, `JSON.stringify(copy, sortedKeys)`. A unit test locks
+  this against a **Python-produced signature fixture**, so a Node-signed event
+  verifies under the Python/Go verifiers and vice versa.
+- **Packaging** — dual **ESM + CJS** build with `.d.ts` via tsup; schemas bundled
+  (inlined, no runtime file I/O); Node ≥ 20 (native `fetch`/`node:crypto`); npm
+  name `@surpradhan/aep` (matches the Go module owner).
+- **Tooling** — `tsup` (build), `tsc --noEmit` (typecheck), `vitest` (tests),
+  `prettier` (format).
+- **Tests** — 40 unit tests (event/validator/signature/http/client; no server, no
+  framework; incl. the cross-language signature parity check, client filter/default
+  parity, and the request-timeout-covers-body-read behavior) + 2 live integration
+  tests that auto-skip when no AEP server is reachable (emit→read-back roundtrip,
+  health).
+- **Demo** — `sdks/node/demos/emit.mjs`: emits a small causation chain and reads
+  the session back from the server.
+
+**CI** — new `node-sdk-test` matrix job (Node 20.x + 22.x: install / format-check /
+typecheck / build / test). Required checks go **10 → 12**; the drift-guard
+(`Required checks in sync`) updates were applied together: `.github/workflows/ci.yml`,
+the CONTRIBUTING required-checks block, and the `main` branch-protection contexts.
+
+---
+
 ## Phase 12f — Framework Auto-Instrumentation (Anthropic Claude Agent SDK), 2026-06-05
 
 No breaking changes to the event envelope schema or existing API contracts, and
