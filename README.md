@@ -96,9 +96,13 @@ python sdks/python/demos/crewai_multiagent.py
 # Or auto-instrument AutoGen AgentChat (runs offline, no LLM key needed)
 pip install -e "sdks/python[autogen]"
 python sdks/python/demos/autogen_multiagent.py
+
+# Or auto-instrument the OpenAI Agents SDK (runs offline, no LLM key needed)
+pip install -e "sdks/python[openai-agents]"
+python sdks/python/demos/openai_agents_multiagent.py
 ```
 
-**Auto-instrumentation:** `import aep; aep.instrument()` makes **LangGraph**, **CrewAI**, and **AutoGen AgentChat** workflows emit a full AEP event DAG with no other code changes — see [`sdks/python/aep/instrument.py`](sdks/python/aep/instrument.py).
+**Auto-instrumentation:** `import aep; aep.instrument()` makes **LangGraph**, **CrewAI**, **AutoGen AgentChat**, and the **OpenAI Agents SDK** workflows emit a full AEP event DAG with no other code changes — see [`sdks/python/aep/instrument.py`](sdks/python/aep/instrument.py).
 
 See [`sdks/python/README.md`](sdks/python/README.md) for the full Python SDK reference.
 
@@ -426,6 +430,7 @@ MIT License: see [LICENSE](./LICENSE) for details.
 - [x] **LangGraph auto-instrumentation** — [`aep.instrument()`](sdks/python/aep/instrument.py) · zero-code patching for LangGraph workflows
 - [x] **CrewAI auto-instrumentation** — [`aep.instrument()`](sdks/python/aep/instrument.py) · zero-code event-bus subscription for CrewAI crews (Phase 12c)
 - [x] **AutoGen auto-instrumentation** — [`aep.instrument()`](sdks/python/aep/instrument.py) · zero-code `run_stream` tap for AutoGen AgentChat teams (Phase 12d)
+- [x] **OpenAI Agents SDK auto-instrumentation** — [`aep.instrument()`](sdks/python/aep/instrument.py) · zero-code tracing-processor registration for `Runner.run` (Phase 12e)
 - [ ] Node.js auto-instrumentation (LangChain.js, Vercel AI SDK)
 - [ ] Advanced filtering & visualization in dashboard
 - [ ] Webhook integration for alerts

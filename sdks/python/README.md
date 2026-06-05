@@ -122,14 +122,15 @@ with AEPClient() as client:
 
 ---
 
-## Auto-instrumentation (LangGraph, CrewAI & AutoGen)
+## Auto-instrumentation (LangGraph, CrewAI, AutoGen & OpenAI Agents SDK)
 
 Emit the full multi-agent DAG from a [LangGraph](https://langchain-ai.github.io/langgraph/),
-[CrewAI](https://docs.crewai.com/), or [AutoGen AgentChat](https://microsoft.github.io/autogen/)
+[CrewAI](https://docs.crewai.com/), [AutoGen AgentChat](https://microsoft.github.io/autogen/),
+or [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/)
 workflow with **no changes to your code** — one `aep.instrument()` call wires AEP
 events to the run, every sub-agent, each tool call, and the handoffs between them.
-Only the frameworks you actually use need be installed; instrumenting CrewAI or
-AutoGen does **not** require LangChain.
+Only the frameworks you actually use need be installed; instrumenting CrewAI,
+AutoGen, or the OpenAI Agents SDK does **not** require LangChain.
 
 ```bash
 pip install -e "sdks/python[langgraph]"   # adds langgraph + langchain-core
@@ -253,6 +254,57 @@ Notes:
   `task.failed`; observed sub-agents close `task.completed`.
 - See `demos/autogen_multiagent.py` for a runnable 2-agent team example that works
   offline with no LLM API key (via `autogen-ext`'s `ReplayChatCompletionClient`).
+
+### OpenAI Agents SDK
+
+```bash
+pip install -e "sdks/python[openai-agents]"   # adds openai-agents (no LangChain needed)
+```
+
+```python
+import aep
+aep.instrument()          # or aep.instrument(frameworks=["openai-agents"])
+
+# ... build and run your agents exactly as usual ...
+from agents import Runner
+await Runner.run(triage_agent, "help me in Spanish")   # or Runner.run_sync(...)
+
+aep.flush()
+```
+
+| OpenAI Agents SDK trace/span             | AEP event(s)                              | Role          |
+|------------------------------------------|-------------------------------------------|---------------|
+| `Runner.run` trace (root)                | `task.created` → `task.completed`         | orchestrator  |
+| `agent` span                             | `task.created` → `task.completed`/`failed`| subagent      |
+| workflow → agent dispatch                | `handoff.started` → `handoff.completed`   | orchestrator  |
+| `function` span                          | `tool.called` → `tool.result`             | (agent)       |
+| `function` span error (`span.error`)     | `error.raised`                            | (agent)       |
+
+Notes:
+- **Tested against `openai-agents>=0.1`** (developed on 0.17.x). Implemented by
+  registering a tracing processor via `agents.tracing.add_trace_processor` — the
+  SDK's supported, global, zero-code observation surface — *alongside* (not
+  replacing) the SDK's own exporter. If the tracing API has drifted,
+  `instrument()` warns and is a no-op (never crashes your app).
+- **The run's trace is the orchestrator**, and every agent is a sub-agent of it —
+  matching how the SDK itself trees agents as siblings under the workflow. The
+  real `from_agent` of a handoff is recorded on the handed-to agent's
+  `task.created` payload as `handoff_from`, so the actual flow is preserved even
+  though the parent edge is the workflow root.
+- **Tool pairing is exact**: a tool is a single `function` span carrying both its
+  start and end, so `tool.called` → `tool.result` pair by `span_id` — no LIFO
+  guessing. A tool nests on its owning agent's session (resolved by walking the
+  span tree to the nearest enclosing agent).
+- **Caveat — uncaught run errors aren't marked failed.** The tracing surface only
+  reports failures the SDK records on a span (e.g. a tool error). An *uncaught*
+  exception from `Runner.run` is not delivered to processors — the spans and
+  trace still close cleanly and the exception propagates to your caller — so such
+  a run is recorded `completed` here. The exception itself remains your source of
+  truth; AEP deliberately doesn't add a separate failure path that would race the
+  SDK's own span/trace close.
+- **Guardrail tripwires are not yet mapped** to `policy.blocked` (future work).
+- See `demos/openai_agents_multiagent.py` for a runnable handoff + tool example
+  that works offline with no LLM API key (via a scripted `Model`).
 
 ---
 

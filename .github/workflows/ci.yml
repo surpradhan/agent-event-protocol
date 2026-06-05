@@ -103,11 +103,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install the Python SDK (with dev + langgraph + crewai + autogen + otel extras)
+      - name: Install the Python SDK (with dev + langgraph + crewai + autogen + openai-agents + otel extras)
         # otel is needed so the full suite (incl. the Phase 11 aep.otel tests)
-        # can import opentelemetry; langgraph + crewai + autogen cover the framework
-        # auto-instrumentation tests (Phase 12b LangGraph, 12c CrewAI, 12d AutoGen).
-        run: pip install -e "sdks/python[dev,langgraph,crewai,autogen,otel]"
+        # can import opentelemetry; langgraph + crewai + autogen + openai-agents cover
+        # the framework auto-instrumentation tests (Phase 12b LangGraph, 12c CrewAI,
+        # 12d AutoGen, 12e OpenAI Agents SDK).
+        run: pip install -e "sdks/python[dev,langgraph,crewai,autogen,openai-agents,otel]"
 
       - name: Lint the SDK package
         run: |

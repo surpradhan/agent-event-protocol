@@ -40,6 +40,13 @@ autogen = [
     "autogen-agentchat>=0.4",
     "autogen-ext>=0.4",
 ]
+openai-agents = [
+    # The OpenAI Agents SDK's tracing-processor model (add_trace_processor +
+    # agent/function/handoff span-data types) the tracer maps; the >=0.1 floor
+    # matches MIN_OPENAI_AGENTS_VERSION in aep/instrument.py. The offline demo +
+    # integration tests drive Runner.run with a scripted Model (no API key).
+    "openai-agents>=0.1",
+]
 otel = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
