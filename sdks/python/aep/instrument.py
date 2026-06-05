@@ -3,7 +3,7 @@
 ``aep.instrument()`` patches supported agent frameworks so that running a
 workflow automatically emits AEP events — no other code changes required.
 
-Four frameworks are supported today:
+Five frameworks are supported today:
 
 - **LangGraph** (``langgraph>=0.1``) — instrumented via a LangChain
   ``BaseCallbackHandler`` injected into every ``CompiledStateGraph`` execution.
@@ -17,6 +17,11 @@ Four frameworks are supported today:
   tracing processor (``agents.tracing.add_trace_processor``); the SDK exposes a
   supported global tracing pipeline that reports a trace per ``Runner.run`` and a
   tree of agent/function/handoff spans.
+- **Anthropic Claude Agent SDK** (``claude-agent-sdk>=0.2``) — instrumented by
+  injecting AEP hook callbacks into ``ClaudeAgentOptions.hooks``; the SDK's hooks
+  (``SubagentStart``/``SubagentStop``/``PreToolUse``/``PostToolUse``/
+  ``PostToolUseFailure``/``Stop``) are its supported observation surface, each
+  carrying an ``agent_id`` + ``tool_use_id`` so the multi-agent DAG is explicit.
 
 All transports map framework lifecycle onto the same AEP event vocabulary:
 
@@ -87,6 +92,12 @@ MIN_AUTOGEN_VERSION = "0.4"
 # whose tracing API has drifted degrade to a clean no-op via
 # OpenAIAgentsInstrumentor.available().
 MIN_OPENAI_AGENTS_VERSION = "0.1"
+# Floor at which the Claude Agent SDK hooks model this transport injects is
+# present: ``ClaudeAgentOptions.hooks`` + the ``SubagentStart``/``SubagentStop``/
+# ``PreToolUse``/``PostToolUse``/``PostToolUseFailure``/``Stop`` hook events.
+# Developed and tested against 0.2.x. Older releases whose hook API has drifted
+# degrade to a clean no-op via ClaudeAgentInstrumentor.available().
+MIN_CLAUDE_AGENT_VERSION = "0.2"
 
 # Defaults for the background emitter and run bookkeeping.
 DEFAULT_QUEUE_SIZE = 10_000   # max buffered events before we drop (and warn)
@@ -129,6 +140,21 @@ def _openai_agents_version() -> str:
         import importlib.metadata as _md
 
         return _md.version("openai-agents")
+    except Exception:
+        return "not installed"
+
+
+def _claude_agent_version() -> str:
+    """Best-effort installed Claude Agent SDK version, for diagnostics in warnings."""
+    try:
+        import claude_agent_sdk
+
+        version = getattr(claude_agent_sdk, "__version__", None)
+        if version:
+            return str(version)
+        import importlib.metadata as _md
+
+        return _md.version("claude-agent-sdk")
     except Exception:
         return "not installed"
 
@@ -1691,6 +1717,256 @@ class AEPOpenAIAgentsTracer:
         return "completed", None
 
 
+# ── Anthropic Claude Agent SDK hooks ────────────────────────────────────────
+
+
+class AEPClaudeAgentTracer:
+    """Translates the Anthropic Claude Agent SDK's hook events into AEP events.
+
+    The Claude Agent SDK runs agents as a subprocess (the bundled ``claude``
+    CLI) and exposes a **hooks** system — ``ClaudeAgentOptions.hooks`` — as its
+    supported, in-process observation surface. A hook is an ``async`` callable
+    that the SDK invokes (over its CLI control protocol) when an event fires:
+    ``UserPromptSubmit`` / ``Stop`` (the top-level agent's turn boundaries),
+    ``SubagentStart`` / ``SubagentStop`` (a Task sub-agent's lifecycle), and
+    ``PreToolUse`` / ``PostToolUse`` / ``PostToolUseFailure`` (tool calls). Every
+    tool/subagent hook carries an ``agent_id`` (which agent it belongs to) and a
+    ``tool_use_id`` (exact tool pairing), so the multi-agent DAG is explicit — no
+    inference needed.
+
+    This object owns a set of async hook callbacks (exposed via
+    :meth:`hook_matchers`) that map onto AEP's vocabulary through the shared
+    :class:`_EmissionCore`:
+
+    - the **top-level agent** (one per ``session_id``) is the orchestrator root
+      (new AEP trace + root session), opened lazily on its first hook and closed
+      on ``Stop``;
+    - each ``SubagentStart`` opens a **sub-agent** of that root via
+      ``handoff.started`` + ``task.created`` (closed by ``SubagentStop``);
+    - each ``PreToolUse`` opens a tool run on its owning agent's session
+      (the sub-agent named by ``agent_id`` if one is open, else the root),
+      paired to its ``PostToolUse`` / ``PostToolUseFailure`` by ``tool_use_id``.
+
+    The mapping never imports ``claude_agent_sdk`` — the hook inputs are plain
+    dicts — so it is unit-testable with fabricated events; only
+    :class:`ClaudeAgentInstrumentor` touches the framework. Each callback returns
+    ``{}`` (a no-op hook output: proceed, no decision), and swallows its own
+    errors, so AEP telemetry can never alter or break the host agent run.
+
+    Caveat: the top-level run is closed by the ``Stop`` hook (fired at the end of
+    each turn). A multi-turn ``ClaudeSDKClient`` session therefore records one
+    trace per turn (the root is reopened on the next turn's first hook).
+    """
+
+    def __init__(self, client: Any, max_runs: int = DEFAULT_MAX_RUNS) -> None:
+        self._core = _EmissionCore(client, max_runs=max_runs)
+        self._lock = threading.Lock()
+        # session_id -> True for top-level runs currently open.
+        self._roots: "OrderedDict[str, bool]" = OrderedDict()
+        # (session_id, agent_id) for sub-agent runs currently open — used to
+        # resolve a tool's owning agent (sub-agent vs the root).
+        self._open_subagents: "OrderedDict[tuple, bool]" = OrderedDict()
+        self._max_runs = max_runs
+
+    @property
+    def _runs(self):  # exposed for tests + run-cap assertions
+        return self._core._runs
+
+    def flush(self, timeout: float = 5.0) -> bool:
+        return self._core.flush(timeout)
+
+    def close(self, timeout: float = 5.0) -> None:
+        self._core.close(timeout)
+
+    # -- run keys -------------------------------------------------------------
+
+    @staticmethod
+    def _root_key(session_id: Any) -> str:
+        return f"{session_id}:root"
+
+    @staticmethod
+    def _agent_key(session_id: Any, agent_id: Any) -> str:
+        return f"{session_id}:agent:{agent_id}"
+
+    @staticmethod
+    def _tool_key(session_id: Any, tool_use_id: Any) -> str:
+        return f"{session_id}:tool:{tool_use_id}"
+
+    def _ensure_root(self, session_id: Any) -> None:
+        """Open the top-level (orchestrator) run for a session, once."""
+        if not session_id:
+            return
+        with self._lock:
+            if session_id in self._roots:
+                return
+            self._roots[session_id] = True
+            while len(self._roots) > self._max_runs:
+                self._roots.popitem(last=False)
+        self._core.open_agent_run(
+            self._root_key(session_id),
+            name="claude-agent",
+            framework="claude-agent",
+            kind="session",
+            parent_key=None,
+        )
+
+    # -- hook callbacks (async; return {} = no-op observer) -------------------
+
+    async def on_user_prompt_submit(self, input: Any, tool_use_id: Any, context: Any) -> dict:
+        try:
+            self._ensure_root(self._get(input, "session_id"))
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("AEP: Claude Agent UserPromptSubmit hook error: %s", e)
+        return {}
+
+    async def on_stop(self, input: Any, tool_use_id: Any, context: Any) -> dict:
+        try:
+            sid = self._get(input, "session_id")
+            if sid:
+                # Close any sub-agents that never received a SubagentStop, then
+                # the root, so nothing lingers open at the end of the turn.
+                with self._lock:
+                    stragglers = [k for k in self._open_subagents if k[0] == sid]
+                    had_root = sid in self._roots
+                    for k in stragglers:
+                        self._open_subagents.pop(k, None)
+                    self._roots.pop(sid, None)
+                for skey_sid, skey_aid in stragglers:
+                    self._core.close_agent_run(
+                        self._agent_key(skey_sid, skey_aid), status="completed"
+                    )
+                if had_root:
+                    self._core.close_agent_run(self._root_key(sid), status="completed")
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("AEP: Claude Agent Stop hook error: %s", e)
+        return {}
+
+    async def on_subagent_start(self, input: Any, tool_use_id: Any, context: Any) -> dict:
+        try:
+            sid = self._get(input, "session_id")
+            aid = self._get(input, "agent_id")
+            if not sid or not aid:
+                return {}
+            self._ensure_root(sid)
+            name = self._get(input, "agent_type") or aid
+            self._core.open_agent_run(
+                self._agent_key(sid, aid),
+                name=name,
+                framework="claude-agent",
+                kind="subagent",
+                parent_key=self._root_key(sid),
+            )
+            with self._lock:
+                self._open_subagents[(sid, aid)] = True
+                while len(self._open_subagents) > self._max_runs:
+                    self._open_subagents.popitem(last=False)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("AEP: Claude Agent SubagentStart hook error: %s", e)
+        return {}
+
+    async def on_subagent_stop(self, input: Any, tool_use_id: Any, context: Any) -> dict:
+        try:
+            sid = self._get(input, "session_id")
+            aid = self._get(input, "agent_id")
+            if not sid or not aid:
+                return {}
+            with self._lock:
+                self._open_subagents.pop((sid, aid), None)
+            self._core.close_agent_run(self._agent_key(sid, aid), status="completed")
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("AEP: Claude Agent SubagentStop hook error: %s", e)
+        return {}
+
+    async def on_pre_tool_use(self, input: Any, tool_use_id: Any, context: Any) -> dict:
+        try:
+            sid = self._get(input, "session_id")
+            tuid = self._get(input, "tool_use_id") or tool_use_id
+            if not sid or not tuid:
+                return {}
+            self._ensure_root(sid)
+            aid = self._get(input, "agent_id")
+            with self._lock:
+                is_sub = (sid, aid) in self._open_subagents
+            parent_key = self._agent_key(sid, aid) if is_sub else self._root_key(sid)
+            self._core.open_tool_run(
+                self._tool_key(sid, tuid),
+                name=self._get(input, "tool_name") or "tool",
+                arguments=self._coerce(self._get(input, "tool_input")),
+                parent_key=parent_key,
+            )
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("AEP: Claude Agent PreToolUse hook error: %s", e)
+        return {}
+
+    async def on_post_tool_use(self, input: Any, tool_use_id: Any, context: Any) -> dict:
+        try:
+            sid = self._get(input, "session_id")
+            tuid = self._get(input, "tool_use_id") or tool_use_id
+            if not sid or not tuid:
+                return {}
+            self._core.close_tool_run(
+                self._tool_key(sid, tuid), output=self._get(input, "tool_response")
+            )
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("AEP: Claude Agent PostToolUse hook error: %s", e)
+        return {}
+
+    async def on_post_tool_use_failure(self, input: Any, tool_use_id: Any, context: Any) -> dict:
+        try:
+            sid = self._get(input, "session_id")
+            tuid = self._get(input, "tool_use_id") or tool_use_id
+            if not sid or not tuid:
+                return {}
+            self._core.fail_tool_run(
+                self._tool_key(sid, tuid), error=self._get(input, "error")
+            )
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("AEP: Claude Agent PostToolUseFailure hook error: %s", e)
+        return {}
+
+    # -- helpers --------------------------------------------------------------
+
+    @staticmethod
+    def _get(input: Any, key: str) -> Any:
+        """Read a field from a hook input (a dict; tolerate attr-style too)."""
+        if isinstance(input, dict):
+            return input.get(key)
+        return getattr(input, key, None)
+
+    @staticmethod
+    def _coerce(tool_input: Any) -> dict:
+        """Normalise a hook's ``tool_input`` into a JSON-safe dict."""
+        if isinstance(tool_input, dict):
+            return tool_input
+        if tool_input is None:
+            return {}
+        return {"input": _stringify(tool_input)}
+
+    def hook_matchers(self) -> dict:
+        """Return the ``{event: [callback, ...]}`` map this tracer observes.
+
+        Returned as raw callbacks keyed by hook-event name; the instrumentor wraps
+        each list in the SDK's ``HookMatcher`` (which it imports) before injecting
+        into ``ClaudeAgentOptions.hooks``.
+        """
+        return {
+            "UserPromptSubmit": [self.on_user_prompt_submit],
+            "Stop": [self.on_stop],
+            "SubagentStart": [self.on_subagent_start],
+            "SubagentStop": [self.on_subagent_stop],
+            "PreToolUse": [self.on_pre_tool_use],
+            "PostToolUse": [self.on_post_tool_use],
+            "PostToolUseFailure": [self.on_post_tool_use_failure],
+        }
+
+    def all_callbacks(self) -> set:
+        """Identity set of our hook callbacks (for idempotent injection)."""
+        cbs: set = set()
+        for lst in self.hook_matchers().values():
+            cbs.update(lst)
+        return cbs
+
+
 # ── Framework instrumentors ─────────────────────────────────────────────────
 
 
@@ -2153,11 +2429,198 @@ def _config_with_handler(config: Any, handler: Any) -> dict:
     return config
 
 
+class ClaudeAgentInstrumentor(FrameworkInstrumentor):
+    """Injects AEP hooks into the Anthropic Claude Agent SDK.
+
+    The SDK exposes ``ClaudeAgentOptions.hooks`` as its supported observation
+    surface; both public entry points consume it via the internal
+    ``InternalClient.process_query`` (used by ``query()``) and
+    ``ClaudeSDKClient.connect`` (the streaming client). This instrumentor wraps
+    those two methods to merge an :class:`AEPClaudeAgentTracer`'s hook callbacks
+    into the ``options`` before the SDK reads them — analogous to injecting the
+    LangGraph callback handler into a ``RunnableConfig``. Patching at the
+    consuming methods (rather than the public ``query`` function) makes
+    instrumentation robust to ``from claude_agent_sdk import query`` import
+    timing. ``uninstrument()`` restores both methods.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(name="claude-agent")
+        self._orig_process_query: Any = None
+        self._orig_connect: Any = None
+
+    def available(self) -> bool:
+        # Only claim availability when the hooks API + the methods we patch are
+        # importable, so a drifted/older SDK degrades to a clean no-op.
+        try:
+            import claude_agent_sdk  # noqa: F401
+            from claude_agent_sdk import ClaudeSDKClient, HookMatcher  # noqa: F401
+            from claude_agent_sdk._internal.client import InternalClient  # noqa: F401
+        except Exception:
+            return False
+        return True
+
+    def _targets(self):
+        from claude_agent_sdk import ClaudeSDKClient, HookMatcher
+        from claude_agent_sdk._internal.client import InternalClient
+
+        return InternalClient, ClaudeSDKClient, HookMatcher
+
+    def instrument(self, client: Any) -> bool:
+        try:
+            internal_client, sdk_client, hook_matcher = self._targets()
+        except Exception as e:
+            logger.warning(
+                "AEP: could not locate Claude Agent SDK hook injection points "
+                "(claude-agent-sdk>=%s expected, installed: %s): %s",
+                MIN_CLAUDE_AGENT_VERSION,
+                _claude_agent_version(),
+                e,
+            )
+            return False
+
+        tracer = AEPClaudeAgentTracer(client)
+
+        if getattr(internal_client, "_aep_instrumented", False):
+            # Already patched in this process; refresh the active tracer on both
+            # classes and retire the previous one's background worker.
+            previous = getattr(internal_client, "_aep_tracer", None)
+            internal_client._aep_tracer = tracer  # type: ignore[attr-defined]
+            sdk_client._aep_tracer = tracer  # type: ignore[attr-defined]
+            self._transport = tracer
+            if previous is not None and previous is not tracer:
+                try:
+                    previous.close(timeout=1.0)
+                except Exception:  # pragma: no cover - defensive
+                    pass
+            return True
+
+        pq = getattr(internal_client, "process_query", None)
+        conn = getattr(sdk_client, "connect", None)
+        if pq is None or conn is None:
+            logger.warning(
+                "AEP: Claude Agent SDK exposed neither process_query nor connect "
+                "— SDK internals may have changed; instrumentation disabled."
+            )
+            tracer.close(timeout=0.0)  # don't leak the emitter's worker thread
+            return False
+
+        self._orig_process_query = pq
+        self._orig_connect = conn
+        internal_client.process_query = _make_claude_process_query_wrapper(
+            internal_client, pq, hook_matcher
+        )
+        sdk_client.connect = _make_claude_connect_wrapper(sdk_client, conn, hook_matcher)
+        internal_client._aep_instrumented = True  # type: ignore[attr-defined]
+        internal_client._aep_tracer = tracer  # type: ignore[attr-defined]
+        sdk_client._aep_tracer = tracer  # type: ignore[attr-defined]
+        self._transport = tracer
+        return True
+
+    def uninstrument(self) -> None:
+        try:
+            internal_client, sdk_client, _ = self._targets()
+        except Exception:
+            internal_client = sdk_client = None
+        if internal_client is not None and self._orig_process_query is not None:
+            internal_client.process_query = self._orig_process_query
+            for attr in ("_aep_instrumented", "_aep_tracer"):
+                if hasattr(internal_client, attr):
+                    delattr(internal_client, attr)
+        if sdk_client is not None and self._orig_connect is not None:
+            sdk_client.connect = self._orig_connect
+            if hasattr(sdk_client, "_aep_tracer"):
+                delattr(sdk_client, "_aep_tracer")
+        self._orig_process_query = None
+        self._orig_connect = None
+        super().uninstrument()
+
+
+def _inject_claude_hooks(options: Any, tracer: Any, hook_matcher: Any) -> Any:
+    """Return ``options`` with the tracer's hook callbacks merged into ``hooks``.
+
+    Produces a copy (via ``dataclasses.replace``) so a user-supplied options
+    object is never mutated. Idempotent: if our callbacks are already registered
+    for an event (e.g. on reconnect), that event is left untouched.
+    """
+    from dataclasses import replace
+
+    matchers = tracer.hook_matchers()
+    existing = dict(options.hooks) if getattr(options, "hooks", None) else {}
+    changed = False
+    for event, callbacks in matchers.items():
+        current = list(existing.get(event, []))
+        already = any(
+            cb in getattr(m, "hooks", []) for m in current for cb in callbacks
+        )
+        if already:
+            continue
+        current.append(hook_matcher(matcher=None, hooks=list(callbacks)))
+        existing[event] = current
+        changed = True
+    if not changed:
+        return options
+    return replace(options, hooks=existing)
+
+
+def _make_claude_process_query_wrapper(target_cls: Any, original: Any, hook_matcher: Any):
+    """Wrap ``InternalClient.process_query`` (an async generator) to inject hooks.
+
+    The tracer is read from the class at call time so re-instrumenting with a new
+    client takes effect without re-patching. Fully transparent — re-yields exactly
+    what the original yields.
+    """
+
+    async def wrapper(self: Any, prompt: Any, options: Any, transport: Any = None):
+        tracer = getattr(target_cls, "_aep_tracer", None)
+        if tracer is not None:
+            try:
+                options = _inject_claude_hooks(options, tracer, hook_matcher)
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning(
+                    "AEP: failed to inject Claude Agent hooks, running "
+                    "uninstrumented: %s",
+                    e,
+                )
+        async for message in original(self, prompt, options, transport):
+            yield message
+
+    wrapper.__name__ = getattr(original, "__name__", "process_query")
+    wrapper.__qualname__ = getattr(original, "__qualname__", "process_query")
+    wrapper.__doc__ = getattr(original, "__doc__", None)
+    wrapper.__wrapped__ = original  # type: ignore[attr-defined]
+    return wrapper
+
+
+def _make_claude_connect_wrapper(target_cls: Any, original: Any, hook_matcher: Any):
+    """Wrap ``ClaudeSDKClient.connect`` (a coroutine) to inject hooks into options."""
+
+    async def wrapper(self: Any, prompt: Any = None):
+        tracer = getattr(target_cls, "_aep_tracer", None)
+        if tracer is not None:
+            try:
+                self.options = _inject_claude_hooks(self.options, tracer, hook_matcher)
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning(
+                    "AEP: failed to inject Claude Agent hooks, running "
+                    "uninstrumented: %s",
+                    e,
+                )
+        return await original(self, prompt)
+
+    wrapper.__name__ = getattr(original, "__name__", "connect")
+    wrapper.__qualname__ = getattr(original, "__qualname__", "connect")
+    wrapper.__doc__ = getattr(original, "__doc__", None)
+    wrapper.__wrapped__ = original  # type: ignore[attr-defined]
+    return wrapper
+
+
 # Register built-in instrumentors.
 _INSTRUMENTORS["langgraph"] = LangGraphInstrumentor()
 _INSTRUMENTORS["crewai"] = CrewAIInstrumentor()
 _INSTRUMENTORS["autogen"] = AutoGenInstrumentor()
 _INSTRUMENTORS["openai-agents"] = OpenAIAgentsInstrumentor()
+_INSTRUMENTORS["claude-agent"] = ClaudeAgentInstrumentor()
 
 
 # ── Public API ──────────────────────────────────────────────────────────────
@@ -2173,12 +2636,13 @@ def instrument(
     """Enable AEP auto-instrumentation for supported agent frameworks.
 
     Supports **LangGraph** (``langgraph>=0.1``), **CrewAI** (``crewai>=1.0``),
-    **AutoGen AgentChat** (``autogen-agentchat>=0.4``), and the **OpenAI Agents
-    SDK** (``openai-agents>=0.1``). Running a graph / crew / team / ``Runner.run``
-    after calling this emits AEP events for the run, each sub-agent, every tool
-    call, and agent-to-agent handoffs — with full causation chains — and requires
-    no other code changes. Only the frameworks you actually use need be installed:
-    instrumenting CrewAI does not require ``langchain``.
+    **AutoGen AgentChat** (``autogen-agentchat>=0.4``), the **OpenAI Agents SDK**
+    (``openai-agents>=0.1``), and the **Anthropic Claude Agent SDK**
+    (``claude-agent-sdk>=0.2``). Running a graph / crew / team / ``Runner.run`` /
+    ``query()`` after calling this emits AEP events for the run, each sub-agent,
+    every tool call, and agent-to-agent handoffs — with full causation chains —
+    and requires no other code changes. Only the frameworks you actually use need
+    be installed: instrumenting CrewAI does not require ``langchain``.
 
     Args:
         server_url: AEP ingest URL (falls back to ``AEP_INGEST_URL`` env var,
@@ -2203,12 +2667,14 @@ def instrument(
         logger.warning(
             "AEP: no supported framework found (looked for: %s); aep.instrument() "
             "is a no-op. Install LangGraph (>=%s), CrewAI (>=%s), "
-            "AutoGen AgentChat (>=%s), or the OpenAI Agents SDK (>=%s).",
+            "AutoGen AgentChat (>=%s), the OpenAI Agents SDK (>=%s), or the "
+            "Anthropic Claude Agent SDK (>=%s).",
             ", ".join(targets),
             MIN_LANGGRAPH_VERSION,
             MIN_CREWAI_VERSION,
             MIN_AUTOGEN_VERSION,
             MIN_OPENAI_AGENTS_VERSION,
+            MIN_CLAUDE_AGENT_VERSION,
         )
         return False
 

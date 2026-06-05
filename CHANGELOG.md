@@ -4,6 +4,85 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Phase 12f — Framework Auto-Instrumentation (Anthropic Claude Agent SDK), 2026-06-05
+
+No breaking changes to the event envelope schema or existing API contracts, and
+**no change to the LangGraph (12b), CrewAI (12c), AutoGen (12d), or OpenAI Agents
+SDK (12e) event output** (all regression-locked by their unchanged test suites).
+Purely additive: a fifth framework registered alongside the existing four.
+
+**New: Anthropic Claude Agent SDK auto-instrumentation** (`sdks/python/aep/instrument.py`)
+
+`import aep; aep.instrument()` now also instruments the **Anthropic Claude Agent
+SDK** — an unmodified `query()` / `ClaudeSDKClient` run emits a full AEP causation
+DAG with no other code changes. Tested against `claude-agent-sdk>=0.2` (developed
+on 0.2.x). This is the fifth major framework (LangGraph, CrewAI, AutoGen, OpenAI
+Agents SDK, Claude Agent SDK).
+
+- **Hook injection, not monkey-patching internals** — the SDK exposes
+  `ClaudeAgentOptions.hooks` as its supported, in-process observation surface.
+  The instrumentor injects observer `HookMatcher`s into `options.hooks` at the two
+  methods both entry points consume — `InternalClient.process_query` (used by
+  `query()`) and `ClaudeSDKClient.connect` (the streaming client) — analogous to
+  LangGraph's `RunnableConfig` callback injection. Patching the consuming methods
+  (not the public `query` function) makes it robust to `from claude_agent_sdk
+  import query` import timing. `uninstrument()` restores both methods.
+- **Event mapping (settled against the real hook API)** — the **top-level agent**
+  (one per `session_id`) is the orchestrator `task.*` (new `trace_id` + root
+  `session_id`), opened lazily on its first hook and closed on `Stop`; each
+  `SubagentStart` opens a **sub-agent** `task.*` reached via
+  `handoff.started`/`handoff.completed`, closed by `SubagentStop`; `PreToolUse`
+  → `tool.called`, `PostToolUse` → `tool.result`, `PostToolUseFailure` →
+  `error.raised`. One `trace_id` spans the run; every `causation_id` resolves to a
+  real emitted event.
+- **Exact attribution + pairing by id** — every tool/sub-agent hook carries an
+  `agent_id` (which agent it belongs to) and a `tool_use_id` (the tool call), so a
+  tool nests on its owning agent's session (the sub-agent named by `agent_id` if
+  one is open, else the root) and `tool.called`/`tool.result` pair exactly by
+  `tool_use_id` — no inference, no LIFO heuristics. The multi-agent DAG is
+  explicit, richer than the message stream (where sub-agent internals hide behind
+  a `Task` tool call).
+- **Pure-observer hooks** — each injected hook returns `{}` (proceed, no decision)
+  and swallows its own errors, so AEP telemetry can never alter or break the host
+  agent run. They coexist with any hooks the user configures. Caveat (documented):
+  the top-level run is closed by the `Stop` hook, so a multi-turn `ClaudeSDKClient`
+  session records one trace per turn; sub-agents left open at `Stop` are closed
+  defensively then.
+- **Graceful, host-safe** — no-op + warning when the SDK is absent or its hook API
+  has drifted (availability claimed only when the hook types + injection methods
+  import); idempotent re-instrumentation (injection de-dups our callbacks);
+  options are copied (never mutated) when hooks are injected; the run table and the
+  open-sub-agent index are bounded. A `MIN_CLAUDE_AGENT_VERSION` floor and the
+  installed version are surfaced in warnings.
+
+**Demo** — `demos/claude_agent_multiagent.py`: an orchestrator + reviewer
+sub-agent with `Read`/`Grep`/`Bash` tools (one failing). Runs **offline with no
+API key and no `claude` binary** by replaying scripted hooks through a real
+`query()` via a control-protocol fake transport (set `AEP_DEMO_ANTHROPIC=1` for a
+real run), emitting a clean DAG — then prints the server-reconstructed session
+tree.
+
+**Tests** — 22 unit tests drive the `AEPClaudeAgentTracer` hook callbacks with
+fabricated hook-input dicts and a recorder client (runnable without the SDK
+installed) — covering root-only, lazy root, idempotent root, sub-agent + handoff,
+tool on root vs sub-agent (attributed by `agent_id`), tool error, repeated tools,
+straggler sub-agent closed at `Stop`, multi-session isolation, the `{}` no-op hook
+contract, run-cap bound, and host-safety (emit failure + callback exception
+swallowed) — plus real method-patch/restore and idempotent-injection tests. Two
+integration tests: a **fully hermetic** one drives a real `query()` through a
+control-protocol fake transport (replies to `initialize`, replays scripted
+`hook_callback` control requests so the injected hooks fire through the SDK's real
+dispatch, then a `result`) and asserts the server DAG — no API key, no network, no
+binary; plus a real-`query()` test that auto-skips unless `ANTHROPIC_API_KEY` is
+set. All Phase 12b–12e tests remain green and unchanged.
+
+**CI** — `python-sdk-test` now installs `sdks/python[dev,langgraph,crewai,autogen,openai-agents,claude-agent,otel]`.
+
+**Optional dependencies** — added `[claude-agent]` extra to `pyproject.toml`:
+`pip install -e "sdks/python[claude-agent]"`.
+
+---
+
 ## Phase 12e — Framework Auto-Instrumentation (OpenAI Agents SDK), 2026-06-05
 
 No breaking changes to the event envelope schema or existing API contracts, and

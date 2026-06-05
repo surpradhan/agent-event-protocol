@@ -122,15 +122,16 @@ with AEPClient() as client:
 
 ---
 
-## Auto-instrumentation (LangGraph, CrewAI, AutoGen & OpenAI Agents SDK)
+## Auto-instrumentation (LangGraph, CrewAI, AutoGen, OpenAI Agents SDK & Claude Agent SDK)
 
 Emit the full multi-agent DAG from a [LangGraph](https://langchain-ai.github.io/langgraph/),
 [CrewAI](https://docs.crewai.com/), [AutoGen AgentChat](https://microsoft.github.io/autogen/),
-or [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/)
+[OpenAI Agents SDK](https://openai.github.io/openai-agents-python/),
+or [Anthropic Claude Agent SDK](https://docs.claude.com/en/api/agent-sdk/overview)
 workflow with **no changes to your code** — one `aep.instrument()` call wires AEP
 events to the run, every sub-agent, each tool call, and the handoffs between them.
 Only the frameworks you actually use need be installed; instrumenting CrewAI,
-AutoGen, or the OpenAI Agents SDK does **not** require LangChain.
+AutoGen, the OpenAI Agents SDK, or the Claude Agent SDK does **not** require LangChain.
 
 ```bash
 pip install -e "sdks/python[langgraph]"   # adds langgraph + langchain-core
@@ -310,6 +311,57 @@ Notes:
 - **Guardrail tripwires are not yet mapped** to `policy.blocked` (future work).
 - See `demos/openai_agents_multiagent.py` for a runnable handoff + tool example
   that works offline with no LLM API key (via a scripted `Model`).
+
+### Anthropic Claude Agent SDK
+
+```bash
+pip install -e "sdks/python[claude-agent]"   # adds claude-agent-sdk (no LangChain needed)
+```
+
+```python
+import aep
+aep.instrument()          # or aep.instrument(frameworks=["claude-agent"])
+
+# ... run your agent exactly as usual ...
+from claude_agent_sdk import query
+async for message in query(prompt="review the repo"):   # or ClaudeSDKClient(...)
+    ...
+
+aep.flush()
+```
+
+| Claude Agent SDK hook                    | AEP event(s)                              | Role          |
+|------------------------------------------|-------------------------------------------|---------------|
+| top-level agent (per `session_id`)       | `task.created` → `task.completed`         | orchestrator  |
+| `SubagentStart` / `SubagentStop`         | `task.created` / `task.completed`         | subagent      |
+| top-level → sub-agent (Task)             | `handoff.started` → `handoff.completed`   | orchestrator  |
+| `PreToolUse` → `PostToolUse`             | `tool.called` → `tool.result`             | (agent)       |
+| `PostToolUseFailure`                     | `error.raised`                            | (agent)       |
+
+Notes:
+- **Tested against `claude-agent-sdk>=0.2`** (developed on 0.2.x). Implemented by
+  injecting observer hooks into `ClaudeAgentOptions.hooks` — the SDK's supported
+  observation surface — at the two methods both entry points consume
+  (`InternalClient.process_query` for `query()`, `ClaudeSDKClient.connect` for the
+  streaming client). If the hooks API has drifted, `instrument()` warns and is a
+  no-op (never crashes your app). Call `aep.instrument()` once at startup.
+- **The top-level agent is the orchestrator** (one per `session_id`); each `Task`
+  sub-agent is a sub-agent of it. Every tool/sub-agent hook carries an `agent_id`
+  and `tool_use_id`, so attribution and pairing are **exact** — a tool nests on
+  its owning agent's session (the sub-agent named by `agent_id` if one is open,
+  else the root), and `tool.called`/`tool.result` pair by `tool_use_id`. No
+  inference, no LIFO guessing.
+- **The injected hooks are pure observers** — each returns `{}` (proceed, no
+  decision) and swallows its own errors, so AEP can never alter or break your
+  agent run. They coexist with any hooks you configure yourself.
+- **Caveat — the top-level run is closed by the `Stop` hook** (fired at the end of
+  each turn). A multi-turn `ClaudeSDKClient` session therefore records one trace
+  per turn (the root reopens on the next turn's first hook). Sub-agents still
+  open/close within their turn.
+- See `demos/claude_agent_multiagent.py` for a runnable orchestrator + sub-agent +
+  tools example that works **offline with no API key and no `claude` binary** (it
+  replays scripted hooks through a real `query()` via a control-protocol fake
+  transport).
 
 ---
 

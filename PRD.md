@@ -339,7 +339,47 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 - **Tool pairing** — a tool is a single `function` span carrying both start and end, so `tool.called`/`tool.result` pair exactly by `span_id` (cleaner than AutoGen's `call_id`); arguments are only populated at span end, so a tool is emitted on span-end (open-then-close). Tool/agent ownership is resolved by walking the span tree, which also handles **agents-as-tools** (`agent.as_tool(...)`) — verified end-to-end against a real trace: the real tree is `agent(outer) → turn → function(as_tool) → task → agent(inner)`, and the walk passes through the nested `function`/`task` spans so the inner agent nests as a sub-agent of the outer, while the as_tool function still emits its own `tool.called`/`tool.result` pair (a faithful double-representation, single trace, 0 dangling).
 - **Failure semantics (documented caveat)** — the tracing surface only reports failures the SDK records on a span (e.g. a tool error sets `span.error`). An *uncaught* exception from `Runner.run` is **not** delivered to processors (spans/trace still close cleanly with no error, and the exception propagates to the caller), so such a run is recorded `completed`. We deliberately don't add a separate failure path that would race the SDK's own span/trace close (a race an independent reviewer caught in 12d). Guardrail tripwires → `policy.blocked` is left as future work.
 
-**Deferred to Phase 12f+:** Anthropic Claude Agent SDK; Node.js auto-instrumentation (LangChain.js, Vercel AI SDK); native first-party emission with framework authors.
+**Deferred to Phase 12f+:** ~~Anthropic Claude Agent SDK~~ (done in 12f); Node.js auto-instrumentation (LangChain.js, Vercel AI SDK); native first-party emission with framework authors.
+
+### Phase 12f: Framework Auto-Instrumentation — Anthropic Claude Agent SDK (2026-06-05)
+
+**Status: ✅ Complete** — merged in Phase 12f. `pip install "aep[claude-agent]"; aep.instrument()` emits a full causation DAG from an unmodified Claude Agent SDK `query()` / `ClaudeSDKClient`, exactly as 12b–12e do for the other frameworks.
+
+**Objective:** Extend zero-code-change auto-instrumentation to the **Anthropic Claude Agent SDK** (`claude-agent-sdk`, import `claude_agent_sdk`), the fifth major framework and the second of the "all three remaining SDKs, sequentially" the user requested (after the OpenAI Agents SDK in 12e; Node.js follows).
+
+**Why the Claude Agent SDK (over Node.js):** The 12e deferral list names it first; it is pure-Python and stays inside the existing Python SDK + `_INSTRUMENTORS` registry. Node.js (LangChain.js, Vercel AI SDK) is a separate runtime and a much larger lift (new package + CI matrix), deferred to Phase 12g.
+
+**The core engineering problem (settled against the real SDK):** Unlike the prior four (in-process libraries), the Claude Agent SDK runs agents as a **subprocess** (the bundled `claude` CLI) over a bidirectional control protocol. Its supported in-process observation surface is the **hooks** system — `ClaudeAgentOptions.hooks` — a set of `async` callbacks the SDK invokes (over the control protocol) for `UserPromptSubmit`/`Stop`, `SubagentStart`/`SubagentStop`, and `PreToolUse`/`PostToolUse`/`PostToolUseFailure`. So 12f's transport is **hook injection**: the instrumentor merges observer `HookMatcher`s into `options.hooks` at the two methods both entry points consume (`InternalClient.process_query` for `query()`, `ClaudeSDKClient.connect` for the streaming client) — analogous to LangGraph's `RunnableConfig` callback injection. No emission-core changes were needed — the fifth transport drops onto the existing core.
+
+**Event mapping (Claude Agent SDK hooks → AEP):**
+
+- top-level agent (one per `session_id`) → orchestrator `task.created` / `task.completed`; new `trace_id` + root `session_id`, opened lazily on the first hook, closed on `Stop`
+- `SubagentStart` (carries `agent_id`, `agent_type`) → sub-agent `task.*` with `parent_session_id` → root, reached via `handoff.started`/`handoff.completed`; closed by `SubagentStop`
+- `PreToolUse` → `tool.called`; `PostToolUse` → `tool.result`; `PostToolUseFailure` → `error.raised`. A tool attaches to its owning agent's session via the hook's `agent_id` (sub-agent if open, else root) and pairs by `tool_use_id`
+- every `causation_id` resolves to a real emitted event; one `trace_id` spans the run (identical causation-DAG guarantees as 12b–12e)
+
+**Deliverables:**
+- `ClaudeAgentInstrumentor` + `AEPClaudeAgentTracer` registered in `_INSTRUMENTORS`; `instrument(frameworks=["claude-agent"])` works with the SDK installed and `langchain-core` absent. **No change to the 12b–12e emission core or their event output** (regression-locked by their unchanged tests)
+- `[claude-agent]` extra in `pyproject.toml`; the SDK added to the `python-sdk-test` CI install line
+- Demo `demos/claude_agent_multiagent.py` — orchestrator + reviewer sub-agent with tools (one failing), runnable offline with no API key / no `claude` binary via a control-protocol fake transport
+- 22 unit tests for the hook→AEP mapping (runnable without the SDK) + 2 integration tests (a fully hermetic fake-transport run + a real-`query()` run that auto-skips without `ANTHROPIC_API_KEY`)
+- Docs: README + SDK README updated; CHANGELOG + PRD status flipped to ✅; memory index updated
+
+**Success criteria:**
+- ✅ `aep.instrument()` emits a full causation DAG from an unmodified `query()` with no other code changes, verified end-to-end through the SDK's real hook dispatch against installed claude-agent-sdk 0.2.x (1 trace, N sessions, 0 dangling causation links)
+- ✅ Tested against a pinned minimum version (`MIN_CLAUDE_AGENT_VERSION`, surfaced in warnings)
+- ✅ The 12b–12e paths are byte-for-byte unchanged in output (no event regressions)
+- ✅ Host-safe: no-op + warning when the SDK absent or its hook API differs; injected hooks are pure observers (`{}` output) that swallow their own errors; idempotent re-instrumentation; options copied, never mutated; run/sub-agent indices bounded
+- ✅ Unit + hermetic integration coverage wired into CI; demo produces a clean DAG offline
+
+**Resolved open questions (settled against the real claude-agent-sdk 0.2.x):**
+- **Observation surface** — confirmed the SDK exposes hooks (`ClaudeAgentOptions.hooks`) as the supported in-process surface. Chose hooks over tapping the message stream because hooks fire `SubagentStart`/`SubagentStop` and carry `agent_id` on every tool event — the multi-agent boundaries the message stream hides behind a single `Task` tool call. Injection at `InternalClient.process_query` + `ClaudeSDKClient.connect` covers both entry points and is import-timing-robust.
+- **Streaming-mode/hooks** — verified the SDK always runs internally in streaming mode (`is_streaming_mode=True`) and always calls `initialize()`, so hooks fire even for a plain string `query(prompt="...")` — no coverage gap.
+- **Tool/sub-agent attribution** — exact: hooks carry `agent_id` (owner) and `tool_use_id` (pairing). A tool resolves to the sub-agent named by `agent_id` if one is open, else the root; pairs by `tool_use_id`. No LIFO heuristics.
+- **Run-close semantics (documented caveat)** — the top-level run closes on the `Stop` hook (per turn), so a multi-turn `ClaudeSDKClient` session records one trace per turn; sub-agents still left open at `Stop` are closed defensively then. Hooks are pure observers (return `{}`) so AEP never alters the host run.
+- **Hermetic testing** — the SDK has no fake-model injection (the "model" is the CLI subprocess), but `query()`/`ClaudeSDKClient` accept a custom `transport=`. The hermetic integration test + demo drive a real `query()` through a control-protocol fake transport that replies to `initialize` and replays scripted `hook_callback` control requests, so the injected hooks fire through the SDK's real dispatch with no API key, network, or binary.
+
+**Deferred to Phase 12g+:** Node.js auto-instrumentation (LangChain.js, Vercel AI SDK); native first-party emission with framework authors.
 
 ### Phase 13: Hosted SaaS — aep.dev (Q3 2026)
 
@@ -424,7 +464,7 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 
 | Metric | Target | Status |
 |--------|--------|--------|
-| **Framework integrations** | ≥3 major frameworks (LangGraph, CrewAI, AutoGen) | 🟢 LangGraph (12b) + CrewAI (12c) + AutoGen (12d) + OpenAI Agents SDK (12e) done — target exceeded (4) |
+| **Framework integrations** | ≥3 major frameworks (LangGraph, CrewAI, AutoGen) | 🟢 LangGraph (12b) + CrewAI (12c) + AutoGen (12d) + OpenAI Agents SDK (12e) + Claude Agent SDK (12f) done — target exceeded (5) |
 | **GitHub stars** | 1,000 | ⏳ In progress |
 | **aep.dev free tier users** | 500 at launch | ⏳ Planned Phase 13 |
 | **OTEL GenAI SIG contribution** | AEP event types proposed | ⏳ Not yet scheduled — no phase delivers it (the OTEL bridge shipped in 11/12a, but upstreaming AEP's vocabulary to the SIG is unowned; needs its own phase) |

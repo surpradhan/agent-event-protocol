@@ -47,6 +47,15 @@ openai-agents = [
     # integration tests drive Runner.run with a scripted Model (no API key).
     "openai-agents>=0.1",
 ]
+claude-agent = [
+    # The Claude Agent SDK's hooks model (ClaudeAgentOptions.hooks + the
+    # SubagentStart/SubagentStop/PreToolUse/PostToolUse/PostToolUseFailure/Stop
+    # hook events) the tracer injects; the >=0.2 floor matches
+    # MIN_CLAUDE_AGENT_VERSION in aep/instrument.py. The offline demo + hermetic
+    # integration test drive a real query() through a control-protocol fake
+    # transport (no API key, no claude binary).
+    "claude-agent-sdk>=0.2",
+]
 otel = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
