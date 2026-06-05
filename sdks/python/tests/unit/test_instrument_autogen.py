@@ -341,25 +341,31 @@ async def test_cancelled_run_marks_orchestrator_failed_and_reraises():
     assert not _no_dangling(rec.events)
 
 
-async def test_terminal_taskresult_closes_run_before_finally():
-    """The run closes when the terminal ``TaskResult`` is observed — not only
-    when the generator is exhausted — so completion is deterministic. Driving
-    ``observe`` directly (no wrap_stream ``finally``) still closes the run."""
+async def test_error_after_terminal_taskresult_still_marks_failed():
+    """If the run errors/cancels in teardown *after* yielding its terminal
+    ``TaskResult``, the orchestrator must close ``task.failed`` — not a premature
+    ``task.completed``. (Not reachable in normal AutoGen, where ``TaskResult`` is
+    the last item, but locks the close-in-finally contract against the race.)"""
     rec = _Recorder()
     tracer = AEPAutoGenTracer(rec)
-    ctx = _AutoGenRunContext(tracer._core, "tok", "team")
-    ctx.start()
-    ctx.observe(_text("researcher", "notes"))
-    ctx.observe(_task_result())  # terminal → closes here, no finally needed
+    boom = RuntimeError("teardown blew up")
+
+    with pytest.raises(RuntimeError, match="teardown blew up"):
+        async for _ in tracer.wrap_stream(
+            _team(),
+            _agen([_user(), _text("researcher", "notes"), _task_result()], exc=boom),
+        ):
+            pass
     assert tracer.flush(timeout=5.0)
-    assert any(
-        e["type"] == "task.completed" and e["agent_role"] == "orchestrator"
+
+    orch = [
+        e
         for e in rec.events
-    )
-    # A stray message after the terminal is ignored (the run is already done).
-    ctx.observe(_text("late", "ignored"))
-    assert tracer.flush(timeout=5.0)
-    assert not any(e["source"] == "agent://late" for e in rec.events)
+        if e["agent_role"] == "orchestrator" and e["type"].startswith("task.")
+    ]
+    assert any(e["type"] == "task.failed" for e in orch)
+    assert not any(e["type"] == "task.completed" for e in orch)
+    assert not _no_dangling(rec.events)
 
 
 async def test_user_and_task_result_items_create_no_sessions():

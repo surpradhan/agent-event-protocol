@@ -1140,7 +1140,6 @@ class _AutoGenRunContext:
         self._orch_key = f"{token}:team"
         self._open_agents: set[str] = set()
         self._started = False
-        self._done = False
 
     def _agent_key(self, source: str) -> str:
         return f"{self._token}:agent:{source}"
@@ -1179,16 +1178,13 @@ class _AutoGenRunContext:
         ``.content``) — it never imports autogen, so the mapping is unit-testable
         with fabricated events.
         """
-        if self._done:
-            return
         # The stream's terminal item is a TaskResult (carries the full message
-        # list + a stop reason, and has no ``source``). Closing here — at the
-        # actual completion signal — makes a fully-consumed run close
-        # deterministically, rather than relying on generator exhaustion reaching
-        # wrap_stream's ``finally`` (which remains the backstop for error/cleanup
-        # paths). `finish` is idempotent, so the backstop is a safe no-op.
+        # list + a stop reason, and has no ``source``). The run is closed by
+        # wrap_stream's ``finally`` with the final run status — deliberately NOT
+        # here: closing on the TaskResult would record ``completed`` even if the
+        # generator then errors/cancels in teardown (after yielding it), so we let
+        # the surrounding try/finally pick the correct terminal status.
         if hasattr(item, "messages") and hasattr(item, "stop_reason"):
-            self.finish("completed")
             return
         source = getattr(item, "source", None)
         # The echoed task input has source "user"; skip it (and anything sourceless).
@@ -1235,10 +1231,10 @@ class _AutoGenRunContext:
         (``run_stream``'s wrapper closes in a ``finally``). Sub-agent boundaries
         are inferred from message sources, so a run-level failure marks only the
         orchestrator ``task.failed``; observed sub-agents close ``task.completed``.
+
+        Idempotent via the core run table (``close_agent_run`` pops the run), so a
+        repeat call is a safe no-op.
         """
-        if self._done:
-            return
-        self._done = True
         for source in list(self._open_agents):
             self._core.close_agent_run(self._agent_key(source), status="completed")
         self._open_agents.clear()
@@ -1284,12 +1280,14 @@ class AEPAutoGenTracer:
         the run itself closes the orchestrator as ``task.failed`` and propagates
         unchanged.
 
-        Completion is closed deterministically when the terminal ``TaskResult`` is
-        observed; the ``finally`` is the backstop for error / cancellation paths.
-        Note: if a caller abandons ``run_stream`` early (``break``s before the
-        ``TaskResult``), the run closes only when this async generator is
-        finalized (``aclose`` / loop shutdown), not promptly — the fully-consumed
-        ``team.run()`` / ``run_stream()`` paths are unaffected.
+        The run is closed in the ``finally`` with its final status — ``completed``
+        on clean exhaustion, ``failed`` on an error or cancellation raised by the
+        run (so an error in post-``TaskResult`` teardown still records ``failed``,
+        not a premature ``completed``). Note: if a caller abandons ``run_stream``
+        early (``break``s before the stream ends), the ``finally`` runs only when
+        this async generator is finalized (``aclose`` / loop shutdown), not
+        promptly — the fully-consumed ``team.run()`` / ``run_stream()`` paths are
+        unaffected.
         """
         ctx = _AutoGenRunContext(
             self._core, _new_run_token(), getattr(instance, "name", None)
