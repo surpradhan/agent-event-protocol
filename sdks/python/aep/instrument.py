@@ -1959,13 +1959,6 @@ class AEPClaudeAgentTracer:
             "PostToolUseFailure": [self.on_post_tool_use_failure],
         }
 
-    def all_callbacks(self) -> set:
-        """Identity set of our hook callbacks (for idempotent injection)."""
-        cbs: set = set()
-        for lst in self.hook_matchers().values():
-            cbs.update(lst)
-        return cbs
-
 
 # ── Framework instrumentors ─────────────────────────────────────────────────
 

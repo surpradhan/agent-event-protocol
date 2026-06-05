@@ -350,8 +350,8 @@ def test_hook_matchers_cover_all_observed_events():
         "UserPromptSubmit", "Stop", "SubagentStart", "SubagentStop",
         "PreToolUse", "PostToolUse", "PostToolUseFailure",
     }
-    # all_callbacks() is the flat identity set used for idempotent injection.
-    assert len(tracer.all_callbacks()) == 7
+    # One observer callback registered per event.
+    assert sum(len(v) for v in tracer.hook_matchers().values()) == 7
 
 
 # ── Bounds ───────────────────────────────────────────────────────────────────
