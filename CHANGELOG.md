@@ -34,10 +34,11 @@ LangChain.js auto-instrumentation (`instrument()`) follows in PR2.
   name `@surpradhan/aep` (matches the Go module owner).
 - **Tooling** — `tsup` (build), `tsc --noEmit` (typecheck), `vitest` (tests),
   `prettier` (format).
-- **Tests** — 37 unit tests (event/validator/signature/http/client; no server, no
-  framework; incl. the cross-language signature parity check + client filter/default
-  parity) + 2 live integration tests that auto-skip when no AEP server is reachable
-  (emit→read-back roundtrip, health).
+- **Tests** — 40 unit tests (event/validator/signature/http/client; no server, no
+  framework; incl. the cross-language signature parity check, client filter/default
+  parity, and the request-timeout-covers-body-read behavior) + 2 live integration
+  tests that auto-skip when no AEP server is reachable (emit→read-back roundtrip,
+  health).
 - **Demo** — `sdks/node/demos/emit.mjs`: emits a small causation chain and reads
   the session back from the server.
 

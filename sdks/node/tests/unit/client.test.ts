@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AEPClient } from "../../src/client";
-import { AEPConnectionError } from "../../src/exceptions";
+import { AEPConnectionError, AEPValidationError } from "../../src/exceptions";
 import { createEvent } from "../../src/event";
 
 afterEach(() => {
@@ -91,5 +91,41 @@ describe("AEPClient", () => {
     });
     const client = new AEPClient({ serverUrl: "http://unreachable:9" });
     await expect(client.health()).rejects.toBeInstanceOf(AEPConnectionError);
+  });
+
+  it("times out a stalled body read (timeout covers the read, not just headers)", async () => {
+    // fetch resolves with headers immediately, but the body read hangs until the
+    // client's internal AbortController fires — verifying the timeout spans the read.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        const signal = init?.signal as AbortSignal;
+        return {
+          status: 200,
+          headers: new Headers(),
+          json: () =>
+            new Promise((_resolve, reject) => {
+              signal.addEventListener("abort", () =>
+                reject(new DOMException("aborted", "AbortError")),
+              );
+            }),
+        } as unknown as Response;
+      }),
+    );
+    const client = new AEPClient({ serverUrl: "http://srv:1", timeoutMs: 20 });
+    await expect(client.health()).rejects.toBeInstanceOf(AEPConnectionError);
+  });
+
+  it("wraps a body-read failure (200 with invalid JSON) as AEPConnectionError", async () => {
+    mockFetch(() => new Response("<<not json>>", { status: 200 }));
+    const client = new AEPClient({ serverUrl: "http://srv:1" });
+    await expect(client.health()).rejects.toBeInstanceOf(AEPConnectionError);
+  });
+
+  it("propagates real AEP errors (400) without wrapping them as connection errors", async () => {
+    mockFetch(() => new Response(JSON.stringify({ errors: ["bad time"] }), { status: 400 }));
+    const client = new AEPClient({ serverUrl: "http://srv:1" });
+    const ev = createEvent("agent://x", "task.created", "s", "t", {});
+    await expect(client.emit(ev)).rejects.toBeInstanceOf(AEPValidationError);
   });
 });

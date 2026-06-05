@@ -5,7 +5,7 @@
  */
 
 import { DEFAULT_SERVER_URL } from "./constants.js";
-import { AEPConnectionError } from "./exceptions.js";
+import { AEPConnectionError, AEPError } from "./exceptions.js";
 import { handleResponse } from "./http.js";
 import { AEPEvent } from "./types.js";
 
@@ -124,23 +124,37 @@ export class AEPClient {
     url: string,
     body?: string,
   ): Promise<Record<string, unknown>> {
+    // One timeout spanning the whole exchange — connect, headers, AND the
+    // response-body read. (Clearing it as soon as fetch() resolves would leave a
+    // stalled body read untimed.)
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-    let resp: Response;
     try {
-      resp = await fetch(url, {
-        method,
-        headers: this.headers(),
-        body,
-        signal: controller.signal,
-      });
-    } catch (err) {
-      throw new AEPConnectionError(
-        `Cannot reach AEP server at ${this.serverUrl}: ${(err as Error).message}`,
-      );
+      let resp: Response;
+      try {
+        resp = await fetch(url, {
+          method,
+          headers: this.headers(),
+          body,
+          signal: controller.signal,
+        });
+      } catch (err) {
+        throw new AEPConnectionError(
+          `Cannot reach AEP server at ${this.serverUrl}: ${(err as Error).message}`,
+        );
+      }
+      try {
+        return await handleResponse(resp);
+      } catch (err) {
+        // Real AEP errors (validation/auth/rate-limit/…) propagate unchanged; a
+        // transport/abort failure while reading the body becomes a connection error.
+        if (err instanceof AEPError) throw err;
+        throw new AEPConnectionError(
+          `Failed reading response from ${this.serverUrl}: ${(err as Error).message}`,
+        );
+      }
     } finally {
       clearTimeout(timer);
     }
-    return handleResponse(resp);
   }
 }
