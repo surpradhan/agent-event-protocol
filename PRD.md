@@ -219,9 +219,9 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 
 **Deferred to Phase 12c+:** CrewAI, AutoGen, and Anthropic/OpenAI SDK patching; Node.js auto-instrumentation (LangChain.js, Vercel AI SDK); native first-party emission with framework authors.
 
-### Phase 12c: Framework Auto-Instrumentation — CrewAI (planned)
+### Phase 12c: Framework Auto-Instrumentation — CrewAI (2026-06-05)
 
-**Status: 📝 Spec — not started**
+**Status: ✅ Complete (CrewAI)**
 
 **Objective:** Extend zero-code-change auto-instrumentation to **CrewAI**, the second major Python agent framework, and in doing so prove the `FrameworkInstrumentor` registry generalizes beyond the LangChain ecosystem. Success is `pip install "aep[crewai]"; aep.instrument()` emitting a full causation DAG from an unmodified `Crew.kickoff()`, exactly as Phase 12b does for LangGraph.
 
@@ -258,9 +258,9 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 - ✅ Host-safe: no-op + warning when CrewAI absent or its event API differs; emit failures swallowed; crew exceptions still propagate; idempotent re-instrumentation
 - ✅ Unit + integration coverage wired into CI; demo produces a clean DAG
 
-**Risks / open questions:**
-- **CrewAI event-bus stability** — CrewAI's event names/payloads have shifted across releases; pin a floor and degrade safely (warn + no-op) rather than assuming a schema, exactly as 12b guards LangGraph internals.
-- **Agent-vs-Task granularity** — CrewAI distinguishes Agents from Tasks; the spec maps both to sub-agent sessions, but the precise nesting (does a Task become a child session of its Agent, or peers under the crew?) should be settled against a real crew trace before finalizing the mapping.
+**Resolved open questions (settled against a real CrewAI 1.14 trace):**
+- **CrewAI event-bus stability** — confirmed drift: the event bus moved from `crewai.utilities.events` (named in the original spec) to `crewai.events` in the 1.x line. The `CrewAIInstrumentor` only reports `available()` when `crewai.events` is importable, and `subscribe()` warns + no-ops (surfacing the `MIN_CREWAI_VERSION` floor) if the event classes it maps are absent — so an API drift degrades cleanly rather than crashing.
+- **Agent-vs-Task granularity** — settled by inspecting a real kickoff trace: CrewAI fires `TaskStarted` *then* `AgentExecutionStarted` inside it, i.e. a Task **wraps** its Agent execution (they are not peers). We therefore make the **Task** the sub-agent session — named for the agent assigned to it — and fold the agent execution into it (no double-counting, no synthetic task→agent handoff). An `AgentExecution` that runs outside any tracked task (e.g. a hierarchical manager agent) opens its own agent-keyed sub-agent session as a fallback.
 
 **Deferred to Phase 12d+:** AutoGen; Anthropic/OpenAI Agents SDK patching; Node.js auto-instrumentation (LangChain.js, Vercel AI SDK); native first-party emission with framework authors.
 
@@ -347,7 +347,7 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 
 | Metric | Target | Status |
 |--------|--------|--------|
-| **Framework integrations** | ≥3 major frameworks (LangGraph, CrewAI, AutoGen) | 🟡 LangGraph done (Phase 12b); CrewAI/AutoGen planned (12c+) |
+| **Framework integrations** | ≥3 major frameworks (LangGraph, CrewAI, AutoGen) | 🟡 LangGraph (Phase 12b) + CrewAI (Phase 12c) done; AutoGen planned (12d+) |
 | **GitHub stars** | 1,000 | ⏳ In progress |
 | **aep.dev free tier users** | 500 at launch | ⏳ Planned Phase 13 |
 | **OTEL GenAI SIG contribution** | AEP event types proposed | ⏳ Not yet scheduled — no phase delivers it (the OTEL bridge shipped in 11/12a, but upstreaming AEP's vocabulary to the SIG is unowned; needs its own phase) |

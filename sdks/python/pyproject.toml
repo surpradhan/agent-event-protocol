@@ -26,6 +26,12 @@ langgraph = [
     # instrumentation registers is always importable.
     "langchain-core>=0.1.0",
 ]
+crewai = [
+    # CrewAI publishes its event bus under crewai.events (the supported
+    # extension point the CrewAI instrumentor subscribes to); the >=1.0 floor
+    # matches MIN_CREWAI_VERSION in aep/instrument.py.
+    "crewai>=1.0.0",
+]
 otel = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",

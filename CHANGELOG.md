@@ -4,6 +4,72 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Phase 12c — Framework Auto-Instrumentation (CrewAI), 2026-06-05
+
+No breaking changes to the event envelope schema or existing API contracts, and
+**no change to Phase 12b's LangGraph event output** (the refactor below is
+regression-locked by the unchanged Phase 12b test suite).
+
+**New: CrewAI auto-instrumentation** (`sdks/python/aep/instrument.py`)
+
+`import aep; aep.instrument()` now also instruments **CrewAI** — an unmodified
+`Crew.kickoff()` emits a full AEP causation DAG with no other code changes.
+Tested against `crewai>=1.0` (developed on 1.14).
+
+- **Transport-neutral emission core** — the framework-agnostic machinery (the
+  background `_Emitter` queue, run bookkeeping, ID helpers, and the
+  lifecycle→event mapping: run-open → `task.created`/`tool.called`, run-close →
+  `task.completed`/`tool.result`/`task.failed`, parent→child →
+  `handoff.started`/`handoff.completed`, plus causation/trace/session threading)
+  now lives in a transport-neutral `_EmissionCore`. The LangChain handler and the
+  new CrewAI listener are thin adapters over it. The LangGraph path is unchanged.
+- **Event-bus listener, not internals-wrapping** — CrewAI does **not** use
+  LangChain callbacks, so the instrumentor subscribes an `AEPCrewListener` to
+  CrewAI's own event bus (`crewai.events.crewai_event_bus`), the supported
+  extension point — mirroring 12b's choice of LangGraph's `RunnableConfig`
+  callbacks over monkey-patching. `uninstrument()` unsubscribes.
+- **Event mapping** — `Crew.kickoff()` → orchestrator `task.*` (new `trace_id` +
+  root `session_id`); each task (named for its assigned agent) → sub-agent
+  `task.*` with `parent_session_id` → crew, reached via `handoff.started`/
+  `handoff.completed` on the crew session; tool usage → `tool.called`/
+  `tool.result`, `error.raised` on failure. One `trace_id` spans the kickoff;
+  every `causation_id` resolves to a real emitted event.
+- **Agent-vs-Task nesting (settled against a real trace)** — CrewAI fires
+  `TaskStarted` *then* `AgentExecutionStarted` inside it, so a Task wraps its
+  Agent execution. The **Task** is therefore the sub-agent session and the agent
+  is folded into it; an agent that runs outside any task (e.g. a hierarchical
+  manager) opens its own agent-keyed sub-agent session as a fallback.
+- **Relaxed LangChain gate** — `instrument()` only requires `langchain-core` when
+  a LangChain-family framework is actually instrumented. With only CrewAI
+  installed, `aep.instrument()` works without `langchain-core` present.
+- **Graceful, host-safe** — no-op + warning when CrewAI is absent or its event API
+  has drifted (the instrumentor only claims availability when `crewai.events` is
+  importable); emit failures swallowed; crew exceptions still propagate;
+  idempotent re-instrumentation. A `MIN_CREWAI_VERSION` floor is surfaced in
+  warnings, like `MIN_LANGGRAPH_VERSION`.
+
+**Demo** — `demos/crewai_multiagent.py`: a 3-agent sequential research crew
+(researcher → analyst → writer) with two tools. Runs **offline with no LLM API
+key** via a tiny scripted stub LLM (set `AEP_DEMO_OPENAI=1` for a real model),
+emitting a clean DAG — orchestrator + 3 sub-agent sessions + tool pairs on one
+trace — then prints the server-reconstructed session tree.
+
+**Tests** — 14 unit tests drive the `AEPCrewListener` mapping with fabricated
+CrewAI-shaped events and a mock client (runnable without CrewAI installed), plus
+a real-bus subscribe/unsubscribe test. Integration test runs a real
+`Crew.kickoff()` against a live server and auto-skips when unreachable. All
+Phase 12b tests remain green and unchanged.
+
+**CI** — `python-sdk-test` now installs `sdks/python[dev,langgraph,crewai,otel]`.
+
+**Optional dependencies** — added `[crewai]` extra to `pyproject.toml`:
+`pip install -e "sdks/python[crewai]"`.
+
+**Future phases** — Phase 12d+ (AutoGen, Anthropic/OpenAI Agents SDK patching;
+Node.js for LangChain.js and Vercel AI SDK).
+
+---
+
 ## Fix — `/dashboard` & `/openapi.json` static serving under Express 5, 2026-06-04
 
 No breaking changes to the event envelope schema or existing API contracts.
