@@ -301,6 +301,27 @@ def test_tool_close_with_no_open_tool_is_ignored():
     assert not any(e["type"] in ("tool.result", "error.raised") for e in rec.events)
 
 
+def test_open_tool_index_is_bounded_when_closes_never_arrive():
+    """Tool starts that never get a matching close must not grow _open_tools
+    without limit — the oldest are evicted once the cap is exceeded."""
+    rec = _Recorder()
+    lis = AEPCrewListener(rec, max_runs=4)
+    crew = _crew()
+    task = _task("t1", role="researcher")
+    lis._on_crew_start(crew, SimpleNamespace(crew=crew))
+    lis._on_task_start(task, SimpleNamespace(task=task, task_id="t1"))
+
+    # Fire 20 tool starts with no finishes (abnormal accumulation).
+    for i in range(20):
+        lis._on_tool_start(
+            None, SimpleNamespace(tool_name=f"t{i}", tool_args={"i": i}, from_task=task)
+        )
+    assert lis.flush(timeout=5.0)
+    # Index stayed bounded at the cap; eviction was recorded (not silent).
+    assert len(lis._open_tools) <= 4
+    assert lis._tool_evicted >= 16
+
+
 # ── Agent execution outside a tracked task (hierarchical / standalone) ───────
 
 

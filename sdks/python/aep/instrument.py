@@ -722,9 +722,12 @@ class AEPCrewListener:
         # matches the most-recent open tool in its scope — falling back to
         # global LIFO if the close event resolved a different scope than the
         # open (e.g. CrewAI omitted from_task on the finished event). See
-        # _push_tool_run / _pop_tool_run.
+        # _push_tool_run / _pop_tool_run. Bounded to _max_open_tools (oldest
+        # evicted, warned) so a never-closed tool start can't grow it unbounded.
         self._open_tools: list[tuple[str, str]] = []
         self._tool_seq = 0
+        self._max_open_tools = max_runs
+        self._tool_evicted = 0
         self._registered: list[tuple[Any, Any]] = []
         self._bus: Any = None
 
@@ -947,6 +950,21 @@ class AEPCrewListener:
             self._tool_seq += 1
             run_key = f"tool:{scope}:{self._tool_seq}"
             self._open_tools.append((str(scope), run_key))
+            # Bound memory: if tool starts accumulate without matching closes
+            # (abnormal — a tool never fired its finish/error), drop the oldest.
+            # This can orphan that tool's result, but only under accumulation —
+            # we warn so it's never a silent loss. (The core run table is capped
+            # independently; this just bounds our open-tool index.)
+            while len(self._open_tools) > self._max_open_tools:
+                self._open_tools.pop(0)
+                self._tool_evicted += 1
+                if self._tool_evicted == 1 or self._tool_evicted % 100 == 0:
+                    logger.warning(
+                        "AEP: open-tool cap (%d) exceeded — evicted %d stale tool "
+                        "start(s); some tool results may be unmatched.",
+                        self._max_open_tools,
+                        self._tool_evicted,
+                    )
         return run_key
 
     def _pop_tool_run(self, event: Any) -> Optional[str]:

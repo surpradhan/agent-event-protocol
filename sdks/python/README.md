@@ -204,6 +204,9 @@ Notes:
 - CrewAI runs each task through its assigned agent, so a **task** is the
   sub-agent session (named for that agent's role); an agent that runs outside any
   task (e.g. a hierarchical manager) gets its own sub-agent session.
+- Tool-call attribution is exact for sequential crews; with **concurrent agents
+  running tools at once**, pairing a `tool.result` to its `tool.called` is
+  best-effort (the events don't always carry a per-call id).
 - See `demos/crewai_multiagent.py` for a runnable 3-agent example that works
   offline with no LLM API key.
 

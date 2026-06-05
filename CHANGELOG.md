@@ -52,7 +52,10 @@ Tested against `crewai>=1.0` (developed on 1.14).
   `error.raised` matches the most-recent open tool in its scope and falls back to
   global LIFO if the close event resolved a different scope than the open (e.g.
   CrewAI omitted `from_task` on the finished event) — so a tool pair always closes
-  instead of leaving a dangling `tool.called`.
+  instead of leaving a dangling `tool.called`. The open-tool index is bounded
+  (oldest evicted + warned) so never-closed tool starts can't grow it unbounded.
+  Tool attribution is exact for sequential crews and best-effort under concurrent
+  agents.
 
 **Demo** — `demos/crewai_multiagent.py`: a 3-agent sequential research crew
 (researcher → analyst → writer) with two tools. Runs **offline with no LLM API
