@@ -111,7 +111,19 @@ Then open a PR on GitHub with a clear title and description.
 
 `main` is a protected branch — you can't push to it directly. **All changes land through a pull request**, and the following must be satisfied before merge:
 
-- **CI is green.** Every required check must pass: `test (20.x)`, `build`, `docker`, `Go SDK unit tests`, `Operator unit tests`, `otelbridge unit tests`, and `Python SDK tests (3.10 / 3.11 / 3.12)`.
+- **CI is green.** Every required status check must pass. The list below is kept in lock-step with the CI workflow by the `Required checks in sync` job (it fails the build if this list, the CI jobs, or branch protection drift apart), so edit it in the same PR whenever you add or rename a CI job:
+  <!-- required-checks:start -->
+  - `Operator unit tests`
+  - `Go SDK unit tests`
+  - `otelbridge unit tests`
+  - `Python SDK tests (3.10)`
+  - `Python SDK tests (3.11)`
+  - `Python SDK tests (3.12)`
+  - `test (20.x)`
+  - `build`
+  - `docker`
+  - `Required checks in sync`
+  <!-- required-checks:end -->
 - **Branch is up to date with `main`.** If `main` moved ahead, rebase/merge it in and let CI re-run (`git fetch upstream && git rebase upstream/main`).
 - **All review conversations are resolved.**
 - **Linear history.** We squash-merge, so no merge commits — keep your branch rebased rather than merging `main` back in repeatedly if you can.
