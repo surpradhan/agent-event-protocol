@@ -14,6 +14,8 @@ The server has three independent auth layers:
 
 If `DASHBOARD_TOKEN` is not set, the dashboard and all read endpoints are **open** (dev-mode convenience). Production deployments should set both `DASHBOARD_TOKEN` and `ADMIN_TOKEN`.
 
+> **Ingest is the exception — it is authenticated in every mode.** `POST /events` always requires a write-scoped API key; there is no keyless/dev bypass. To emit events locally you must set `ADMIN_TOKEN`, mint a key via `POST /admin/keys`, and pass it as a bearer token (the bundled emitter and demo scripts read it from `AEP_API_KEY`). "Dev mode" only relaxes the dashboard and read endpoints.
+
 ---
 
 ## Environment Variables

@@ -196,6 +196,49 @@ describe("POST /events — ingest", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Quick-start: the bundled emitter (examples/emit-example.js)
+//
+// Guards the documented quick-start against the doc-vs-behavior drift where
+// ingest silently 401'd because the example sent no key. The emitter must
+// succeed when AEP_API_KEY holds a write key, and fail loudly (non-zero exit)
+// when it is absent — since POST /events has no keyless dev bypass.
+// ---------------------------------------------------------------------------
+
+describe("examples/emit-example.js (documented quick-start)", () => {
+  const { execFile } = require("node:child_process");
+  const EMITTER = path.join(__dirname, "..", "..", "examples", "emit-example.js");
+
+  function runEmitter(env) {
+    return new Promise((resolve) => {
+      execFile(
+        process.execPath,
+        [EMITTER],
+        { env: { ...process.env, AEP_INGEST_URL: baseUrl, ...env } },
+        (err, stdout, stderr) => {
+          resolve({ code: err ? err.code ?? 1 : 0, stdout, stderr });
+        }
+      );
+    });
+  }
+
+  test("emits successfully (exit 0, status 202) with a write-scoped AEP_API_KEY", async () => {
+    const { code, stdout } = await runEmitter({ AEP_API_KEY: writeKey });
+    assert.equal(code, 0);
+    const parsed = JSON.parse(stdout);
+    assert.equal(parsed.status, 202);
+    assert.equal(parsed.body.accepted, true);
+  });
+
+  test("fails loudly (exit 1, status 401 + hint) when AEP_API_KEY is unset", async () => {
+    const { code, stdout, stderr } = await runEmitter({ AEP_API_KEY: "" });
+    assert.equal(code, 1);
+    const parsed = JSON.parse(stdout);
+    assert.equal(parsed.status, 401);
+    assert.match(stderr, /AEP_API_KEY/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // GET /sessions
 // ---------------------------------------------------------------------------
 
