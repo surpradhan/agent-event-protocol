@@ -21,6 +21,14 @@ export type ListParams = {
   cursor?: string;
 };
 
+/** Params for {@link AEPClient.getSessionEvents} — adds server-side filters. */
+export type SessionEventParams = ListParams & {
+  /** Filter to a single event type, e.g. `"tool.called"`. */
+  type?: string;
+  /** Free-text query filter. */
+  q?: string;
+};
+
 export class AEPClient {
   private readonly serverUrl: string;
   private readonly apiKey: string | undefined;
@@ -44,11 +52,19 @@ export class AEPClient {
   }
 
   getSessions(params: ListParams = {}): Promise<Record<string, unknown>> {
-    return this.get("/sessions", params);
+    return this.get("/sessions", { limit: params.limit ?? 50, cursor: params.cursor });
   }
 
-  getSessionEvents(sessionId: string, params: ListParams = {}): Promise<Record<string, unknown>> {
-    return this.get(`/sessions/${encodeURIComponent(sessionId)}/events`, params);
+  getSessionEvents(
+    sessionId: string,
+    params: SessionEventParams = {},
+  ): Promise<Record<string, unknown>> {
+    return this.get(`/sessions/${encodeURIComponent(sessionId)}/events`, {
+      limit: params.limit ?? 100,
+      cursor: params.cursor,
+      type: params.type,
+      q: params.q,
+    });
   }
 
   getSessionTree(sessionId: string): Promise<Record<string, unknown>> {

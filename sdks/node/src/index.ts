@@ -19,7 +19,12 @@ export { createEvent, type CreateEventOptions } from "./event.js";
 export { validateEvent } from "./validator.js";
 export { signEvent, verifySignature, canonicalize } from "./signature.js";
 export { handleResponse, parseRetryAfter } from "./http.js";
-export { AEPClient, type AEPClientOptions, type ListParams } from "./client.js";
+export {
+  AEPClient,
+  type AEPClientOptions,
+  type ListParams,
+  type SessionEventParams,
+} from "./client.js";
 export {
   AEPError,
   AEPValidationError,

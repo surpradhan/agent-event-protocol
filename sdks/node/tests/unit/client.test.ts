@@ -55,6 +55,24 @@ describe("AEPClient", () => {
     expect(spy.mock.calls[0]![0]).toBe("http://srv:1/sessions?limit=50&cursor=abc");
   });
 
+  it("applies Python-parity defaults (getSessions limit=50, getSessionEvents limit=100)", async () => {
+    const spy = mockFetch(() => new Response("{}", { status: 200 }));
+    const client = new AEPClient({ serverUrl: "http://srv:1" });
+    await client.getSessions();
+    await client.getSessionEvents("ses_1");
+    expect(spy.mock.calls[0]![0]).toBe("http://srv:1/sessions?limit=50");
+    expect(spy.mock.calls[1]![0]).toBe("http://srv:1/sessions/ses_1/events?limit=100");
+  });
+
+  it("forwards the type and q filters on getSessionEvents", async () => {
+    const spy = mockFetch(() => new Response("{}", { status: 200 }));
+    const client = new AEPClient({ serverUrl: "http://srv:1" });
+    await client.getSessionEvents("ses_1", { type: "tool.called", q: "search", limit: 25 });
+    expect(spy.mock.calls[0]![0]).toBe(
+      "http://srv:1/sessions/ses_1/events?limit=25&type=tool.called&q=search",
+    );
+  });
+
   it("emitBatch sends all events", async () => {
     const spy = mockFetch(() => new Response(JSON.stringify({ accepted: true }), { status: 202 }));
     const client = new AEPClient({ serverUrl: "http://srv:1" });
