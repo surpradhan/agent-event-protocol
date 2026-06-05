@@ -383,7 +383,7 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 
 ### Phase 12g: Node.js Auto-Instrumentation (LangChain.js) — in progress (2026-06-05)
 
-**Status: 🟡 PR1 (SDK core) done; PR2 (LangChain.js instrumentor) next.** The 3rd and final of the user's "all three remaining SDKs, sequentially" (OpenAI Agents = 12e ✅, Claude Agent SDK = 12f ✅). Unlike 12b–12f (Python registry additions), 12g is a **separate runtime** — there was no JS/TS SDK — so it is greenfield: build a Node/TS SDK *and* the instrumentation. Split into PR1 (core) + PR2 (instrumentor) so the CI/branch-protection churn lands separately from the instrumentation review.
+**Status: ✅ PR1 (SDK core) merged; PR2 (LangChain.js/LangGraph instrumentor) complete.** The 3rd and final of the user's "all three remaining SDKs, sequentially" (OpenAI Agents = 12e ✅, Claude Agent SDK = 12f ✅, Node.js = 12g ✅). Unlike 12b–12f (Python registry additions), 12g is a **separate runtime** — there was no JS/TS SDK — so it is greenfield: build a Node/TS SDK *and* the instrumentation. Split into PR1 (core) + PR2 (instrumentor) so the CI/branch-protection churn lands separately from the instrumentation review.
 
 **Scope decisions (settled with the user, after a research session that observed both candidate frameworks' real surfaces in `/tmp`):** first framework **LangChain.js / LangGraph** (its `BaseCallbackHandler` is a near-direct port of the merged 12b Python LangGraph instrumentor, and `metadata.langgraph_node` is present — the field the Python mapper keys on); Vercel AI SDK deferred to a docs-only OTEL-bridge path (its `experimental_telemetry` spans + the Phase 11/12a bridge), since it has no global registry and `experimental_onToolCall*` callbacks proved unreliable. Package `@surpradhan/aep` in `sdks/node/` (TypeScript, dual ESM+CJS via tsup, vitest, Node ≥ 20).
 
@@ -393,10 +393,11 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 - 35 unit tests (no server/framework) + 2 auto-skip live integration tests; dual ESM+CJS build with `.d.ts`; bundled schemas (no runtime I/O).
 - New `node-sdk-test` CI job (Node 20.x + 22.x) → required checks **10 → 12**, with the drift-guard kept in sync across `ci.yml` + CONTRIBUTING + branch protection in the same PR.
 
-**PR2 — LangChain.js / LangGraph instrumentor (next):**
-- `instrument.ts` porting the Python `_EmissionCore` shape (transport-neutral emitter + bounded run table + the orchestrator/sub-agent/handoff/tool mapping) and a `BaseCallbackHandler` adapter injected via `RunnableConfig.callbacks`.
-- Hermetic offline tests via LangChain.js `FakeListChatModel`; demo; same AEP DAG guarantees (1 trace, 0 dangling).
-- Caveat to verify during PR2: the JS callback argument order differs from the `.d.ts` (observed in research) — bind by position carefully.
+**PR2 — LangChain.js / LangGraph instrumentor (complete):**
+- `instrument.ts` ports the Python `_EmissionCore` shape (transport-neutral background-drain emitter + bounded run table + the orchestrator/sub-agent/handoff/tool mapping). A framework-agnostic `LangGraphMapper` (never imports LangChain) is driven by a `BaseCallbackHandler` adapter injected into `CompiledStateGraph.invoke`/`.stream`. LangChain is an optional peer (dynamic import, external in the build) — the core SDK has no LangChain dependency.
+- Mapping settled against a real offline LangGraph trace: graph root → orchestrator; each `langgraph_node` → sub-agent via handoff; tool callbacks → tool.called/result/error; intermediate runnables + `langsmith:hidden` chains (e.g. `__start__`) skipped. The research-flagged callback arg-order caveat did **not** manifest in `@langchain/core` 1.1.x (arg order matched the `.d.ts`, verified directly).
+- 13 unit tests (run without LangChain) + a live integration test (real graph through `instrument()`, auto-skips without a server); built-`dist` ESM+CJS verified to instrument end-to-end; demo `demos/langgraph-multiagent.mjs` runs offline (no LLM key). 1 trace, 0 dangling.
+- Vercel AI SDK: deferred to a docs-only OTEL-bridge path (`experimental_telemetry` + Phase 11/12a), not a separate instrumentor.
 
 **Success criteria (PR1):** ✅ new SDK builds (dual ESM+CJS) + typechecks; ✅ cross-language signature parity proven against a Python fixture; ✅ unit + auto-skip integration tests green in CI on Node 20.x/22.x; ✅ drift-guard green (10→12 checks in sync). No regression to other SDKs.
 

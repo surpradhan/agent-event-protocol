@@ -34,3 +34,13 @@ export {
   AEPConnectionError,
   AEPServerError,
 } from "./exceptions.js";
+export {
+  instrument,
+  uninstrument,
+  flush,
+  EmissionCore,
+  LangGraphMapper,
+  type InstrumentOptions,
+  type ChainStartInfo,
+  type ToolStartInfo,
+} from "./instrument.js";

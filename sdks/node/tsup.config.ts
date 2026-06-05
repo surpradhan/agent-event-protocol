@@ -10,6 +10,9 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   target: "node20",
+  // LangChain is an optional peer the instrumentor imports dynamically at
+  // runtime — never bundle it into the SDK; it's resolved in the user's app.
+  external: [/^@langchain\//],
   outExtension({ format }) {
     return { js: format === "cjs" ? ".cjs" : ".js" };
   },

@@ -174,8 +174,13 @@ const client = new AEPClient({ apiKey: process.env.AEP_API_KEY });
 await client.emit(event);
 ```
 
+```ts
+// Zero-code auto-instrumentation for LangChain.js / LangGraph:
+import { instrument } from "@surpradhan/aep";
+await instrument();           // then run your graph as usual — emits a full AEP DAG
+```
+
 See [`sdks/node/README.md`](sdks/node/README.md) for the full Node SDK reference.
-Zero-code framework auto-instrumentation for **LangChain.js** lands next (Phase 12g PR2).
 
 ### Production Deployment (With Auth)
 
@@ -463,7 +468,7 @@ MIT License: see [LICENSE](./LICENSE) for details.
 - [x] **AutoGen auto-instrumentation** — [`aep.instrument()`](sdks/python/aep/instrument.py) · zero-code `run_stream` tap for AutoGen AgentChat teams (Phase 12d)
 - [x] **OpenAI Agents SDK auto-instrumentation** — [`aep.instrument()`](sdks/python/aep/instrument.py) · zero-code tracing-processor registration for `Runner.run` (Phase 12e)
 - [x] **Anthropic Claude Agent SDK auto-instrumentation** — [`aep.instrument()`](sdks/python/aep/instrument.py) · zero-code hook injection for `query()` / `ClaudeSDKClient` (Phase 12f)
-- [ ] Node.js auto-instrumentation (LangChain.js, Vercel AI SDK) — SDK core landed (Phase 12g PR1); LangChain.js instrumentor next (PR2)
+- [x] **Node.js / LangChain.js auto-instrumentation** — [`instrument()`](sdks/node/src/instrument.ts) · zero-code `CompiledStateGraph` callback injection for LangGraph (Phase 12g PR2); Vercel AI SDK via the OTEL bridge (`experimental_telemetry`)
 - [ ] Advanced filtering & visualization in dashboard
 - [ ] Webhook integration for alerts
 - [ ] S3/cloud export for long-term storage

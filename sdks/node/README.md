@@ -5,9 +5,9 @@ a framework-neutral observability protocol for multi-agent AI systems. Mirrors t
 [Python](../python/) and [Go](../go/) SDKs: same event envelope, same canonical
 HMAC signing contract, same client surface.
 
-> **Phase 12g, PR1 — SDK core.** This package currently ships the core: event
-> factory, validation, HMAC signing, and the ingest/query client. Zero-code
-> framework auto-instrumentation (`instrument()` for LangChain.js) lands in PR2.
+> Ships the SDK core (event factory, validation, HMAC signing, ingest/query
+> client) **and** zero-code **LangChain.js / LangGraph** auto-instrumentation via
+> `instrument()`.
 
 ## Install
 
@@ -65,6 +65,53 @@ server: the envelope with `signature` removed and top-level keys sorted, via
 `JSON.stringify(copy, sortedKeys)`. A signature produced by this SDK verifies
 under the Python/Go verifiers and vice versa — locked by a parity test
 (`tests/unit/signature.test.ts`) against a Python-produced fixture.
+
+## Auto-instrumentation (LangChain.js / LangGraph)
+
+Emit the full multi-agent DAG from an unmodified [LangGraph](https://langchain-ai.github.io/langgraphjs/)
+graph — one `await instrument()` call wires AEP events to the run, every node, each
+tool call, and the handoffs between them. LangChain is an **optional peer** (you
+install it; the SDK imports it dynamically only when instrumenting), so the core
+SDK has no LangChain dependency.
+
+```bash
+npm install @surpradhan/aep @langchain/langgraph @langchain/core
+```
+
+```ts
+import { instrument, flush, uninstrument } from "@surpradhan/aep";
+
+await instrument(); // reads AEP_INGEST_URL / AEP_API_KEY (or pass them in)
+
+// ... build and run your StateGraph exactly as usual ...
+const graph = workflow.compile();
+await graph.invoke({ topic: "AI agent observability" });
+
+await flush(); // emission is buffered; drain before a short-lived process exits
+// await uninstrument(); // optional: restore CompiledStateGraph + release the client
+```
+
+| LangGraph callback | AEP event(s) | Role |
+|--------------------|--------------|------|
+| graph run (root) | `task.created` → `task.completed`/`failed` | orchestrator |
+| node run (`langgraph_node`) | `task.created` → `task.completed`/`failed` | subagent |
+| graph → node | `handoff.started` → `handoff.completed` | orchestrator |
+| tool call | `tool.called` → `tool.result` | (node) |
+| tool / node error | `error.raised` / `task.failed` | (node) |
+
+Notes:
+- **Tested against `@langchain/langgraph` 1.x + `@langchain/core` 1.x.** Implemented
+  as a `BaseCallbackHandler` injected into `CompiledStateGraph.invoke`/`.stream`
+  (the supported callbacks extension point), mirroring the Python LangGraph
+  instrumentor. If LangGraph isn't installed, `instrument()` warns and is a no-op.
+- **The graph run is the orchestrator**; each LangGraph node is a sub-agent reached
+  via a handoff. Intermediate runnables and framework-internal hidden chains
+  (e.g. `__start__`, tagged `langsmith:hidden`) are skipped to keep the DAG clean.
+- **Emission is non-blocking** — events are sent on a background drain loop so they
+  add no latency to your graph. Call `await flush()` before a short-lived process
+  exits. The buffer is bounded and drops with a warning under sustained overload.
+- Callbacks are pure observers — they never throw into the host run.
+- See `demos/langgraph-multiagent.mjs` for a runnable offline example (no LLM key).
 
 ## Development
 
