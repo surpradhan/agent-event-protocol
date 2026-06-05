@@ -32,9 +32,15 @@ async function main() {
 
   // Ingest always requires a write-scoped API key — there is no keyless dev
   // bypass for POST /events. Make the failure actionable instead of silent.
-  if (response.status === 401) {
+  //   401 → no/invalid key supplied
+  //   403 → key is valid but lacks the "write" scope
+  if (response.status === 401 || response.status === 403) {
+    const reason =
+      response.status === 403
+        ? "the supplied API key lacks the \"write\" scope."
+        : "no valid API key was supplied.";
     console.error(
-      "\nIngest rejected the request: no valid API key was supplied.\n" +
+      `\nIngest rejected the request: ${reason}\n` +
         "Set AEP_API_KEY to a write-scoped key, then re-run:\n" +
         "  export AEP_API_KEY=aep_...\n" +
         "  npm run emit:example\n" +

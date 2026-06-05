@@ -209,13 +209,20 @@ describe("examples/emit-example.js (documented quick-start)", () => {
   const EMITTER = path.join(__dirname, "..", "..", "examples", "emit-example.js");
 
   function runEmitter(env) {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       execFile(
         process.execPath,
         [EMITTER],
         { env: { ...process.env, AEP_INGEST_URL: baseUrl, ...env } },
         (err, stdout, stderr) => {
-          resolve({ code: err ? err.code ?? 1 : 0, stdout, stderr });
+          // On a normal non-zero exit, err.code is the integer exit code. On a
+          // spawn failure it's a string errno (e.g. "ENOENT") — surface that as
+          // a real rejection instead of masquerading as exit code 1.
+          if (err && typeof err.code !== "number") {
+            reject(err);
+            return;
+          }
+          resolve({ code: err ? err.code : 0, stdout, stderr });
         }
       );
     });
@@ -235,6 +242,14 @@ describe("examples/emit-example.js (documented quick-start)", () => {
     const parsed = JSON.parse(stdout);
     assert.equal(parsed.status, 401);
     assert.match(stderr, /AEP_API_KEY/);
+  });
+
+  test("fails loudly (exit 1, status 403 + scope hint) with a read-only key", async () => {
+    const { code, stdout, stderr } = await runEmitter({ AEP_API_KEY: readKey });
+    assert.equal(code, 1);
+    const parsed = JSON.parse(stdout);
+    assert.equal(parsed.status, 403);
+    assert.match(stderr, /write.*scope/);
   });
 });
 
