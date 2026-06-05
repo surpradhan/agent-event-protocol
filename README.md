@@ -88,9 +88,13 @@ python sdks/python/demos/subagent_research.py
 # Auto-instrument LangGraph (zero-code) and run the 10-node demo
 pip install -e "sdks/python[langgraph]"
 python sdks/python/demos/langgraph_multiagent.py
+
+# Or auto-instrument CrewAI (runs offline, no LLM key needed)
+pip install -e "sdks/python[crewai]"
+python sdks/python/demos/crewai_multiagent.py
 ```
 
-**Auto-instrumentation:** `import aep; aep.instrument()` makes LangGraph workflows emit a full AEP event DAG with no other code changes — see [`sdks/python/aep/instrument.py`](sdks/python/aep/instrument.py).
+**Auto-instrumentation:** `import aep; aep.instrument()` makes **LangGraph** and **CrewAI** workflows emit a full AEP event DAG with no other code changes — see [`sdks/python/aep/instrument.py`](sdks/python/aep/instrument.py).
 
 See [`sdks/python/README.md`](sdks/python/README.md) for the full Python SDK reference.
 
@@ -416,7 +420,8 @@ MIT License: see [LICENSE](./LICENSE) for details.
 - [x] OTEL (OpenTelemetry) bridge — [`sdks/python/aep/otel/`](sdks/python/aep/otel/) · span-to-event mapper + `AEPSpanExporter`
 - [x] OTEL Collector plugin — [`otelbridge/`](otelbridge/) · Collector exporter (span → AEP event) + ocb build config + demo
 - [x] **LangGraph auto-instrumentation** — [`aep.instrument()`](sdks/python/aep/instrument.py) · zero-code patching for LangGraph workflows
-- [ ] CrewAI & AutoGen auto-instrumentation (Phase 12c+)
+- [x] **CrewAI auto-instrumentation** — [`aep.instrument()`](sdks/python/aep/instrument.py) · zero-code event-bus subscription for CrewAI crews (Phase 12c)
+- [ ] AutoGen auto-instrumentation (Phase 12d+)
 - [ ] Node.js auto-instrumentation (LangChain.js, Vercel AI SDK)
 - [ ] Advanced filtering & visualization in dashboard
 - [ ] Webhook integration for alerts

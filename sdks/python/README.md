@@ -122,12 +122,13 @@ with AEPClient() as client:
 
 ---
 
-## Auto-instrumentation (LangGraph)
+## Auto-instrumentation (LangGraph & CrewAI)
 
 Emit the full multi-agent DAG from a [LangGraph](https://langchain-ai.github.io/langgraph/)
-workflow with **no changes to your graph** — one call patches LangGraph to emit
-AEP events for the graph, every node, each tool call, and the handoffs between
-them.
+or [CrewAI](https://docs.crewai.com/) workflow with **no changes to your code** —
+one `aep.instrument()` call wires AEP events to the run, every sub-agent, each
+tool call, and the handoffs between them. Only the frameworks you actually use
+need be installed; instrumenting CrewAI does **not** require LangChain.
 
 ```bash
 pip install -e "sdks/python[langgraph]"   # adds langgraph + langchain-core
@@ -170,6 +171,44 @@ Notes:
   be sure they were delivered. The buffer is bounded and drops with a warning
   under sustained overload rather than blocking your workflow.
 - See `demos/langgraph_multiagent.py` for a runnable 10-node example.
+
+### CrewAI
+
+```bash
+pip install -e "sdks/python[crewai]"   # adds crewai (no LangChain needed)
+```
+
+```python
+import aep
+aep.instrument()          # or aep.instrument(frameworks=["crewai"])
+
+# ... build and kick off your Crew exactly as usual ...
+crew.kickoff()
+
+aep.flush()
+```
+
+| CrewAI event                     | AEP event(s)                              | Role          |
+|----------------------------------|-------------------------------------------|---------------|
+| `Crew.kickoff()` (root)          | `task.created` → `task.completed`/`failed`| orchestrator  |
+| each task (named for its agent)  | `task.created` → `task.completed`/`failed`| subagent      |
+| crew → agent dispatch            | `handoff.started` → `handoff.completed`   | orchestrator  |
+| tool usage                       | `tool.called` → `tool.result`             | (agent)       |
+| tool failure                     | `error.raised`                            | (agent)       |
+
+Notes:
+- **Tested against `crewai>=1.0`.** Implemented by subscribing to CrewAI's own
+  event bus (`crewai.events`), the supported extension point — not by wrapping
+  `Crew`/`Agent` internals. If the event API has drifted, `instrument()` warns and
+  is a no-op (never crashes your app).
+- CrewAI runs each task through its assigned agent, so a **task** is the
+  sub-agent session (named for that agent's role); an agent that runs outside any
+  task (e.g. a hierarchical manager) gets its own sub-agent session.
+- Tool-call attribution is exact for sequential crews; with **concurrent agents
+  running tools at once**, pairing a `tool.result` to its `tool.called` is
+  best-effort (the events don't always carry a per-call id).
+- See `demos/crewai_multiagent.py` for a runnable 3-agent example that works
+  offline with no LLM API key.
 
 ---
 
