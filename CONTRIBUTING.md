@@ -107,6 +107,17 @@ git push origin feature/your-feature-name
 
 Then open a PR on GitHub with a clear title and description.
 
+### Branch protection on `main`
+
+`main` is a protected branch — you can't push to it directly. **All changes land through a pull request**, and the following must be satisfied before merge:
+
+- **CI is green.** Every required check must pass: `test (20.x)`, `build`, `docker`, `Go SDK unit tests`, `Operator unit tests`, `otelbridge unit tests`, and `Python SDK tests (3.10 / 3.11 / 3.12)`.
+- **Branch is up to date with `main`.** If `main` moved ahead, rebase/merge it in and let CI re-run (`git fetch upstream && git rebase upstream/main`).
+- **All review conversations are resolved.**
+- **Linear history.** We squash-merge, so no merge commits — keep your branch rebased rather than merging `main` back in repeatedly if you can.
+
+A review approval is **not** currently required to merge, but a maintainer still reviews every PR. Force-pushes to `main` and branch deletion are disabled, and these rules apply to maintainers too.
+
 ---
 
 ## ✅ Pull Request Checklist
