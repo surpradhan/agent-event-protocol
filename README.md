@@ -76,6 +76,8 @@ event = create_event(
     trace_id="trc_001",
     payload={"task": "summarise document"},
 )
+# AEPClient picks up AEP_API_KEY from the environment — export a write-scoped
+# key first (ingest always needs one; see "Local Development" above).
 with AEPClient() as client:
     print(client.emit(event))
 EOF
@@ -103,6 +105,7 @@ package main
 import (
     "context"
     "log"
+    "os"
     "github.com/surpradhan/aep-go/aep"
 )
 
@@ -117,6 +120,9 @@ func main() {
     )
     
     client := aep.NewClient()
+    // Ingest always needs a write-scoped key. NewClient() does not read the
+    // environment, so set it explicitly (export AEP_API_KEY first).
+    client.SetAPIKey(os.Getenv("AEP_API_KEY"))
     defer client.Close()
     
     resp, err := client.Emit(context.Background(), event)
