@@ -302,6 +302,45 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 - **In-team vs standalone agents** — in-team agents run through the AgentChat runtime, not `BaseChatAgent.run_stream`, so instrumenting only the team boundary captures them once. Standalone single-agent `BaseChatAgent` runs (no team) are intentionally out of scope for 12d — teams are the multi-agent surface, directly analogous to CrewAI's crew and LangGraph's graph.
 - **Tool pairing under concurrency** — AutoGen tags every `FunctionExecutionResult` with the `call_id` of its `FunctionCall`, so tool pairing is **exact** (even for parallel tool calls returned out of order) without the LIFO/scope-fallback heuristics CrewAI needed.
 
+### Phase 12e: Framework Auto-Instrumentation — OpenAI Agents SDK (2026-06-05)
+
+**Status: ✅ Complete** — merged in Phase 12e. `pip install "aep[openai-agents]"; aep.instrument()` emits a full causation DAG from an unmodified OpenAI Agents SDK `Runner.run()`, exactly as 12b does for LangGraph, 12c for CrewAI, and 12d for AutoGen.
+
+**Objective:** Extend zero-code-change auto-instrumentation to the **OpenAI Agents SDK** (`openai-agents`, import `agents`), the fourth major Python agent framework and the most widely adopted "Agents SDK". This pushes framework coverage beyond the ≥3-framework metric (already met by 12d) and validates the `_EmissionCore` against a fourth, structurally distinct observation surface.
+
+**Why the OpenAI Agents SDK (over Anthropic's SDK / Node.js):** The 12d deferral list names Anthropic/OpenAI Agents SDK patching first. The OpenAI Agents SDK is pure-Python, stays inside the existing Python SDK + `_INSTRUMENTORS` registry, and — unlike "patching" — exposes a *supported, global* tracing-processor extension point, so it is the cleanest zero-code target. Node.js (LangChain.js, Vercel AI SDK) is a separate runtime and a much larger lift (new package + CI matrix), deferred to Phase 12f.
+
+**The core engineering problem (settled against a real trace):** Unlike LangGraph (callbacks), CrewAI (event bus), and AutoGen (stream tap), the OpenAI Agents SDK ships a **first-class tracing pipeline**: register a `TracingProcessor` via `agents.tracing.add_trace_processor` and receive a `Trace` per top-level `Runner.run` plus a tree of `Span`s (`agent` / `function` / `handoff` / `turn` / …) linked by `parent_id`. So 12e's transport is a **tracing processor**, registered *alongside* the SDK's own exporter (not replacing it), and removed cleanly on `uninstrument()` via `set_processors`. The mapping is duck-typed against the span/trace shape and never imports `agents`, so it is unit-testable with fabricated objects. One small, backward-compatible core extension was needed: an optional `extra_payload` on `open_agent_run` (defaulted, so 12b/12c/12d output is byte-for-byte unchanged) to carry `handoff_from`.
+
+**Event mapping (OpenAI Agents SDK → AEP):**
+
+- `Runner.run` **trace** (root) → orchestrator `task.created` / `task.completed`; new `trace_id` + root `session_id`, named for the trace
+- each **`agent` span** → sub-agent `task.*` with `parent_session_id` → workflow root, reached via `handoff.started` / `handoff.completed` (a star, matching how the SDK itself trees agents as siblings under the workflow — the same shape as AutoGen team→agents); the real `from_agent` of a handoff is preserved on the handed-to agent's `task.created` payload as `handoff_from`
+- each **`function` span** → `tool.called` → `tool.result` (or `error.raised` when `span.error` is set), paired exactly by `span_id`; a tool attaches to its owning agent's session, resolved by walking `parent_id` to the nearest enclosing open agent (falling back to the always-open workflow root)
+- every `causation_id` resolves to a real emitted event; one `trace_id` spans the whole run (identical causation-DAG guarantees as 12b/12c/12d)
+
+**Deliverables:**
+- `OpenAIAgentsInstrumentor` + `AEPOpenAIAgentsTracer` registered in `_INSTRUMENTORS`; `instrument(frameworks=["openai-agents"])` works with the SDK installed and `langchain-core` absent. **No change to the 12b/12c/12d emission core behavior or their event output** (regression-locked by their unchanged tests; the new `extra_payload` is optional + defaulted)
+- `[openai-agents]` extra in `pyproject.toml`; the SDK added to the `python-sdk-test` CI install line
+- Demo `demos/openai_agents_multiagent.py` — a triage → spanish handoff with a `get_weather` tool, emitting a full causation DAG, runnable offline with no LLM key via a scripted `Model`
+- 27 unit tests for the OpenAI Agents trace/span→AEP mapping (runnable without the SDK installed, incl. agents-as-tools nesting, straggler close at trace-end, orphan-span safety) + 2 live-server integration tests (auto-skip when unreachable), matching 12b/12c/12d's coverage shape
+- Docs: README + SDK README updated; CHANGELOG + PRD status flipped to ✅; memory index updated
+
+**Success criteria:**
+- ✅ `aep.instrument()` emits a full causation DAG from an unmodified `Runner.run()` with no other code changes, verified end-to-end against installed OpenAI Agents SDK 0.17.x (1 trace, N sessions, 0 dangling causation links)
+- ✅ Tested against a pinned minimum version (`MIN_OPENAI_AGENTS_VERSION`, surfaced in warnings)
+- ✅ The 12b/12c/12d paths are byte-for-byte unchanged in output (no event regressions)
+- ✅ Host-safe: no-op + warning when the SDK absent or its tracing API differs; per-callback errors swallowed (host run never broken); emit failures swallowed; idempotent re-instrumentation (never stacks a second AEP processor); both the run table and the span-parent index are bounded
+- ✅ Unit + integration coverage wired into CI; demo produces a clean DAG
+
+**Resolved open questions (settled against a real OpenAI Agents SDK 0.17.x trace):**
+- **Observation surface** — confirmed the SDK exposes a supported global tracing pipeline (`add_trace_processor` / `TracingProcessor`). Chose the trace-processor path (global, captures all `Runner.run`s with zero code change) over `RunHooks`/`AgentHooks` (which must be passed per-run and would require patching `Runner.run` to inject — not zero-code). The processor is registered alongside the SDK's default exporter and removed cleanly on uninstrument.
+- **Agent topology** — agent spans are siblings under the run's root `task` span (the SDK does not nest handed-off agents under each other), and handoffs are sequential (the previous agent's span closes before the next opens). So the trace is the orchestrator and every agent is a sub-agent of it (a star); the real handoff `from_agent` is preserved as `handoff_from` on the target's payload rather than as the parent edge (parenting to the previous agent is impossible — it has already closed).
+- **Tool pairing** — a tool is a single `function` span carrying both start and end, so `tool.called`/`tool.result` pair exactly by `span_id` (cleaner than AutoGen's `call_id`); arguments are only populated at span end, so a tool is emitted on span-end (open-then-close). Tool/agent ownership is resolved by walking the span tree, which also handles **agents-as-tools** (`agent.as_tool(...)`) — verified end-to-end against a real trace: the real tree is `agent(outer) → turn → function(as_tool) → task → agent(inner)`, and the walk passes through the nested `function`/`task` spans so the inner agent nests as a sub-agent of the outer, while the as_tool function still emits its own `tool.called`/`tool.result` pair (a faithful double-representation, single trace, 0 dangling).
+- **Failure semantics (documented caveat)** — the tracing surface only reports failures the SDK records on a span (e.g. a tool error sets `span.error`). An *uncaught* exception from `Runner.run` is **not** delivered to processors (spans/trace still close cleanly with no error, and the exception propagates to the caller), so such a run is recorded `completed`. We deliberately don't add a separate failure path that would race the SDK's own span/trace close (a race an independent reviewer caught in 12d). Guardrail tripwires → `policy.blocked` is left as future work.
+
+**Deferred to Phase 12f+:** Anthropic Claude Agent SDK; Node.js auto-instrumentation (LangChain.js, Vercel AI SDK); native first-party emission with framework authors.
+
 ### Phase 13: Hosted SaaS — aep.dev (Q3 2026)
 
 **Objective:** Remove the self-hosting barrier and make AEP a product people depend on daily.
@@ -385,7 +424,7 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 
 | Metric | Target | Status |
 |--------|--------|--------|
-| **Framework integrations** | ≥3 major frameworks (LangGraph, CrewAI, AutoGen) | 🟢 LangGraph (12b) + CrewAI (12c) + AutoGen (12d) done — target met |
+| **Framework integrations** | ≥3 major frameworks (LangGraph, CrewAI, AutoGen) | 🟢 LangGraph (12b) + CrewAI (12c) + AutoGen (12d) + OpenAI Agents SDK (12e) done — target exceeded (4) |
 | **GitHub stars** | 1,000 | ⏳ In progress |
 | **aep.dev free tier users** | 500 at launch | ⏳ Planned Phase 13 |
 | **OTEL GenAI SIG contribution** | AEP event types proposed | ⏳ Not yet scheduled — no phase delivers it (the OTEL bridge shipped in 11/12a, but upstreaming AEP's vocabulary to the SIG is unowned; needs its own phase) |

@@ -3,7 +3,7 @@
 ``aep.instrument()`` patches supported agent frameworks so that running a
 workflow automatically emits AEP events — no other code changes required.
 
-Three frameworks are supported today:
+Four frameworks are supported today:
 
 - **LangGraph** (``langgraph>=0.1``) — instrumented via a LangChain
   ``BaseCallbackHandler`` injected into every ``CompiledStateGraph`` execution.
@@ -13,6 +13,10 @@ Three frameworks are supported today:
   the async event stream a team exposes from ``BaseGroupChat.run_stream`` (which
   ``BaseGroupChat.run`` also drives); AutoGen has neither a callback registry nor
   an event bus, so the stream is the observation surface.
+- **OpenAI Agents SDK** (``openai-agents>=0.1``) — instrumented by registering a
+  tracing processor (``agents.tracing.add_trace_processor``); the SDK exposes a
+  supported global tracing pipeline that reports a trace per ``Runner.run`` and a
+  tree of agent/function/handoff spans.
 
 All transports map framework lifecycle onto the same AEP event vocabulary:
 
@@ -77,6 +81,12 @@ MIN_CREWAI_VERSION = "1.0"
 # and tested against 0.7.x. Earlier 0.2-era ``pyautogen`` has an entirely
 # different API and degrades to a clean no-op via AutoGenInstrumentor.available().
 MIN_AUTOGEN_VERSION = "0.4"
+# Floor at which the OpenAI Agents SDK tracing-processor model this transport maps
+# is present: ``agents.tracing.add_trace_processor`` + the ``agent``/``function``/
+# ``handoff`` span-data types. Developed and tested against 0.17.x. Older releases
+# whose tracing API has drifted degrade to a clean no-op via
+# OpenAIAgentsInstrumentor.available().
+MIN_OPENAI_AGENTS_VERSION = "0.1"
 
 # Defaults for the background emitter and run bookkeeping.
 DEFAULT_QUEUE_SIZE = 10_000   # max buffered events before we drop (and warn)
@@ -104,6 +114,21 @@ def _autogen_version() -> str:
         import importlib.metadata as _md
 
         return _md.version("autogen-agentchat")
+    except Exception:
+        return "not installed"
+
+
+def _openai_agents_version() -> str:
+    """Best-effort installed OpenAI Agents SDK version, for diagnostics in warnings."""
+    try:
+        import agents
+
+        version = getattr(agents, "__version__", None)
+        if version:
+            return str(version)
+        import importlib.metadata as _md
+
+        return _md.version("openai-agents")
     except Exception:
         return "not installed"
 
@@ -364,6 +389,7 @@ class _EmissionCore:
         framework: str,
         kind: str,
         parent_key: Any = None,
+        extra_payload: Optional[dict] = None,
     ) -> Optional[str]:
         """Open an agent/task run, returning its ``task.created`` event id.
 
@@ -371,6 +397,11 @@ class _EmissionCore:
         ``trace_id`` + ``session_id``). With a tracked parent it is a
         **sub-agent**: a ``handoff.started`` is emitted on the parent's session,
         then the sub-agent's ``task.created`` chains off that handoff.
+
+        ``extra_payload`` merges extra keys into the ``task.created`` payload
+        (e.g. the OpenAI Agents transport records ``handoff_from``); it defaults
+        to ``None`` so callers that omit it produce the exact same payload shape
+        as before.
         """
         parent = self.get(parent_key) if parent_key is not None else None
         source = f"agent://{name}"
@@ -385,7 +416,7 @@ class _EmissionCore:
                 trace_id=trace_id,
                 agent_role="orchestrator",
                 subject=name,
-                payload={"framework": framework, "node": name, "kind": kind},
+                payload={"framework": framework, "node": name, "kind": kind, **(extra_payload or {})},
             )
             self._put(
                 key,
@@ -423,7 +454,7 @@ class _EmissionCore:
             parent_session_id=parent.session_id,
             subject=name,
             causation_id=handoff_id or parent.open_event_id or None,
-            payload={"framework": framework, "node": name, "kind": kind},
+            payload={"framework": framework, "node": name, "kind": kind, **(extra_payload or {})},
         )
         self._put(
             key,
@@ -1320,6 +1351,346 @@ class AEPAutoGenTracer:
                 logger.warning("AEP: failed to close AutoGen run: %s", e)
 
 
+# ── OpenAI Agents SDK tracing processor ─────────────────────────────────────
+
+
+def _span_error_message(error: Any) -> str:
+    """Extract a human-readable message from an Agents SDK ``SpanError``.
+
+    A failed span's ``error`` is a dict shaped ``{"message": str, "data": {...}}``
+    (e.g. a failed tool call carries the real exception text under
+    ``data["error"]`` while ``message`` is a generic label). Prefer the specific
+    nested message; fall back to the top-level one, then to ``str(error)``.
+    """
+    if isinstance(error, dict):
+        data = error.get("data")
+        if isinstance(data, dict) and data.get("error"):
+            return str(data["error"])
+        if error.get("message"):
+            return str(error["message"])
+        return str(error)
+    return "" if error is None else str(error)
+
+
+# Bounds the span-parent index (a separate cap from the core run table) so a
+# long-lived process whose spans somehow never close can't grow it without limit.
+DEFAULT_MAX_SPANS = 10_000
+
+
+class AEPOpenAIAgentsTracer:
+    """Translates the OpenAI Agents SDK tracing stream into AEP events.
+
+    The Agents SDK exposes a supported, global observation surface: a tracing
+    pipeline you join by registering a processor via
+    ``agents.tracing.add_trace_processor``. A processor receives a *trace* per
+    top-level ``Runner.run`` and a tree of *spans* (``agent`` / ``function`` /
+    ``handoff`` / ``turn`` / …) linked by ``parent_id``. This object implements
+    that processor's duck-typed interface
+    (``on_trace_start`` / ``on_trace_end`` / ``on_span_start`` / ``on_span_end``
+    / ``force_flush`` / ``shutdown``) and maps it onto AEP's vocabulary:
+
+    - the **trace** is the orchestrator root (new AEP trace + root session);
+    - every **agent** span is a sub-agent of that root — matching how the SDK
+      itself trees agents as siblings under the workflow, and mirroring the
+      AutoGen team→agents star. The real ``from_agent`` of a handoff is recorded
+      on the handed-to agent's ``task.created`` payload as ``handoff_from``;
+    - every **function** span is a tool run, paired exactly by its ``span_id``
+      (one span carries both start and end — no LIFO heuristics);
+    - a tool/agent's parent is resolved by walking ``parent_id`` to the nearest
+      open agent span, falling back to the always-open workflow root — so a tool
+      nests on its owning agent's session and the whole run stays one trace. This
+      also covers agents-as-tools (``agent.as_tool(...)``): the inner agent nests
+      as a sub-agent of the calling agent (the walk passes through the as_tool
+      ``function`` and nested ``task`` spans), while the as_tool function still
+      emits its own ``tool.called``/``tool.result`` pair.
+
+    The mapping never imports ``agents`` — it is entirely duck-typed against the
+    span/trace shape — so it is unit-testable with fabricated objects; only
+    :class:`OpenAIAgentsInstrumentor` touches the framework.
+
+    Note: the tracing surface only reports failures the SDK records on a span
+    (e.g. a tool error sets ``span.error``). An *uncaught* exception from
+    ``Runner.run`` is not surfaced to processors — the spans and trace still
+    close cleanly and the exception propagates to the caller — so such a run is
+    recorded ``completed`` here. The exception itself remains the host's source
+    of truth; we deliberately don't bolt on a separate failure path that would
+    race the SDK's own span/trace close.
+    """
+
+    def __init__(
+        self,
+        client: Any,
+        max_runs: int = DEFAULT_MAX_RUNS,
+        max_spans: int = DEFAULT_MAX_SPANS,
+    ) -> None:
+        self._core = _EmissionCore(client, max_runs=max_runs)
+        self._lock = threading.Lock()
+        # span_id -> parent_id, for every span (used to walk to the owning agent).
+        self._parent_of: "OrderedDict[str, Optional[str]]" = OrderedDict()
+        # span_id -> trace_id for agent runs currently open (the run key is the
+        # span_id). Keyed this way so on_trace_end can close any stragglers that
+        # never received their own on_span_end. Bounded (FIFO) like the other
+        # indices: under pathological accumulation the oldest open agent is
+        # dropped (its children then resolve to the workflow root).
+        self._open_agents: "OrderedDict[str, Any]" = OrderedDict()
+        # trace_ids with a tracked (open) workflow root, so a span arriving without
+        # a preceding on_trace_start can be detected rather than silently splitting
+        # the run into orphan traces.
+        self._open_traces: set = set()
+        self._warned_orphan = False
+        # (trace_id, to_agent) -> from_agent, recorded when a handoff span ends and
+        # consumed when the handed-to agent span opens (to enrich its payload).
+        self._pending_handoff: "OrderedDict[tuple, Optional[str]]" = OrderedDict()
+        self._max_spans = max_spans
+        self._span_evicted = 0
+        self._handoff_evicted = 0
+
+    @property
+    def _runs(self):  # exposed for tests + run-cap assertions
+        return self._core._runs
+
+    def flush(self, timeout: float = 5.0) -> bool:
+        return self._core.flush(timeout)
+
+    def close(self, timeout: float = 5.0) -> None:
+        self._core.close(timeout)
+
+    # -- TracingProcessor interface (duck-typed; never raises into the SDK) ----
+
+    def on_trace_start(self, trace: Any) -> None:
+        try:
+            trace_id = getattr(trace, "trace_id", None)
+            if not trace_id:
+                return
+            name = getattr(trace, "name", None) or "agent-workflow"
+            with self._lock:
+                self._open_traces.add(trace_id)
+            self._core.open_agent_run(
+                trace_id,
+                name=name,
+                framework="openai-agents",
+                kind="workflow",
+                parent_key=None,
+            )
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("AEP: OpenAI Agents on_trace_start error: %s", e)
+
+    def on_trace_end(self, trace: Any) -> None:
+        try:
+            trace_id = getattr(trace, "trace_id", None)
+            if not trace_id:
+                return
+            # Safety net: close any sub-agents of this trace that never received
+            # their own on_span_end (abnormal termination), so they don't linger
+            # open and miss their task.completed. Idempotent — agents that closed
+            # normally are already gone from _open_agents.
+            with self._lock:
+                stragglers = [
+                    sid for sid, tid in self._open_agents.items() if tid == trace_id
+                ]
+            for sid in stragglers:
+                self._core.close_agent_run(sid, status="completed")
+            with self._lock:
+                for sid in stragglers:
+                    self._open_agents.pop(sid, None)
+                    self._parent_of.pop(sid, None)
+                self._open_traces.discard(trace_id)
+            self._core.close_agent_run(trace_id, status="completed")
+            self._forget_trace(trace_id)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("AEP: OpenAI Agents on_trace_end error: %s", e)
+
+    def on_span_start(self, span: Any) -> None:
+        try:
+            self._record_parent(span)
+            data = getattr(span, "span_data", None)
+            if getattr(data, "type", None) == "agent":
+                self._open_agent(span, data)
+            # function/handoff spans carry their input/output/to_agent only at
+            # end, so they're mapped in on_span_end; other span types (turn,
+            # generation, response, custom, guardrail) are not AEP boundaries —
+            # their parent_id is still recorded above so the walk can pass through.
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("AEP: OpenAI Agents on_span_start error: %s", e)
+
+    def on_span_end(self, span: Any) -> None:
+        try:
+            data = getattr(span, "span_data", None)
+            kind = getattr(data, "type", None)
+            if kind == "agent":
+                self._close_agent(span)
+            elif kind == "function":
+                self._tool(span, data)
+            elif kind == "handoff":
+                self._record_handoff(span, data)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("AEP: OpenAI Agents on_span_end error: %s", e)
+        finally:
+            self._forget_span(getattr(span, "span_id", None))
+
+    def force_flush(self) -> None:
+        self._core.flush(5.0)
+
+    def shutdown(self) -> None:
+        # Called by the SDK's tracing pipeline at process shutdown. Drain and stop
+        # our background worker so queued telemetry is delivered.
+        self._core.close(5.0)
+
+    # -- span bookkeeping -----------------------------------------------------
+
+    def _record_parent(self, span: Any) -> None:
+        sid = getattr(span, "span_id", None)
+        if not sid:
+            return
+        with self._lock:
+            self._parent_of[sid] = getattr(span, "parent_id", None)
+            while len(self._parent_of) > self._max_spans:
+                self._parent_of.popitem(last=False)
+                self._span_evicted += 1
+                if self._span_evicted == 1 or self._span_evicted % 100 == 0:
+                    logger.warning(
+                        "AEP: span-parent index cap (%d) exceeded — evicted %d "
+                        "stale span(s); some tool/agent parenting may fall back "
+                        "to the workflow root.",
+                        self._max_spans,
+                        self._span_evicted,
+                    )
+
+    def _forget_span(self, sid: Optional[str]) -> None:
+        if not sid:
+            return
+        with self._lock:
+            self._parent_of.pop(sid, None)
+            self._open_agents.pop(sid, None)
+
+    def _forget_trace(self, trace_id: str) -> None:
+        with self._lock:
+            stale = [k for k in self._pending_handoff if k[0] == trace_id]
+            for k in stale:
+                self._pending_handoff.pop(k, None)
+
+    def _warn_if_orphan(self, trace_id: Any) -> None:
+        """Warn once if a span's trace has no tracked workflow root.
+
+        Normally on_trace_start always precedes a trace's spans; if it didn't, the
+        span's run can't resolve to the (absent) workflow root and would split off
+        into its own orphan trace. We surface that rather than failing silently.
+        """
+        with self._lock:
+            if trace_id in self._open_traces or self._warned_orphan:
+                return
+            self._warned_orphan = True
+        logger.warning(
+            "AEP: OpenAI Agents span arrived for trace %s with no tracked trace "
+            "root (on_trace_start missed?); its run may not share the workflow "
+            "trace. Further such cases are not logged.",
+            trace_id,
+        )
+
+    def _resolve_parent(self, span: Any) -> Any:
+        """Return the run key of the nearest open agent ancestor, or the trace root.
+
+        Walks ``parent_id`` up the span tree (through ``turn`` and other
+        non-boundary spans) to the closest currently-open agent span — its key is
+        that agent's run. With none found, falls back to the workflow root keyed
+        by ``trace_id`` (always open for the duration of the trace), so tools and
+        agents never escape the run's single trace.
+        """
+        with self._lock:
+            cur = getattr(span, "parent_id", None)
+            hops = 0
+            while cur is not None and hops < 128:
+                if cur in self._open_agents:
+                    return cur
+                cur = self._parent_of.get(cur)
+                hops += 1
+        return getattr(span, "trace_id", None)
+
+    # -- mapping --------------------------------------------------------------
+
+    def _open_agent(self, span: Any, data: Any) -> None:
+        sid = getattr(span, "span_id", None)
+        if not sid:
+            return
+        name = getattr(data, "name", None) or "agent"
+        trace_id = getattr(span, "trace_id", None)
+        self._warn_if_orphan(trace_id)
+        parent_key = self._resolve_parent(span)
+        with self._lock:
+            from_agent = self._pending_handoff.pop((trace_id, name), None)
+        extra = {"handoff_from": from_agent} if from_agent else None
+        self._core.open_agent_run(
+            sid,
+            name=name,
+            framework="openai-agents",
+            kind="agent",
+            parent_key=parent_key,
+            extra_payload=extra,
+        )
+        with self._lock:
+            self._open_agents[sid] = trace_id
+            while len(self._open_agents) > self._max_spans:
+                self._open_agents.popitem(last=False)
+
+    def _close_agent(self, span: Any) -> None:
+        sid = getattr(span, "span_id", None)
+        if not sid:
+            return
+        status, error = self._status(span)
+        self._core.close_agent_run(sid, status=status, error=error)
+
+    def _tool(self, span: Any, data: Any) -> None:
+        sid = getattr(span, "span_id", None)
+        if not sid:
+            return
+        name = getattr(data, "name", None) or "tool"
+        self._warn_if_orphan(getattr(span, "trace_id", None))
+        parent_key = self._resolve_parent(span)
+        raw_input = getattr(data, "input", None)
+        # input is only populated at span end; None or "" → no arguments captured.
+        arguments = _coerce_tool_args(raw_input) if raw_input not in (None, "") else {}
+        self._core.open_tool_run(
+            sid, name=name, arguments=arguments, parent_key=parent_key
+        )
+        status, error = self._status(span)
+        if status == "failed":
+            self._core.fail_tool_run(sid, error=error)
+        else:
+            self._core.close_tool_run(sid, output=getattr(data, "output", None))
+
+    def _record_handoff(self, span: Any, data: Any) -> None:
+        trace_id = getattr(span, "trace_id", None)
+        to_agent = getattr(data, "to_agent", None)
+        if not trace_id or not to_agent:
+            return
+        from_agent = getattr(data, "from_agent", None)
+        with self._lock:
+            self._pending_handoff[(trace_id, to_agent)] = from_agent
+            while len(self._pending_handoff) > self._max_spans:
+                self._pending_handoff.popitem(last=False)
+                self._handoff_evicted += 1
+                if self._handoff_evicted == 1 or self._handoff_evicted % 100 == 0:
+                    logger.warning(
+                        "AEP: pending-handoff index cap (%d) exceeded — evicted %d "
+                        "entr%s; some handoff_from labels may be lost.",
+                        self._max_spans,
+                        self._handoff_evicted,
+                        "y" if self._handoff_evicted == 1 else "ies",
+                    )
+
+    def _status(self, span: Any) -> tuple[str, Optional[str]]:
+        """Map a span's ``error`` onto an AEP terminal status.
+
+        Returns ``("failed", message)`` when the SDK recorded a span error, else
+        ``("completed", None)``. The message is a plain string (the core's
+        ``_error_fields`` labels it ``"Error"``).
+        """
+        error = getattr(span, "error", None)
+        if error:
+            return "failed", _span_error_message(error)
+        return "completed", None
+
+
 # ── Framework instrumentors ─────────────────────────────────────────────────
 
 
@@ -1579,6 +1950,110 @@ class AutoGenInstrumentor(FrameworkInstrumentor):
         super().uninstrument()
 
 
+class OpenAIAgentsInstrumentor(FrameworkInstrumentor):
+    """Registers an :class:`AEPOpenAIAgentsTracer` on the OpenAI Agents SDK's
+    global tracing pipeline (``agents.tracing.add_trace_processor``).
+
+    This is the supported, zero-code observation surface: the processor receives
+    every ``Runner.run`` trace/span in-process, alongside (not replacing) the
+    SDK's own default exporter. Uninstrument removes only our processor.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(name="openai-agents")
+
+    def available(self) -> bool:
+        # Only claim availability when the tracing registration API we use is
+        # importable, so an Agents SDK whose tracing layout has drifted (or no
+        # SDK at all) degrades to a clean no-op.
+        try:
+            import agents  # noqa: F401
+            from agents.tracing import add_trace_processor  # noqa: F401
+        except Exception:
+            return False
+        return True
+
+    def _provider(self) -> Any:
+        from agents.tracing import get_trace_provider
+
+        return get_trace_provider()
+
+    def _remove_aep_processors(self) -> None:
+        """Drop any previously-registered AEP tracer from the provider's list.
+
+        Leaves the SDK's default exporter (and any other processors) untouched —
+        ``set_processors`` only replaces the tuple, it does not shut anyone down.
+
+        The Agents SDK exposes no public single-processor removal (only
+        ``add_trace_processor`` + replace-all ``set_trace_processors``), so this
+        reaches into ``provider._multi_processor``. If that internal layout has
+        drifted we **warn** rather than fail silently: a stale processor left
+        registered would keep receiving spans after ``uninstrument()`` (and emit
+        onto a stopped worker), which must not happen quietly.
+        """
+        try:
+            mp = self._provider()._multi_processor
+            current = list(getattr(mp, "_processors", ()))
+        except Exception as e:
+            logger.warning(
+                "AEP: could not access the OpenAI Agents processor list to remove "
+                "the AEP tracer (SDK tracing internals may have changed): %s. The "
+                "AEP processor may still be registered.",
+                e,
+            )
+            return
+        kept = [p for p in current if not isinstance(p, AEPOpenAIAgentsTracer)]
+        if len(kept) == len(current):
+            return  # nothing of ours to remove
+        try:
+            mp.set_processors(kept)
+        except Exception as e:
+            logger.warning(
+                "AEP: could not remove the AEP tracer from the OpenAI Agents "
+                "processor list (SDK tracing internals may have changed): %s. The "
+                "AEP processor may still be registered.",
+                e,
+            )
+
+    def instrument(self, client: Any) -> bool:
+        try:
+            from agents.tracing import add_trace_processor
+        except Exception as e:
+            logger.warning(
+                "AEP: could not access OpenAI Agents tracing API "
+                "(openai-agents>=%s expected, installed: %s): %s",
+                MIN_OPENAI_AGENTS_VERSION,
+                _openai_agents_version(),
+                e,
+            )
+            return False
+
+        tracer = AEPOpenAIAgentsTracer(client)
+
+        # Idempotent re-instrumentation: retire any prior AEP tracer first (so we
+        # never register two), then add the fresh one.
+        previous = self._transport
+        self._remove_aep_processors()
+        try:
+            add_trace_processor(tracer)
+        except Exception as e:
+            logger.warning("AEP: failed to register OpenAI Agents trace processor: %s", e)
+            tracer.close(timeout=0.0)  # don't leak the emitter's worker thread
+            return False
+
+        self._transport = tracer
+        if isinstance(previous, AEPOpenAIAgentsTracer) and previous is not tracer:
+            try:
+                previous.close(timeout=1.0)
+            except Exception:  # pragma: no cover - defensive
+                pass
+        return True
+
+    def uninstrument(self) -> None:
+        self._remove_aep_processors()
+        super().uninstrument()
+
+
 def _make_run_stream_wrapper(target_cls: Any, original: Any):
     """Wrap ``BaseGroupChat.run_stream`` so the active tracer taps its stream.
 
@@ -1682,6 +2157,7 @@ def _config_with_handler(config: Any, handler: Any) -> dict:
 _INSTRUMENTORS["langgraph"] = LangGraphInstrumentor()
 _INSTRUMENTORS["crewai"] = CrewAIInstrumentor()
 _INSTRUMENTORS["autogen"] = AutoGenInstrumentor()
+_INSTRUMENTORS["openai-agents"] = OpenAIAgentsInstrumentor()
 
 
 # ── Public API ──────────────────────────────────────────────────────────────
@@ -1696,12 +2172,13 @@ def instrument(
 ) -> bool:
     """Enable AEP auto-instrumentation for supported agent frameworks.
 
-    Supports **LangGraph** (``langgraph>=0.1``), **CrewAI** (``crewai>=1.0``), and
-    **AutoGen AgentChat** (``autogen-agentchat>=0.4``). Running a graph / crew /
-    team after calling this emits AEP events for the run, each sub-agent, every
-    tool call, and agent-to-agent handoffs — with full causation chains — and
-    requires no other code changes. Only the frameworks you actually use need be
-    installed: instrumenting CrewAI does not require ``langchain``.
+    Supports **LangGraph** (``langgraph>=0.1``), **CrewAI** (``crewai>=1.0``),
+    **AutoGen AgentChat** (``autogen-agentchat>=0.4``), and the **OpenAI Agents
+    SDK** (``openai-agents>=0.1``). Running a graph / crew / team / ``Runner.run``
+    after calling this emits AEP events for the run, each sub-agent, every tool
+    call, and agent-to-agent handoffs — with full causation chains — and requires
+    no other code changes. Only the frameworks you actually use need be installed:
+    instrumenting CrewAI does not require ``langchain``.
 
     Args:
         server_url: AEP ingest URL (falls back to ``AEP_INGEST_URL`` env var,
@@ -1725,12 +2202,13 @@ def instrument(
     if not available:
         logger.warning(
             "AEP: no supported framework found (looked for: %s); aep.instrument() "
-            "is a no-op. Install LangGraph (>=%s), CrewAI (>=%s), or "
-            "AutoGen AgentChat (>=%s).",
+            "is a no-op. Install LangGraph (>=%s), CrewAI (>=%s), "
+            "AutoGen AgentChat (>=%s), or the OpenAI Agents SDK (>=%s).",
             ", ".join(targets),
             MIN_LANGGRAPH_VERSION,
             MIN_CREWAI_VERSION,
             MIN_AUTOGEN_VERSION,
+            MIN_OPENAI_AGENTS_VERSION,
         )
         return False
 

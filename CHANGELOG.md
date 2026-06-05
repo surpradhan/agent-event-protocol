@@ -4,6 +4,94 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Phase 12e — Framework Auto-Instrumentation (OpenAI Agents SDK), 2026-06-05
+
+No breaking changes to the event envelope schema or existing API contracts, and
+**no change to the LangGraph (12b), CrewAI (12c), or AutoGen (12d) event output**
+(all regression-locked by their unchanged test suites). This is purely additive: a
+fourth framework registered alongside the existing three.
+
+**New: OpenAI Agents SDK auto-instrumentation** (`sdks/python/aep/instrument.py`)
+
+`import aep; aep.instrument()` now also instruments the **OpenAI Agents SDK** — an
+unmodified `Runner.run()` / `Runner.run_sync()` emits a full AEP causation DAG with
+no other code changes. Tested against `openai-agents>=0.1` (developed on 0.17.x).
+This is the fourth major framework (LangGraph, CrewAI, AutoGen, OpenAI Agents SDK).
+
+- **Tracing processor, not monkey-patching** — the Agents SDK exposes a supported,
+  global tracing pipeline you join with `agents.tracing.add_trace_processor`. The
+  instrumentor registers an `AEPOpenAIAgentsTracer` (a duck-typed `TracingProcessor`)
+  *alongside* (not replacing) the SDK's own exporter — mirroring 12b/12c/12d's
+  choice of the supported observation surface over patching internals.
+  `uninstrument()` removes only our processor (via `set_processors`), leaving the
+  SDK's default exporter and any other processors untouched.
+- **Event mapping (settled against a real captured trace)** — the **trace** (one
+  per top-level `Runner.run`) is the orchestrator `task.*` (new `trace_id` + root
+  `session_id`); each `agent` span is a **sub-agent** `task.*` reached via
+  `handoff.started`/`handoff.completed` on the workflow session — matching how the
+  SDK itself trees agents as siblings under the workflow root (the AutoGen
+  team→agents star). The real `from_agent` of a `handoff` span is preserved on the
+  handed-to agent's `task.created` payload as `handoff_from`. A `function` span maps
+  to `tool.called` → `tool.result` (or `error.raised` when the span carries an
+  error). One `trace_id` spans the run; every `causation_id` resolves to a real
+  emitted event.
+- **Exact tool pairing by `span_id`** — a tool is a single `function` span carrying
+  both its start and end, so its `tool.called`/`tool.result` pair exactly by
+  `span_id` with no LIFO heuristics. A tool (and a nested agent, as with
+  agents-as-tools) attaches to its owning agent's session, resolved by walking the
+  span tree's `parent_id` chain to the nearest enclosing open agent, falling back
+  to the always-open workflow root so nothing escapes the run's single trace.
+  **Agents-as-tools** (`agent.as_tool(...)`) — verified end-to-end against a real
+  trace — nest the inner agent as a sub-agent of the calling agent while the
+  as_tool function still emits its own tool pair (a faithful double-representation,
+  single trace, 0 dangling).
+- **Honest failure semantics** — the tracing surface only reports failures the SDK
+  records on a span (e.g. a tool error sets `span.error`). An *uncaught* exception
+  from `Runner.run` is not delivered to processors (spans/trace still close cleanly
+  and the exception propagates to the caller), so such a run is recorded
+  `completed`; AEP deliberately does **not** bolt on a separate failure path that
+  would race the SDK's own close. Documented as a caveat rather than over-claimed.
+- **Graceful, host-safe** — no-op + warning when the SDK is absent or its tracing
+  API has drifted (availability is claimed only when `add_trace_processor` imports);
+  every processor callback is wrapped so a telemetry bug never breaks the host run;
+  emit failures swallowed; idempotent re-instrumentation (never stacks a second AEP
+  processor). `on_trace_end` closes any sub-agent that never received its own
+  span-end (so a straggler still gets its `task.completed`); a span arriving with no
+  tracked trace root is warned about (once) rather than silently splitting the run;
+  `uninstrument()` warns if the SDK's (private) processor list can't be reached to
+  remove our tracer rather than leaving it silently registered. The core run table,
+  the span-parent index, and the pending-handoff index are all bounded with
+  eviction + warnings. A `MIN_OPENAI_AGENTS_VERSION` floor and the installed
+  version are surfaced in warnings.
+
+**Demo** — `demos/openai_agents_multiagent.py`: a triage → spanish handoff with a
+`get_weather` tool. Runs **offline with no LLM API key** via a scripted `Model`
+(set `AEP_DEMO_OPENAI=1` for a real model), emitting a clean DAG — orchestrator + 2
+sub-agent sessions + a tool pair on one trace — then prints the server-reconstructed
+session tree.
+
+**Tests** — 27 unit tests drive the `AEPOpenAIAgentsTracer` tracing-processor
+mapping with fabricated trace/span objects and a recorder client (runnable without
+the SDK installed) — covering orchestrator-only, sub-agent + handoff DAG,
+`handoff_from` enrichment, tool called/result/error, repeated tools, parent
+resolution through turn spans, fallback to the workflow root, agent failure,
+agents-as-tools nesting (mirroring the real `function → task → agent` tree + its
+tool pair), straggler close at trace-end, orphan-span (missing trace-start)
+safety, empty-string tool input, run-cap + span-index bounds, stray span ends, and
+host-safety (emit failure + callback exception swallowed) — plus a real
+processor-registration/removal test. Two integration tests run a real `Runner.run`
+against a live server (one verifies the workflow/agent/handoff DAG incl.
+`handoff_from`; one drives a real tool call and asserts a linked `tool.called` →
+`tool.result` pair) and auto-skip when unreachable. All Phase 12b, 12c, and 12d
+tests remain green and unchanged.
+
+**CI** — `python-sdk-test` now installs `sdks/python[dev,langgraph,crewai,autogen,openai-agents,otel]`.
+
+**Optional dependencies** — added `[openai-agents]` extra to `pyproject.toml`:
+`pip install -e "sdks/python[openai-agents]"`.
+
+---
+
 ## Phase 12d — Framework Auto-Instrumentation (AutoGen), 2026-06-05
 
 No breaking changes to the event envelope schema or existing API contracts, and
