@@ -313,6 +313,61 @@ async def test_run_failure_marks_orchestrator_failed_and_propagates():
     assert not _no_dangling(rec.events)
 
 
+async def test_cancelled_run_marks_orchestrator_failed_and_reraises():
+    """A cancelled run (``CancelledError``, a BaseException) must close the
+    orchestrator as ``task.failed`` — not silently as completed — while still
+    propagating the cancellation."""
+    import asyncio
+
+    rec = _Recorder()
+    tracer = AEPAutoGenTracer(rec)
+
+    with pytest.raises(asyncio.CancelledError):
+        async for _ in tracer.wrap_stream(
+            _team(), _agen([_user(), _text("researcher", "partial")], exc=asyncio.CancelledError())
+        ):
+            pass
+    assert tracer.flush(timeout=5.0)
+
+    orch = [
+        e
+        for e in rec.events
+        if e["agent_role"] == "orchestrator" and e["type"].startswith("task.")
+    ]
+    # Orchestrator opened then closed FAILED (not completed) on cancellation.
+    assert orch[0]["type"] == "task.created"
+    assert any(e["type"] == "task.failed" for e in orch)
+    assert not any(e["type"] == "task.completed" for e in orch)
+    assert not _no_dangling(rec.events)
+
+
+async def test_error_after_terminal_taskresult_still_marks_failed():
+    """If the run errors/cancels in teardown *after* yielding its terminal
+    ``TaskResult``, the orchestrator must close ``task.failed`` — not a premature
+    ``task.completed``. (Not reachable in normal AutoGen, where ``TaskResult`` is
+    the last item, but locks the close-in-finally contract against the race.)"""
+    rec = _Recorder()
+    tracer = AEPAutoGenTracer(rec)
+    boom = RuntimeError("teardown blew up")
+
+    with pytest.raises(RuntimeError, match="teardown blew up"):
+        async for _ in tracer.wrap_stream(
+            _team(),
+            _agen([_user(), _text("researcher", "notes"), _task_result()], exc=boom),
+        ):
+            pass
+    assert tracer.flush(timeout=5.0)
+
+    orch = [
+        e
+        for e in rec.events
+        if e["agent_role"] == "orchestrator" and e["type"].startswith("task.")
+    ]
+    assert any(e["type"] == "task.failed" for e in orch)
+    assert not any(e["type"] == "task.completed" for e in orch)
+    assert not _no_dangling(rec.events)
+
+
 async def test_user_and_task_result_items_create_no_sessions():
     rec, _ = await _drive([_user(), _user("again"), _task_result()])
     # Only the orchestrator pair — neither the user echo nor the TaskResult opens a run.
