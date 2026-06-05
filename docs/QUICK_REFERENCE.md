@@ -51,7 +51,7 @@ curl -s -X POST http://localhost:8787/admin/keys \
   "message": "API key created. Store the key securely — it will not be shown again.",
   "key": "aep_a3f9e1c2d4b5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3",
   "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "keyPrefix": "aep_a3f9e1c",
+  "keyPrefix": "aep_a3f9e1c2",
   "tenantId": "my-org",
   "label": "development key",
   "scopes": ["read", "write"],
@@ -74,6 +74,10 @@ curl -s -X POST http://localhost:8787/admin/keys \
 | `write` | `POST /events` (event ingestion) |
 
 Most keys should include both scopes: `["read", "write"]`
+
+> Note: `/metrics/prometheus` (the Prometheus scrape endpoint) is intentionally
+> unauthenticated and does not require a `read` key. The `read` scope above
+> applies to the JSON `/metrics` endpoint.
 
 ---
 
@@ -116,11 +120,16 @@ AEP_API_KEY=aep_a3f9e1c2d4b5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3
 AEP_INGEST_URL=http://localhost:8787
 ```
 
-Load it before running your code:
+Load it before running your code. Use `set -a` so the variables are
+**exported** to the child process (a plain `source .env` only sets shell
+variables and will not populate `process.env`):
 ```bash
-source .env
+set -a; source .env; set +a
 node your-agent.js
 ```
+
+Alternatively, load it from within Node.js using the `dotenv` package (see
+the [Using API Keys](#using-api-keys) section below).
 
 ### Windows (PowerShell)
 
@@ -348,7 +357,7 @@ curl http://localhost:8787/health
 
 **Response:**
 ```json
-{ "ok": true, "service": "aep-ingest", "version": "0.2.0", "checks": { "db": "ok" } }
+{ "ok": true, "service": "aep-ingest", "version": "1.0.0", "checks": { "db": "ok" } }
 ```
 
 ### Emit a Single Event
@@ -476,6 +485,6 @@ If a key is exposed or compromised:
 
 ---
 
-**Last Updated:** June 4, 2026  
-**AEP Version:** 0.2.0  
+**Last Updated:** June 5, 2026  
+**Server Version:** 1.0.0 · **Event Protocol:** v0.2.0  
 **Documentation:** [github.com/surpradhan/agent-event-protocol](https://github.com/surpradhan/agent-event-protocol)
