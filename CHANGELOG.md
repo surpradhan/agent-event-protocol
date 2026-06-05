@@ -41,6 +41,10 @@ This is the fourth major framework (LangGraph, CrewAI, AutoGen, OpenAI Agents SD
   agents-as-tools) attaches to its owning agent's session, resolved by walking the
   span tree's `parent_id` chain to the nearest enclosing open agent, falling back
   to the always-open workflow root so nothing escapes the run's single trace.
+  **Agents-as-tools** (`agent.as_tool(...)`) — verified end-to-end against a real
+  trace — nest the inner agent as a sub-agent of the calling agent while the
+  as_tool function still emits its own tool pair (a faithful double-representation,
+  single trace, 0 dangling).
 - **Honest failure semantics** — the tracing surface only reports failures the SDK
   records on a span (e.g. a tool error sets `span.error`). An *uncaught* exception
   from `Runner.run` is not delivered to processors (spans/trace still close cleanly
@@ -51,9 +55,14 @@ This is the fourth major framework (LangGraph, CrewAI, AutoGen, OpenAI Agents SD
   API has drifted (availability is claimed only when `add_trace_processor` imports);
   every processor callback is wrapped so a telemetry bug never breaks the host run;
   emit failures swallowed; idempotent re-instrumentation (never stacks a second AEP
-  processor). Both the core run table and the auxiliary span-parent index are
-  bounded with eviction + warnings. A `MIN_OPENAI_AGENTS_VERSION` floor and the
-  installed version are surfaced in warnings.
+  processor). `on_trace_end` closes any sub-agent that never received its own
+  span-end (so a straggler still gets its `task.completed`); a span arriving with no
+  tracked trace root is warned about (once) rather than silently splitting the run;
+  `uninstrument()` warns if the SDK's (private) processor list can't be reached to
+  remove our tracer rather than leaving it silently registered. The core run table,
+  the span-parent index, and the pending-handoff index are all bounded with
+  eviction + warnings. A `MIN_OPENAI_AGENTS_VERSION` floor and the installed
+  version are surfaced in warnings.
 
 **Demo** — `demos/openai_agents_multiagent.py`: a triage → spanish handoff with a
 `get_weather` tool. Runs **offline with no LLM API key** via a scripted `Model`
@@ -61,12 +70,14 @@ This is the fourth major framework (LangGraph, CrewAI, AutoGen, OpenAI Agents SD
 sub-agent sessions + a tool pair on one trace — then prints the server-reconstructed
 session tree.
 
-**Tests** — 24 unit tests drive the `AEPOpenAIAgentsTracer` tracing-processor
+**Tests** — 27 unit tests drive the `AEPOpenAIAgentsTracer` tracing-processor
 mapping with fabricated trace/span objects and a recorder client (runnable without
 the SDK installed) — covering orchestrator-only, sub-agent + handoff DAG,
 `handoff_from` enrichment, tool called/result/error, repeated tools, parent
 resolution through turn spans, fallback to the workflow root, agent failure,
-agents-as-tools nesting, run-cap + span-index bounds, stray span ends, and
+agents-as-tools nesting (mirroring the real `function → task → agent` tree + its
+tool pair), straggler close at trace-end, orphan-span (missing trace-start)
+safety, empty-string tool input, run-cap + span-index bounds, stray span ends, and
 host-safety (emit failure + callback exception swallowed) — plus a real
 processor-registration/removal test. Two integration tests run a real `Runner.run`
 against a live server (one verifies the workflow/agent/handoff DAG incl.

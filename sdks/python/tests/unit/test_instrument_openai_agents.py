@@ -73,6 +73,13 @@ def _turn_data():
     return SimpleNamespace(type="turn")
 
 
+def _task_data(name="Agent workflow"):
+    # The root span of a trace is a "task" span; agents-as-tools also nest a "task"
+    # span between the as_tool function span and the inner agent span. Ignored by
+    # the mapping (only its parent is recorded for the walk).
+    return SimpleNamespace(type="task", name=name)
+
+
 # A SpanError as the SDK records it on a failed span (a dict, not an exception).
 def _tool_error(message="tool exploded", tool_name="boom"):
     return {
@@ -312,6 +319,16 @@ def test_function_span_with_none_input_yields_empty_args():
     assert called["payload"]["arguments"] == {}
 
 
+def test_function_span_with_empty_string_input_yields_empty_args():
+    fn = _span("fn1", "a1-turn", _fn_data("noop", input="", output="ok"))
+    steps, _ = _agent_with_steps("a1", "researcher", [
+        ("on_span_start", fn), ("on_span_end", fn),
+    ])
+    rec, _ = _play([("on_trace_start", _trace()), *steps, ("on_trace_end", _trace())])
+    called = next(e for e in rec.events if e["type"] == "tool.called")
+    assert called["payload"]["arguments"] == {}
+
+
 def test_function_span_non_json_input_wrapped_under_input():
     fn = _span("fn1", "a1-turn", _fn_data("noop", input="not-json", output="ok"))
     steps, _ = _agent_with_steps("a1", "researcher", [
@@ -376,23 +393,32 @@ def test_agent_span_error_marks_task_failed():
 # ── Agents-as-tools (nested agent) ───────────────────────────────────────────
 
 
-def test_nested_agent_parents_to_enclosing_open_agent():
-    """An agent span whose parent chain runs through an enclosing *open* agent (as
-    happens with agents-as-tools) becomes a sub-agent of that agent — a real
-    nested handoff, not a sibling of the workflow root."""
+def test_agents_as_tools_nests_inner_agent_and_emits_tool_pair():
+    """Agents-as-tools: the real SDK span tree is
+    ``agent(outer) → turn → function(as_tool) → task → agent(inner) → turn``
+    (verified against a real 0.17.x trace). The inner agent must become a
+    sub-agent of the *outer* agent (the parent walk passes through the nested
+    function and task spans), and the as_tool function span must still emit a
+    `tool.called`/`tool.result` pair on the outer agent — a faithful
+    double-representation of "outer called a tool that was an agent"."""
     outer = _span("outer", "task", _agent_data("outer"))
     outer_turn = _span("outer-turn", "outer", _turn_data())
-    # The inner agent runs beneath the outer agent's turn.
-    inner = _span("inner", "outer-turn", _agent_data("inner"))
+    fn = _span("fn", "outer-turn", _fn_data("call_inner", input='{"x": 1}', output="inner result"))
+    nested_task = _span("nested-task", "fn", _task_data())
+    inner = _span("inner", "nested-task", _agent_data("inner"))
     inner_turn = _span("inner-turn", "inner", _turn_data())
     rec, _ = _play([
         ("on_trace_start", _trace()),
         ("on_span_start", outer),
         ("on_span_start", outer_turn),
+        ("on_span_start", fn),
+        ("on_span_start", nested_task),
         ("on_span_start", inner),
         ("on_span_start", inner_turn),
         ("on_span_end", inner_turn),
         ("on_span_end", inner),
+        ("on_span_end", nested_task),
+        ("on_span_end", fn),
         ("on_span_end", outer_turn),
         ("on_span_end", outer),
         ("on_trace_end", _trace()),
@@ -401,7 +427,14 @@ def test_nested_agent_parents_to_enclosing_open_agent():
     inner_open = next(e for e in rec.events if e["type"] == "task.created" and e["source"] == "agent://inner")
     # inner is a sub-agent whose parent session is outer's (not the workflow root).
     assert inner_open["parent_session_id"] == outer_open["session_id"]
+    # ... and the as_tool function still produces a tool pair on outer's session.
+    called = next(e for e in rec.events if e["type"] == "tool.called")
+    result = next(e for e in rec.events if e["type"] == "tool.result")
+    assert called["payload"]["tool_name"] == "call_inner"
+    assert called["session_id"] == outer_open["session_id"]
+    assert result["causation_id"] == called["id"]
     assert len({e["trace_id"] for e in rec.events}) == 1
+    assert len({e["session_id"] for e in rec.events}) == 3  # workflow + outer + inner
     assert not _no_dangling(rec.events)
 
 
@@ -452,6 +485,41 @@ def test_span_parent_index_is_bounded():
     assert tracer.flush(timeout=5.0)
     assert len(tracer._parent_of) <= 8
     assert tracer._span_evicted >= 42
+
+
+def test_open_agent_without_span_end_is_closed_at_trace_end():
+    """A safety net: an agent span that never receives on_span_end (abnormal
+    termination) is still closed when the trace ends — its task.completed is not
+    lost, and it does not linger open."""
+    agent = _span("a1", "task", _agent_data("researcher"))
+    turn = _span("a1-turn", "a1", _turn_data())
+    rec, tracer = _play([
+        ("on_trace_start", _trace()),
+        ("on_span_start", agent),
+        ("on_span_start", turn),
+        # NOTE: no on_span_end for turn or agent — only the trace ends.
+        ("on_trace_end", _trace()),
+    ])
+    sub_done = [
+        e for e in rec.events
+        if e["type"] == "task.completed" and e["agent_role"] == "subagent"
+    ]
+    assert len(sub_done) == 1, "straggler sub-agent should be closed at trace end"
+    assert tracer._runs == {}  # nothing left open
+    assert not _no_dangling(rec.events)
+
+
+def test_span_without_trace_start_does_not_crash():
+    """Spans arriving with no preceding on_trace_start must not crash (they degrade
+    to their own root rather than sharing a workflow trace)."""
+    agent = _span("a1", "task", _agent_data("researcher"), trace_id="orphan")
+    rec, _ = _play([
+        ("on_span_start", agent),
+        ("on_span_end", agent),
+    ])
+    # The orphaned agent still produced a clean task pair (as its own root).
+    assert any(e["type"] == "task.created" for e in rec.events)
+    assert not _no_dangling(rec.events)
 
 
 def test_stray_span_end_without_start_is_ignored():

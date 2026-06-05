@@ -1398,7 +1398,11 @@ class AEPOpenAIAgentsTracer:
       (one span carries both start and end — no LIFO heuristics);
     - a tool/agent's parent is resolved by walking ``parent_id`` to the nearest
       open agent span, falling back to the always-open workflow root — so a tool
-      nests on its owning agent's session and the whole run stays one trace.
+      nests on its owning agent's session and the whole run stays one trace. This
+      also covers agents-as-tools (``agent.as_tool(...)``): the inner agent nests
+      as a sub-agent of the calling agent (the walk passes through the as_tool
+      ``function`` and nested ``task`` spans), while the as_tool function still
+      emits its own ``tool.called``/``tool.result`` pair.
 
     The mapping never imports ``agents`` — it is entirely duck-typed against the
     span/trace shape — so it is unit-testable with fabricated objects; only
@@ -1423,13 +1427,23 @@ class AEPOpenAIAgentsTracer:
         self._lock = threading.Lock()
         # span_id -> parent_id, for every span (used to walk to the owning agent).
         self._parent_of: "OrderedDict[str, Optional[str]]" = OrderedDict()
-        # span_ids of agent runs currently open (the run key is the span_id).
-        self._open_agents: set[str] = set()
+        # span_id -> trace_id for agent runs currently open (the run key is the
+        # span_id). Keyed this way so on_trace_end can close any stragglers that
+        # never received their own on_span_end. Bounded (FIFO) like the other
+        # indices: under pathological accumulation the oldest open agent is
+        # dropped (its children then resolve to the workflow root).
+        self._open_agents: "OrderedDict[str, Any]" = OrderedDict()
+        # trace_ids with a tracked (open) workflow root, so a span arriving without
+        # a preceding on_trace_start can be detected rather than silently splitting
+        # the run into orphan traces.
+        self._open_traces: set = set()
+        self._warned_orphan = False
         # (trace_id, to_agent) -> from_agent, recorded when a handoff span ends and
         # consumed when the handed-to agent span opens (to enrich its payload).
         self._pending_handoff: "OrderedDict[tuple, Optional[str]]" = OrderedDict()
         self._max_spans = max_spans
         self._span_evicted = 0
+        self._handoff_evicted = 0
 
     @property
     def _runs(self):  # exposed for tests + run-cap assertions
@@ -1449,6 +1463,8 @@ class AEPOpenAIAgentsTracer:
             if not trace_id:
                 return
             name = getattr(trace, "name", None) or "agent-workflow"
+            with self._lock:
+                self._open_traces.add(trace_id)
             self._core.open_agent_run(
                 trace_id,
                 name=name,
@@ -1464,6 +1480,21 @@ class AEPOpenAIAgentsTracer:
             trace_id = getattr(trace, "trace_id", None)
             if not trace_id:
                 return
+            # Safety net: close any sub-agents of this trace that never received
+            # their own on_span_end (abnormal termination), so they don't linger
+            # open and miss their task.completed. Idempotent — agents that closed
+            # normally are already gone from _open_agents.
+            with self._lock:
+                stragglers = [
+                    sid for sid, tid in self._open_agents.items() if tid == trace_id
+                ]
+            for sid in stragglers:
+                self._core.close_agent_run(sid, status="completed")
+            with self._lock:
+                for sid in stragglers:
+                    self._open_agents.pop(sid, None)
+                    self._parent_of.pop(sid, None)
+                self._open_traces.discard(trace_id)
             self._core.close_agent_run(trace_id, status="completed")
             self._forget_trace(trace_id)
         except Exception as e:  # pragma: no cover - defensive
@@ -1530,13 +1561,31 @@ class AEPOpenAIAgentsTracer:
             return
         with self._lock:
             self._parent_of.pop(sid, None)
-            self._open_agents.discard(sid)
+            self._open_agents.pop(sid, None)
 
     def _forget_trace(self, trace_id: str) -> None:
         with self._lock:
             stale = [k for k in self._pending_handoff if k[0] == trace_id]
             for k in stale:
                 self._pending_handoff.pop(k, None)
+
+    def _warn_if_orphan(self, trace_id: Any) -> None:
+        """Warn once if a span's trace has no tracked workflow root.
+
+        Normally on_trace_start always precedes a trace's spans; if it didn't, the
+        span's run can't resolve to the (absent) workflow root and would split off
+        into its own orphan trace. We surface that rather than failing silently.
+        """
+        with self._lock:
+            if trace_id in self._open_traces or self._warned_orphan:
+                return
+            self._warned_orphan = True
+        logger.warning(
+            "AEP: OpenAI Agents span arrived for trace %s with no tracked trace "
+            "root (on_trace_start missed?); its run may not share the workflow "
+            "trace. Further such cases are not logged.",
+            trace_id,
+        )
 
     def _resolve_parent(self, span: Any) -> Any:
         """Return the run key of the nearest open agent ancestor, or the trace root.
@@ -1564,8 +1613,9 @@ class AEPOpenAIAgentsTracer:
         if not sid:
             return
         name = getattr(data, "name", None) or "agent"
-        parent_key = self._resolve_parent(span)
         trace_id = getattr(span, "trace_id", None)
+        self._warn_if_orphan(trace_id)
+        parent_key = self._resolve_parent(span)
         with self._lock:
             from_agent = self._pending_handoff.pop((trace_id, name), None)
         extra = {"handoff_from": from_agent} if from_agent else None
@@ -1578,7 +1628,9 @@ class AEPOpenAIAgentsTracer:
             extra_payload=extra,
         )
         with self._lock:
-            self._open_agents.add(sid)
+            self._open_agents[sid] = trace_id
+            while len(self._open_agents) > self._max_spans:
+                self._open_agents.popitem(last=False)
 
     def _close_agent(self, span: Any) -> None:
         sid = getattr(span, "span_id", None)
@@ -1592,9 +1644,11 @@ class AEPOpenAIAgentsTracer:
         if not sid:
             return
         name = getattr(data, "name", None) or "tool"
+        self._warn_if_orphan(getattr(span, "trace_id", None))
         parent_key = self._resolve_parent(span)
         raw_input = getattr(data, "input", None)
-        arguments = _coerce_tool_args(raw_input) if raw_input is not None else {}
+        # input is only populated at span end; None or "" → no arguments captured.
+        arguments = _coerce_tool_args(raw_input) if raw_input not in (None, "") else {}
         self._core.open_tool_run(
             sid, name=name, arguments=arguments, parent_key=parent_key
         )
@@ -1614,6 +1668,15 @@ class AEPOpenAIAgentsTracer:
             self._pending_handoff[(trace_id, to_agent)] = from_agent
             while len(self._pending_handoff) > self._max_spans:
                 self._pending_handoff.popitem(last=False)
+                self._handoff_evicted += 1
+                if self._handoff_evicted == 1 or self._handoff_evicted % 100 == 0:
+                    logger.warning(
+                        "AEP: pending-handoff index cap (%d) exceeded — evicted %d "
+                        "entr%s; some handoff_from labels may be lost.",
+                        self._max_spans,
+                        self._handoff_evicted,
+                        "y" if self._handoff_evicted == 1 else "ies",
+                    )
 
     def _status(self, span: Any) -> tuple[str, Optional[str]]:
         """Map a span's ``error`` onto an AEP terminal status.
@@ -1920,15 +1983,37 @@ class OpenAIAgentsInstrumentor(FrameworkInstrumentor):
 
         Leaves the SDK's default exporter (and any other processors) untouched —
         ``set_processors`` only replaces the tuple, it does not shut anyone down.
+
+        The Agents SDK exposes no public single-processor removal (only
+        ``add_trace_processor`` + replace-all ``set_trace_processors``), so this
+        reaches into ``provider._multi_processor``. If that internal layout has
+        drifted we **warn** rather than fail silently: a stale processor left
+        registered would keep receiving spans after ``uninstrument()`` (and emit
+        onto a stopped worker), which must not happen quietly.
         """
         try:
             mp = self._provider()._multi_processor
             current = list(getattr(mp, "_processors", ()))
-            kept = [p for p in current if not isinstance(p, AEPOpenAIAgentsTracer)]
-            if len(kept) != len(current):
-                mp.set_processors(kept)
-        except Exception:  # pragma: no cover - defensive
-            pass
+        except Exception as e:
+            logger.warning(
+                "AEP: could not access the OpenAI Agents processor list to remove "
+                "the AEP tracer (SDK tracing internals may have changed): %s. The "
+                "AEP processor may still be registered.",
+                e,
+            )
+            return
+        kept = [p for p in current if not isinstance(p, AEPOpenAIAgentsTracer)]
+        if len(kept) == len(current):
+            return  # nothing of ours to remove
+        try:
+            mp.set_processors(kept)
+        except Exception as e:
+            logger.warning(
+                "AEP: could not remove the AEP tracer from the OpenAI Agents "
+                "processor list (SDK tracing internals may have changed): %s. The "
+                "AEP processor may still be registered.",
+                e,
+            )
 
     def instrument(self, client: Any) -> bool:
         try:

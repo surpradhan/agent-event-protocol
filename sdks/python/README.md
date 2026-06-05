@@ -295,6 +295,11 @@ Notes:
   start and end, so `tool.called` → `tool.result` pair by `span_id` — no LIFO
   guessing. A tool nests on its owning agent's session (resolved by walking the
   span tree to the nearest enclosing agent).
+- **Agents-as-tools** (`agent.as_tool(...)`) produce **both** a `tool.called` /
+  `tool.result` pair (for the `as_tool` function span) **and** a nested sub-agent
+  `task.*` for the inner agent (parented to the calling agent) — a faithful
+  double-representation of "the outer agent called a tool that was itself an
+  agent", not a duplicate. The DAG stays a single trace with no dangling links.
 - **Caveat — uncaught run errors aren't marked failed.** The tracing surface only
   reports failures the SDK records on a span (e.g. a tool error). An *uncaught*
   exception from `Runner.run` is not delivered to processors — the spans and
