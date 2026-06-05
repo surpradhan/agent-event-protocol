@@ -579,13 +579,14 @@
   <div class="wrap">
     <div class="section-label">Quick start</div>
     <h2 class="section-title">Up in 60 seconds</h2>
-    <p class="section-desc">Requires Node.js 20+. No external database or cloud account needed.</p>
+    <p class="section-desc">Requires Node.js 20+. No external database or cloud account needed. The dashboard is open in dev mode, but ingest always needs a write-scoped API key — the steps below mint one.</p>
     <div class="code-block">
       <div><span class="comment"># 1. Install dependencies</span></div>
       <div style="margin-bottom:1em"><span class="cmd">npm install</span></div>
-      <div><span class="comment"># 2. Start the ingest server</span></div>
-      <div style="margin-bottom:1em"><span class="cmd">npm run ingest</span></div>
-      <div><span class="comment"># 3. Emit a sample event</span></div>
+      <div><span class="comment"># 2. Start the ingest server (ADMIN_TOKEN lets you mint an API key)</span></div>
+      <div style="margin-bottom:1em"><span class="cmd">ADMIN_TOKEN=dev-admin npm run ingest</span></div>
+      <div><span class="comment"># 3. Mint a write key, then emit a sample event</span></div>
+      <div><span class="cmd">export AEP_API_KEY=$(curl -s -X POST localhost:8787/admin/keys -H "Authorization: Bearer dev-admin" -H "Content-Type: application/json" -d '{"tenantId":"dev","label":"quickstart","scopes":["read","write"]}' | node -e "process.stdin.once('data', d =&gt; console.log(JSON.parse(d).key))")</span></div>
       <div style="margin-bottom:1em"><span class="cmd">npm run emit:example</span></div>
       <div><span class="comment"># 4. Open the dashboard (default port: 8787)</span></div>
       <div><span class="cmd">open <span class="value">http://localhost:&lt;PORT&gt;/dashboard</span></span></div>

@@ -58,10 +58,8 @@ npm install
 
 ### Step 2: Start the ingest server
 
-**Dev mode** (no auth required — suitable for local development only):
-
 ```bash
-npm run ingest
+ADMIN_TOKEN=change-me npm run ingest
 ```
 
 You should see:
@@ -70,15 +68,22 @@ You should see:
 AEP ingest listening on http://localhost:8787
 ```
 
-**With auth enabled** (recommended for any network-accessible deployment):
+**What "dev mode" does and doesn't open.** When `DASHBOARD_TOKEN` is unset, the
+dashboard and read endpoints (`/sessions`, `/metrics`, `/workflows`, `/stream`)
+are open for local convenience. **Ingest is different:** `POST /events` *always*
+requires a write-scoped API key — there is no keyless bypass. So you need
+`ADMIN_TOKEN` set (to mint a key) before you can emit events, even in dev.
+
+For a network-accessible deployment, also set `DASHBOARD_TOKEN` to lock down the
+dashboard and read APIs:
 
 ```bash
 ADMIN_TOKEN=change-me DASHBOARD_TOKEN=change-me npm run ingest
 ```
 
-### Step 3: Generate an API key (auth mode only)
+### Step 3: Provision an API key (required before emitting)
 
-Once `ADMIN_TOKEN` is set, create an API key before emitting events:
+Emitting events requires a write-scoped key. With `ADMIN_TOKEN` set, mint one:
 
 ```bash
 curl -s -X POST http://localhost:8787/admin/keys \
@@ -87,11 +92,16 @@ curl -s -X POST http://localhost:8787/admin/keys \
   -d '{"tenantId":"my-org","label":"dev key","scopes":["read","write"]}'
 ```
 
-The response includes the raw key — **shown once only**. Store it somewhere safe, then use it on all subsequent requests:
+The response includes the raw key — **shown once only**. Export it so the
+example emitter and SDKs pick it up automatically:
 
 ```bash
-Authorization: Bearer aep_<your-key>
+export AEP_API_KEY=aep_<your-key>
 ```
+
+Then every ingest request sends `Authorization: Bearer $AEP_API_KEY`. The
+bundled emitter (`npm run emit:example`) and the demo scripts read `AEP_API_KEY`
+from the environment; a 401 means it is unset or invalid.
 
 > **Full auth reference:** See [AUTH.md](./AUTH.md) for API key scopes, HMAC signing setup, tenant isolation, and dashboard token configuration.
 

@@ -21,7 +21,10 @@ Perfect for:
 
 **Requirements:** Node.js 20+
 
-### Local Development (No Auth)
+### Local Development
+
+The dashboard and read APIs are open in dev mode, but **ingest (`POST /events`)
+always requires a write-scoped API key** — so the quick start mints one first.
 
 ```bash
 # 1. Clone & install
@@ -29,15 +32,23 @@ git clone https://github.com/surpradhan/agent-event-protocol.git
 cd agent-event-protocol
 npm install
 
-# 2. Start the ingest server
-npm run ingest
+# 2. Start the ingest server (ADMIN_TOKEN lets you mint an API key)
+ADMIN_TOKEN=dev-admin npm run ingest
 
-# 3. In another terminal: emit a sample event
-npm run emit:example
+# 3. In another terminal: mint a write key and emit a sample event
+export AEP_API_KEY=$(curl -s -X POST http://localhost:8787/admin/keys \
+  -H "Authorization: Bearer dev-admin" -H "Content-Type: application/json" \
+  -d '{"tenantId":"dev","label":"quickstart","scopes":["read","write"]}' \
+  | node -e "process.stdin.once('data', d => console.log(JSON.parse(d).key))")
+npm run emit:example   # → { "status": 202, ... }
 
-# 4. Open the live dashboard (no auth required in dev mode)
+# 4. Open the live dashboard (open in dev; set DASHBOARD_TOKEN to lock it down)
 open http://localhost:8787/dashboard
 ```
+
+> **Why a key in dev?** "Dev mode" (no `DASHBOARD_TOKEN`) only opens the
+> dashboard and read endpoints. Ingest is authenticated in every mode — see
+> [AUTH.md](./AUTH.md). The demo scripts below also read `AEP_API_KEY`.
 
 **See it in action with demo scenarios:**
 ```bash
@@ -65,6 +76,8 @@ event = create_event(
     trace_id="trc_001",
     payload={"task": "summarise document"},
 )
+# AEPClient picks up AEP_API_KEY from the environment — export a write-scoped
+# key first (ingest always needs one; see "Local Development" above).
 with AEPClient() as client:
     print(client.emit(event))
 EOF
@@ -92,6 +105,7 @@ package main
 import (
     "context"
     "log"
+    "os"
     "github.com/surpradhan/aep-go/aep"
 )
 
@@ -106,6 +120,9 @@ func main() {
     )
     
     client := aep.NewClient()
+    // Ingest always needs a write-scoped key. NewClient() does not read the
+    // environment, so set it explicitly (export AEP_API_KEY first).
+    client.SetAPIKey(os.Getenv("AEP_API_KEY"))
     defer client.Close()
     
     resp, err := client.Emit(context.Background(), event)
