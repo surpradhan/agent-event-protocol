@@ -1227,13 +1227,10 @@ class _AutoGenRunContext:
     def finish(self, status: str, error: Any = None) -> None:
         """Close every open sub-agent, then the orchestrator.
 
-        Idempotent: the core pops runs on close, so a second call is a no-op
-        (``run_stream``'s wrapper closes in a ``finally``). Sub-agent boundaries
-        are inferred from message sources, so a run-level failure marks only the
-        orchestrator ``task.failed``; observed sub-agents close ``task.completed``.
-
-        Idempotent via the core run table (``close_agent_run`` pops the run), so a
-        repeat call is a safe no-op.
+        Idempotent: the core pops runs on close, so a second call is a no-op.
+        Sub-agent boundaries are inferred from message sources, so a run-level
+        failure marks only the orchestrator ``task.failed``; observed sub-agents
+        close ``task.completed``.
         """
         for source in list(self._open_agents):
             self._core.close_agent_run(self._agent_key(source), status="completed")
