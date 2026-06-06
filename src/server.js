@@ -159,10 +159,10 @@ function toCsv(events) {
  * Returns HTTP 200 when the server process is running normally.
  * Returns HTTP 503 if the database is unreachable (degraded state).
  */
-app.get("/health", (_req, res) => {
+app.get("/health", async (_req, res) => {
   let dbOk = false;
   try {
-    db._db.prepare("SELECT 1").get();
+    await db.ping();
     dbOk = true;
   } catch (err) {
     logger.error({ err }, "health check: DB query failed");
@@ -184,17 +184,14 @@ app.get("/health", (_req, res) => {
  * accept traffic (DB connected + migrations complete).  Load balancers and
  * Kubernetes readiness probes should use this endpoint.
  */
-app.get("/ready", (_req, res) => {
+app.get("/ready", async (_req, res) => {
   let dbOk = false;
   let tablesOk = false;
   try {
-    db._db.prepare("SELECT 1").get();
+    await db.ping();
     dbOk = true;
-    // Verify the schema is migrated by checking that the events table exists.
-    const row = db._db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='events'")
-      .get();
-    tablesOk = !!row;
+    // Verify the schema is migrated by checking that the core schema exists.
+    tablesOk = await db.schemaReady();
   } catch (err) {
     logger.error({ err }, "readiness check: DB query failed");
   }
@@ -273,9 +270,9 @@ app.use(express.static(path.join(__dirname, "public")));
  *
  * Response: { sessions: [...], next_cursor: string|null }
  */
-app.get("/sessions", requireReadAccess, validateQueryParams, (req, res) => {
+app.get("/sessions", requireReadAccess, validateQueryParams, async (req, res) => {
   const { limit, cursor } = req.query;
-  const result = db.getPaginatedSessions(req.tenant_id, { limit, cursor });
+  const result = await db.getPaginatedSessions(req.tenant_id, { limit, cursor });
 
   // Validate tenant ownership of returned sessions (defense-in-depth)
   if (!validateTenantOwnership(result.sessions, req.tenant_id, "sessions_list")) {
@@ -293,8 +290,8 @@ app.get("/sessions", requireReadAccess, validateQueryParams, (req, res) => {
  *   { session_id, trace_id, source, parent_session_id, agent_role,
  *     event_count, started_at, updated_at }
  */
-app.get("/sessions/:sessionId", requireReadAccess, validatePathParams, (req, res) => {
-  const session = db.getSession(req.params.sessionId, req.tenant_id);
+app.get("/sessions/:sessionId", requireReadAccess, validatePathParams, async (req, res) => {
+  const session = await db.getSession(req.params.sessionId, req.tenant_id);
   if (!session) {
     return res.status(404).json({ error: "Session not found" });
   }
@@ -316,9 +313,9 @@ app.get("/sessions/:sessionId", requireReadAccess, validatePathParams, (req, res
  * applied after the cursor window, so a page may contain fewer than `limit`
  * items; iterate until next_cursor is null.
  */
-app.get("/sessions/:sessionId/events", requireReadAccess, validatePathParams, validateQueryParams, (req, res) => {
+app.get("/sessions/:sessionId/events", requireReadAccess, validatePathParams, validateQueryParams, async (req, res) => {
   const { type = "", q = "", limit, cursor } = req.query;
-  const result = db.getPaginatedEvents(req.params.sessionId, {
+  const result = await db.getPaginatedEvents(req.params.sessionId, {
     type, q, tenantId: req.tenant_id, limit, cursor
   });
 
@@ -335,8 +332,8 @@ app.get("/sessions/:sessionId/events", requireReadAccess, validatePathParams, va
 });
 
 // GET /sessions/:sessionId/tree — session and all descendants as a recursive tree
-app.get("/sessions/:sessionId/tree", requireReadAccess, validatePathParams, (req, res) => {
-  const tree = db.getSessionTree(req.params.sessionId, req.tenant_id);
+app.get("/sessions/:sessionId/tree", requireReadAccess, validatePathParams, async (req, res) => {
+  const tree = await db.getSessionTree(req.params.sessionId, req.tenant_id);
   if (!tree) {
     return res.status(404).json({ error: "Session not found", session_id: req.params.sessionId });
   }
@@ -350,11 +347,11 @@ app.get("/sessions/:sessionId/tree", requireReadAccess, validatePathParams, (req
 });
 
 // GET /sessions/:sessionId/export — download as JSON or CSV
-app.get("/sessions/:sessionId/export", requireReadAccess, validatePathParams, (req, res) => {
+app.get("/sessions/:sessionId/export", requireReadAccess, validatePathParams, async (req, res) => {
   const sessionId = req.params.sessionId;
   const format    = (req.query.format || "json").toLowerCase();
   const { type = "", q = "" } = req.query;
-  const events = db.getSessionEvents(sessionId, { type, q, tenantId: req.tenant_id });
+  const events = await db.getSessionEvents(sessionId, { type, q, tenantId: req.tenant_id });
 
   // Validate tenant ownership of events (defense-in-depth against SQL injection)
   if (!validateTenantOwnership(events, req.tenant_id, "session_events")) {
@@ -372,8 +369,8 @@ app.get("/sessions/:sessionId/export", requireReadAccess, validatePathParams, (r
 });
 
 // GET /workflows/:traceId — all sessions sharing a trace_id assembled into a tree
-app.get("/workflows/:traceId", requireReadAccess, validatePathParams, (req, res) => {
-  const workflow = db.getWorkflow(req.params.traceId, req.tenant_id);
+app.get("/workflows/:traceId", requireReadAccess, validatePathParams, async (req, res) => {
+  const workflow = await db.getWorkflow(req.params.traceId, req.tenant_id);
   if (!workflow) {
     return res.status(404).json({ error: "Workflow not found", trace_id: req.params.traceId });
   }
@@ -387,8 +384,8 @@ app.get("/workflows/:traceId", requireReadAccess, validatePathParams, (req, res)
 });
 
 // GET /metrics — counters + session count + workflow metrics (JSON)
-app.get("/metrics", requireReadAccess, (req, res) => {
-  res.json(db.getMetrics(req.tenant_id));
+app.get("/metrics", requireReadAccess, async (req, res) => {
+  res.json(await db.getMetrics(req.tenant_id));
 });
 
 /**
@@ -401,9 +398,9 @@ app.get("/metrics", requireReadAccess, (req, res) => {
  * reach it without an API key.  To restrict access, place this behind a
  * network-layer control (reverse proxy, firewall, etc.).
  */
-app.get("/metrics/prometheus", (_req, res) => {
+app.get("/metrics/prometheus", async (_req, res) => {
   // Use server-wide (no tenant filter) stats for Prometheus
-  const dbStats = db.getMetrics(null);
+  const dbStats = await db.getMetrics(null);
   res.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
   res.send(getPrometheusText(dbStats));
 });
@@ -537,8 +534,8 @@ app.get("/stream", requireReadAccess, (req, res) => {
 
 // POST /events — ingest a single event
 // Rate limiting is applied per-key AFTER authentication resolves req.api_key_id.
-app.post("/events", requireApiKey("write"), ingestRateLimit, (req, res) => {
-  db.incrementCounter("received");
+app.post("/events", requireApiKey("write"), ingestRateLimit, async (req, res) => {
+  await db.incrementCounter("received");
 
   const event = req.body;
 
@@ -549,7 +546,7 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, (req, res) => {
   if (hmacSecret) {
     const { valid, error } = verifySignature(event, hmacSecret);
     if (!valid) {
-      db.incrementCounter("rejected");
+      await db.incrementCounter("rejected");
       pushRejection({
         event_id:   event.id,
         event_type: sanitizeInput(event.type),
@@ -576,7 +573,7 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, (req, res) => {
   // ------------------------------------------------------------------
   const { valid, errors } = validateEvent(event);
   if (!valid) {
-    db.incrementCounter("rejected");
+    await db.incrementCounter("rejected");
     pushRejection({
       event_id:   event.id,
       event_type: sanitizeInput(event.type),
@@ -596,10 +593,10 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, (req, res) => {
   // ------------------------------------------------------------------
   // Persist
   // ------------------------------------------------------------------
-  const { isDuplicate } = db.insertEvent(event, req.tenant_id);
+  const { isDuplicate } = await db.insertEvent(event, req.tenant_id);
 
   if (isDuplicate) {
-    db.incrementCounter("duplicates");
+    await db.incrementCounter("duplicates");
     logger.debug(
       { event_id: event.id, session_id: event.session_id, tenant_id: req.tenant_id },
       "duplicate event discarded"
@@ -673,7 +670,7 @@ app.get("/rejections", requireReadAccess, (req, res) => {
 // ---------------------------------------------------------------------------
 
 // POST /admin/keys — generate a new API key
-app.post("/admin/keys", requireAdminAuth, (req, res) => {
+app.post("/admin/keys", requireAdminAuth, async (req, res) => {
   const { tenantId, label, scopes, hmacSecret } = req.body || {};
 
   if (!tenantId || typeof tenantId !== "string") {
@@ -689,7 +686,7 @@ app.post("/admin/keys", requireAdminAuth, (req, res) => {
   }
 
   try {
-    const result = generateApiKey({
+    const result = await generateApiKey({
       tenantId,
       label:      label      || "",
       scopes:     resolvedScopes,
@@ -715,8 +712,8 @@ app.post("/admin/keys", requireAdminAuth, (req, res) => {
 });
 
 // GET /admin/keys — list all API keys (no raw keys or hmac_secret)
-app.get("/admin/keys", requireAdminAuth, (_req, res) => {
-  const keys = db.listApiKeys().map(k => ({
+app.get("/admin/keys", requireAdminAuth, async (_req, res) => {
+  const keys = (await db.listApiKeys()).map(k => ({
     id:        k.id,
     keyPrefix: k.key_prefix,
     tenantId:  k.tenant_id,
@@ -730,15 +727,15 @@ app.get("/admin/keys", requireAdminAuth, (_req, res) => {
 });
 
 // DELETE /admin/keys/:id — revoke an API key
-app.delete("/admin/keys/:id", requireAdminAuth, (req, res) => {
-  const key = db.getApiKeyById(req.params.id);
+app.delete("/admin/keys/:id", requireAdminAuth, async (req, res) => {
+  const key = await db.getApiKeyById(req.params.id);
   if (!key) {
     return res.status(404).json({ error: "API key not found" });
   }
   if (key.revoked_at) {
     return res.status(409).json({ error: "API key is already revoked", revokedAt: key.revoked_at });
   }
-  db.revokeApiKey(req.params.id);
+  await db.revokeApiKey(req.params.id);
   logger.info({ key_id: req.params.id }, "API key revoked");
   res.json({ ok: true, message: "API key revoked", id: req.params.id });
 });
@@ -748,55 +745,64 @@ app.delete("/admin/keys/:id", requireAdminAuth, (req, res) => {
 // ---------------------------------------------------------------------------
 
 if (require.main === module) {
-  const httpServer = app.listen(port, () => {
-    logger.info(
-      { port, url: `http://localhost:${port}` },
-      "AEP ingest server started"
-    );
+  // Initialise the storage backend (open connection + run migrations) BEFORE
+  // we start accepting traffic. The DB API is async now, so this is awaited.
+  db.init()
+    .then(() => {
+      const httpServer = app.listen(port, () => {
+        logger.info(
+          { port, url: `http://localhost:${port}` },
+          "AEP ingest server started"
+        );
 
-    if (!process.env.DASHBOARD_TOKEN) {
-      logger.warn("DASHBOARD_TOKEN not set — dashboard is open (dev mode)");
-    }
-    if (!process.env.ADMIN_TOKEN) {
-      logger.warn("ADMIN_TOKEN not set — /admin/* endpoints will return 503");
-    } else {
-      logger.info("Admin API enabled");
-    }
-  });
+        if (!process.env.DASHBOARD_TOKEN) {
+          logger.warn("DASHBOARD_TOKEN not set — dashboard is open (dev mode)");
+        }
+        if (!process.env.ADMIN_TOKEN) {
+          logger.warn("ADMIN_TOKEN not set — /admin/* endpoints will return 503");
+        } else {
+          logger.info("Admin API enabled");
+        }
+      });
 
-  // ── Graceful shutdown ────────────────────────────────────────────────────
-  //
-  // On SIGTERM / SIGINT:
-  //   1. Stop accepting new connections (httpServer.close)
-  //   2. Let in-flight requests finish
-  //   3. Close the SQLite connection
-  //   4. Exit cleanly
-  //
-  // A hard timeout forces exit after 30 s in case requests stall.
+      // ── Graceful shutdown ──────────────────────────────────────────────────
+      //
+      // On SIGTERM / SIGINT:
+      //   1. Stop accepting new connections (httpServer.close)
+      //   2. Let in-flight requests finish
+      //   3. Close the storage backend connection
+      //   4. Exit cleanly
+      //
+      // A hard timeout forces exit after 30 s in case requests stall.
 
-  function shutdown(signal) {
-    logger.info({ signal }, "graceful shutdown initiated");
+      function shutdown(signal) {
+        logger.info({ signal }, "graceful shutdown initiated");
 
-    httpServer.close(() => {
-      logger.info("HTTP server closed — all in-flight requests drained");
-      try {
-        db.closeDb();
-        logger.info("database connection closed");
-      } catch (err) {
-        logger.error({ err }, "error closing database");
+        httpServer.close(async () => {
+          logger.info("HTTP server closed — all in-flight requests drained");
+          try {
+            await db.closeDb();
+            logger.info("database connection closed");
+          } catch (err) {
+            logger.error({ err }, "error closing database");
+          }
+          logger.info("shutdown complete");
+          process.exit(0);
+        });
+
+        setTimeout(() => {
+          logger.error("shutdown timeout exceeded — forcing exit");
+          process.exit(1);
+        }, 30_000).unref();
       }
-      logger.info("shutdown complete");
-      process.exit(0);
-    });
 
-    setTimeout(() => {
-      logger.error("shutdown timeout exceeded — forcing exit");
+      process.on("SIGTERM", () => shutdown("SIGTERM"));
+      process.on("SIGINT",  () => shutdown("SIGINT"));
+    })
+    .catch((err) => {
+      logger.error({ err }, "failed to initialise storage backend — exiting");
       process.exit(1);
-    }, 30_000).unref();
-  }
-
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
-  process.on("SIGINT",  () => shutdown("SIGINT"));
+    });
 }
 
 module.exports = { app };
