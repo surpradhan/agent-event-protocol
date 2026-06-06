@@ -379,7 +379,7 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 - **Run-close semantics (documented caveat)** — the top-level run closes on the `Stop` hook (per turn), so a multi-turn `ClaudeSDKClient` session records one trace per turn; sub-agents still left open at `Stop` are closed defensively then. Hooks are pure observers (return `{}`) so AEP never alters the host run.
 - **Hermetic testing** — the SDK has no fake-model injection (the "model" is the CLI subprocess), but `query()`/`ClaudeSDKClient` accept a custom `transport=`. The hermetic integration test + demo drive a real `query()` through a control-protocol fake transport that replies to `initialize` and replays scripted `hook_callback` control requests, so the injected hooks fire through the SDK's real dispatch with no API key, network, or binary.
 
-**Deferred to Phase 12g+:** Node.js auto-instrumentation (LangChain.js, Vercel AI SDK); native first-party emission with framework authors.
+**Deferred to Phase 12g+:** Node.js auto-instrumentation (LangChain.js, Vercel AI SDK — the latter delivered as a docs-only OTEL-bridge path in 12g); native first-party emission with framework authors.
 
 ### Phase 12g: Node.js Auto-Instrumentation (LangChain.js) — in progress (2026-06-05)
 
@@ -400,6 +400,27 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 - Vercel AI SDK: deferred to a docs-only OTEL-bridge path (`experimental_telemetry` + Phase 11/12a), not a separate instrumentor.
 
 **Success criteria (PR1):** ✅ new SDK builds (dual ESM+CJS) + typechecks; ✅ cross-language signature parity proven against a Python fixture; ✅ unit + auto-skip integration tests green in CI on Node 20.x/22.x; ✅ drift-guard green (10→12 checks in sync). No regression to other SDKs.
+
+**Vercel AI SDK — docs-only OTEL bridge path (2026-06-06):** Followed up the
+Phase 12g scope decision by documenting the supported way to get Vercel AI SDK
+telemetry into AEP: `experimental_telemetry` → OTEL Collector → the existing
+Phase 12a `aep` exporter. See `docs/integrations/vercel-ai-sdk.md`. **No new
+instrumentor code, no SDK or CI changes.** Verified against `ai@6.0.197`:
+spans `ai.generateText` / `ai.streamText` / `ai.generateObject` /
+`ai.streamObject` / `ai.embed` / `ai.embedMany` / `ai.rerank` / `ai.toolCall`
+(plus `.doGenerate` / `.doStream` / `.doEmbed` / `.doRerank` children), all
+emitted with OTEL kind `INTERNAL`, carrying the full OTEL GenAI SIG attribute
+set (`gen_ai.*`) plus Vercel-specific `ai.*` attributes. **Honest mapping
+caveat:** under the stock AEP mapper every Vercel span lands as
+`task.completed` (the tool rule needs `kind ∈ {CLIENT, SERVER}` and the error
+rule needs `error` in the span name — neither matches the Vercel naming
+convention), but trace/causation/session correlation, `gen_ai.*`, `ai.toolCall.*`,
+and `ai.telemetry.metadata.*` all flow through to the AEP payload, so the
+observability is real even if the event-type classification is coarse. Three
+opt-in routes to richer classification are documented (a Collector
+`transformprocessor` rewrite, a small AEP mapper pass for `ai.*` names, or a
+future first-party Node instrumentor); the OTEL bridge is the recommended
+path until a stable Vercel callback API ships.
 
 **Release pipeline (2026-06-06):** The Node SDK is published to npm as `@surpradhan/aep` (scoped, public). Releases are cut by pushing a `node-sdk-vX.Y.Z` tag — the [`release-node-sdk.yml`](.github/workflows/release-node-sdk.yml) workflow then builds, tests, and runs `npm publish --provenance --access public`, attesting via Sigstore that the published tarball was built from this repo at that tag. The tarball ships only `dist/`, `README.md`, `LICENSE`, and `package.json` (verified by `npm pack --dry-run`). The release workflow is a separate file from `ci.yml` and is tag-triggered, so it is not a required PR status check and the drift-guard is unaffected.
 
