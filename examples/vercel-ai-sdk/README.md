@@ -18,7 +18,7 @@ spans currently map onto AEP event types.
 
 ## Run it
 
-> Prerequisites: Node ≥ 20, an `OPENAI_API_KEY` (or swap the model for any
+> Prerequisites: Node ≥ 20.6 (needed for `node --import`), an `OPENAI_API_KEY` (or swap the model for any
 > `@ai-sdk/*` provider you prefer), the AEP server running on `:8787` with
 > `ADMIN_TOKEN` set, and an OTEL Collector built via ocb with the AEP exporter
 > (see [`otelbridge/README.md`](../../otelbridge/README.md)).

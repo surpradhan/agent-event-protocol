@@ -96,6 +96,9 @@ process.on("SIGTERM", () => sdk.shutdown());
 node --import ./tracing.js ./app.js
 ```
 
+> `node --import` requires **Node ≥ 20.6** (or ≥ 18.19). On older 20.x point
+> releases use `node --loader`/`-r` equivalents or upgrade Node.
+>
 > The snippets above are TypeScript (`tracing.ts` / `app.ts`); the run command
 > uses the compiled `.js` output. If you'd rather skip the build step, the
 > [`examples/vercel-ai-sdk/`](../../examples/vercel-ai-sdk/) directory ships the
@@ -196,7 +199,7 @@ mapper's classification priority is **error > handoff > tool > task > default**.
 | `ai.embed` / `ai.embedMany` | default                                                            | `task.completed`  |
 | `ai.rerank`                | default                                                             | `task.completed`  |
 | `ai.toolCall`              | name contains `tool`, **but** kind=INTERNAL (not CLIENT/SERVER) → tool rule does **not** fire → falls through to default | `task.completed`  |
-| any of the above, **failed** | status=error, **but** name does not contain `error` → error rule does **not** fire → default (success) | `task.completed`  |
+| any of the above, **failed** | status=error, **but** name contains neither `error` (error rule skipped) nor `task` (so the `task.failed` branch is skipped too) → falls through to default | `task.completed`  |
 
 Translation: with the **stock** Collector exporter, every Vercel AI SDK span
 arrives at AEP as a `task.completed` event. The classification rules were
