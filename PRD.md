@@ -401,6 +401,8 @@ OpenTelemetry's [GenAI semantic conventions](https://opentelemetry.io/docs/specs
 
 **Success criteria (PR1):** ✅ new SDK builds (dual ESM+CJS) + typechecks; ✅ cross-language signature parity proven against a Python fixture; ✅ unit + auto-skip integration tests green in CI on Node 20.x/22.x; ✅ drift-guard green (10→12 checks in sync). No regression to other SDKs.
 
+**Release pipeline (2026-06-06):** The Node SDK is published to npm as `@surpradhan/aep` (scoped, public). Releases are cut by pushing a `node-sdk-vX.Y.Z` tag — the [`release-node-sdk.yml`](.github/workflows/release-node-sdk.yml) workflow then builds, tests, and runs `npm publish --provenance --access public`, attesting via Sigstore that the published tarball was built from this repo at that tag. The tarball ships only `dist/`, `README.md`, `LICENSE`, and `package.json` (verified by `npm pack --dry-run`). The release workflow is a separate file from `ci.yml` and is tag-triggered, so it is not a required PR status check and the drift-guard is unaffected.
+
 ### Phase 13: Hosted SaaS — aep.dev (Q3 2026)
 
 **Objective:** Remove the self-hosting barrier and make AEP a product people depend on daily.

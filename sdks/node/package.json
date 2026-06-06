@@ -1,8 +1,33 @@
 {
   "name": "@surpradhan/aep",
   "version": "0.2.0",
-  "description": "Node.js / TypeScript SDK for the Agent Event Protocol (AEP)",
+  "description": "Node.js / TypeScript SDK for the Agent Event Protocol (AEP) — framework-neutral observability for multi-agent AI systems, with LangChain.js / LangGraph auto-instrumentation.",
   "license": "MIT",
+  "author": "Surabhi Pradhan",
+  "homepage": "https://github.com/surpradhan/agent-event-protocol/tree/main/sdks/node#readme",
+  "bugs": {
+    "url": "https://github.com/surpradhan/agent-event-protocol/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/surpradhan/agent-event-protocol.git",
+    "directory": "sdks/node"
+  },
+  "keywords": [
+    "aep",
+    "agent-event-protocol",
+    "observability",
+    "agents",
+    "multi-agent",
+    "llm",
+    "ai",
+    "tracing",
+    "langchain",
+    "langgraph",
+    "instrumentation",
+    "hmac",
+    "telemetry"
+  ],
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -20,6 +45,10 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
@@ -27,7 +56,8 @@
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
-    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\""
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "ajv": "^8.17.1",
