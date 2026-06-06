@@ -562,6 +562,77 @@ class PostgresBackend extends StorageBackend {
     return Number(rows[0].n);
   }
 
+  // ----- retention / pruning (Phase 13 PR-D) -----
+
+  async countEventsBefore(tenantId, cutoff) {
+    // COUNT(*) returns bigint-as-string in pg → coerce with Number().
+    const { rows } = await this._pool.query(
+      "SELECT COUNT(*) AS n FROM events WHERE tenant_id = $1 AND time < $2",
+      [tenantId, cutoff]
+    );
+    return Number(rows[0].n);
+  }
+
+  async pruneEventsBefore(tenantId, cutoff) {
+    const client = await this._pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // result.rowCount is already a JS number (unlike COUNT(*)'s bigint string).
+      const del = await client.query(
+        "DELETE FROM events WHERE tenant_id = $1 AND time < $2",
+        [tenantId, cutoff]
+      );
+      const events_deleted = del.rowCount;
+
+      // Nothing deleted → sessions already consistent; skip the reconcile work.
+      if (events_deleted === 0) {
+        await client.query("COMMIT");
+        return { events_deleted: 0, sessions_deleted: 0 };
+      }
+
+      // Drop sessions for this tenant that no longer have any events.
+      const empties = await client.query(
+        `DELETE FROM sessions
+         WHERE  tenant_id = $1
+           AND  session_id NOT IN (
+                  SELECT DISTINCT session_id FROM events WHERE tenant_id = $1
+                )`,
+        [tenantId]
+      );
+      const sessions_deleted = empties.rowCount;
+
+      // Recompute aggregates for the tenant's surviving sessions from their
+      // remaining events (mirrors SqliteBackend.reconcileSessions exactly).
+      await client.query(
+        `UPDATE sessions
+         SET
+           event_count = (
+             SELECT COUNT(*) FROM events e
+             WHERE e.session_id = sessions.session_id AND e.tenant_id = sessions.tenant_id
+           ),
+           started_at = (
+             SELECT MIN(e.time) FROM events e
+             WHERE e.session_id = sessions.session_id AND e.tenant_id = sessions.tenant_id
+           ),
+           updated_at = (
+             SELECT MAX(e.time) FROM events e
+             WHERE e.session_id = sessions.session_id AND e.tenant_id = sessions.tenant_id
+           )
+         WHERE tenant_id = $1`,
+        [tenantId]
+      );
+
+      await client.query("COMMIT");
+      return { events_deleted, sessions_deleted };
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   // ----- pagination -----
 
   async getPaginatedSessions(tenantId = null, { limit = 50, cursor = null } = {}) {

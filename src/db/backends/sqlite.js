@@ -51,6 +51,7 @@ class SqliteBackend extends StorageBackend {
     this._db = null;
     this._stmts = null;
     this._insertEventTx = null;
+    this._pruneTx = null;
   }
 
   /**
@@ -337,6 +338,48 @@ class SqliteBackend extends StorageBackend {
       // usage is the count of events for the project's tenant.
       getProjectEventCount: db.prepare(`
         SELECT COUNT(*) AS n FROM events WHERE tenant_id = ?
+      `),
+
+      // ----- retention / pruning (Phase 13 PR-D) -----
+
+      // Count events older than a cutoff for a tenant (dry-run / reporting).
+      countEventsBefore: db.prepare(`
+        SELECT COUNT(*) AS n FROM events WHERE tenant_id = ? AND time < ?
+      `),
+
+      // Delete events older than a cutoff for a tenant.
+      deleteEventsBefore: db.prepare(`
+        DELETE FROM events WHERE tenant_id = ? AND time < ?
+      `),
+
+      // Drop sessions for a tenant that no longer have any events (all pruned).
+      deleteEmptySessions: db.prepare(`
+        DELETE FROM sessions
+        WHERE  tenant_id = ?
+          AND  session_id NOT IN (
+                 SELECT DISTINCT session_id FROM events WHERE tenant_id = ?
+               )
+      `),
+
+      // Recompute the summary aggregates for a tenant's surviving sessions from
+      // their remaining events (keeps event_count / started_at / updated_at
+      // consistent with the insert-time upsert after a partial prune).
+      reconcileSessions: db.prepare(`
+        UPDATE sessions
+        SET
+          event_count = (
+            SELECT COUNT(*) FROM events e
+            WHERE e.session_id = sessions.session_id AND e.tenant_id = sessions.tenant_id
+          ),
+          started_at = (
+            SELECT MIN(e.time) FROM events e
+            WHERE e.session_id = sessions.session_id AND e.tenant_id = sessions.tenant_id
+          ),
+          updated_at = (
+            SELECT MAX(e.time) FROM events e
+            WHERE e.session_id = sessions.session_id AND e.tenant_id = sessions.tenant_id
+          )
+        WHERE tenant_id = ?
       `)
     };
 
@@ -379,6 +422,26 @@ class SqliteBackend extends StorageBackend {
       });
 
       return { isDuplicate: false };
+    });
+
+    // Transactional prune: delete old events + reconcile session summaries as a
+    // single atomic unit, so a session is never left with stale aggregates.
+    this._pruneTx = db.transaction((tenantId, cutoff) => {
+      const delInfo = this._stmts.deleteEventsBefore.run(tenantId, cutoff);
+      const events_deleted = delInfo.changes;
+
+      // Nothing was deleted → sessions are already consistent; skip reconcile.
+      if (events_deleted === 0) {
+        return { events_deleted: 0, sessions_deleted: 0 };
+      }
+
+      const emptyInfo = this._stmts.deleteEmptySessions.run(tenantId, tenantId);
+      const sessions_deleted = emptyInfo.changes;
+
+      // Recompute aggregates for the tenant's surviving sessions.
+      this._stmts.reconcileSessions.run(tenantId);
+
+      return { events_deleted, sessions_deleted };
     });
   }
 
@@ -574,6 +637,16 @@ class SqliteBackend extends StorageBackend {
 
   async getProjectEventCount(tenantId) {
     return this._stmts.getProjectEventCount.get(tenantId).n;
+  }
+
+  // ----- retention / pruning (Phase 13 PR-D) -----
+
+  async countEventsBefore(tenantId, cutoff) {
+    return this._stmts.countEventsBefore.get(tenantId, cutoff).n;
+  }
+
+  async pruneEventsBefore(tenantId, cutoff) {
+    return this._pruneTx(tenantId, cutoff);
   }
 
   // ----- pagination -----

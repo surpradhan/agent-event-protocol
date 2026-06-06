@@ -17,6 +17,7 @@
     "lint:fix": "eslint src tests --fix",
     "validate": "node src/cli-validate.js",
     "ingest": "node src/server.js",
+    "prune": "node src/prune.js",
     "dev": "nodemon src/server.js",
     "emit:example": "node examples/emit-example.js",
     "demo:support": "node examples/demos/support-agent-demo.js",

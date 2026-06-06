@@ -1214,3 +1214,184 @@ describe("POST /events — quota enforcement", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Retention / pruning (Phase 13 PR-D)
+//
+// These drive the prune job (src/retention.pruneAll) directly against the same
+// storage backend the server uses, then assert via the DB module. They run
+// under BOTH backends via the Postgres parity CI job (no SQLite-specific calls).
+// ---------------------------------------------------------------------------
+
+describe("Retention / pruning", () => {
+  const { pruneAll } = require("../../src/retention");
+
+  // Spin up a project + write key whose tenant is unique per test, with a
+  // chosen retention window, then ingest events at controlled timestamps.
+  async function makeRetentionProject({ tier = "free", retentionDays } = {}) {
+    const tenant = "tenant-ret-" + crypto.randomUUID().slice(0, 8);
+    const body = { tenantId: tenant, tier };
+    if (retentionDays !== undefined) body.retentionDays = retentionDays;
+
+    const pRes = await fetch(`${baseUrl}/admin/projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify(body),
+    });
+    assert.equal(pRes.status, 201, "project created");
+    const { project } = await pRes.json();
+
+    const kRes = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: tenant, projectId: project.id, scopes: ["read", "write"] }),
+    });
+    const key = (await kRes.json()).key;
+
+    return { tenant, project, key };
+  }
+
+  function daysAgo(n) {
+    return new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  test("deletes events older than retention_days and reconciles sessions", async () => {
+    // 30-day retention (free tier default). Old events (>30d) should go;
+    // recent events should stay.
+    const { tenant, key } = await makeRetentionProject({ tier: "free" });
+    const sid = `ses_ret_${tenant}`;
+    const trace = `trc_ret_${tenant}`;
+
+    // 2 old events (60d / 45d ago) + 2 recent (1d / now) in one session.
+    const stamps = [daysAgo(60), daysAgo(45), daysAgo(1), new Date().toISOString()];
+    for (let i = 0; i < stamps.length; i++) {
+      const r = await ingest(
+        makeEvent({
+          id: `evt_ret_${i}_${crypto.randomUUID().replace(/-/g, "")}`,
+          session_id: sid,
+          trace_id: trace,
+          time: stamps[i],
+        }),
+        key
+      );
+      assert.equal(r.status, 202, `event ${i} accepted`);
+    }
+
+    assert.equal(await db.getProjectEventCount(tenant), 4, "4 events before prune");
+    const before = await db.getSession(sid);
+    assert.equal(before.event_count, 4);
+
+    const summary = await pruneAll();
+
+    // Only this tenant's old events removed; counts are native numbers.
+    assert.equal(await db.getProjectEventCount(tenant), 2, "2 events remain after prune");
+    const detail = summary.details.find(d => d.tenant_id === tenant);
+    assert.ok(detail, "summary includes this tenant");
+    assert.equal(detail.events_deleted, 2);
+    assert.equal(detail.sessions_deleted, 0, "session survived (still has events)");
+
+    // Session summary reconciled: count drops to 2, started_at advances to the
+    // oldest surviving event (1d ago), not the deleted 60d-ago one.
+    const after = await db.getSession(sid);
+    assert.equal(after.event_count, 2, "event_count recomputed");
+    assert.ok(after.started_at >= daysAgo(2), "started_at moved up past pruned events");
+
+    // The actual remaining events are the two recent ones.
+    const remaining = await db.getSessionEvents(sid);
+    assert.equal(remaining.length, 2);
+  });
+
+  test("deletes a session entirely when all its events are pruned", async () => {
+    const { tenant, key } = await makeRetentionProject({ tier: "free" });
+    const sid = `ses_allold_${tenant}`;
+
+    // All events older than the 30-day window.
+    for (let i = 0; i < 3; i++) {
+      await ingest(
+        makeEvent({
+          id: `evt_allold_${i}_${crypto.randomUUID().replace(/-/g, "")}`,
+          session_id: sid,
+          trace_id: `trc_allold_${tenant}`,
+          time: daysAgo(40 + i),
+        }),
+        key
+      );
+    }
+    assert.ok(await db.getSession(sid), "session exists before prune");
+
+    const summary = await pruneAll();
+    const detail = summary.details.find(d => d.tenant_id === tenant);
+    assert.equal(detail.events_deleted, 3);
+    assert.equal(detail.sessions_deleted, 1, "empty session removed");
+    assert.equal(await db.getSession(sid), null, "session gone after prune");
+    assert.equal(await db.getProjectEventCount(tenant), 0);
+  });
+
+  test("retention_days NULL (unlimited) is never pruned", async () => {
+    // enterprise tier => retention_days null. Override is not needed.
+    const { tenant, key } = await makeRetentionProject({ tier: "enterprise" });
+    const sid = `ses_keep_${tenant}`;
+
+    await ingest(
+      makeEvent({
+        id: `evt_keep_${crypto.randomUUID().replace(/-/g, "")}`,
+        session_id: sid,
+        trace_id: `trc_keep_${tenant}`,
+        time: daysAgo(3650), // 10 years old
+      }),
+      key
+    );
+    assert.equal(await db.getProjectEventCount(tenant), 1);
+
+    const summary = await pruneAll();
+    assert.equal(await db.getProjectEventCount(tenant), 1, "unlimited project untouched");
+    // No detail row should be emitted for an unprunable project.
+    assert.equal(summary.details.find(d => d.tenant_id === tenant), undefined);
+  });
+
+  test("retention_days <= 0 (explicit override) is never pruned", async () => {
+    const { tenant, key } = await makeRetentionProject({ tier: "free", retentionDays: 0 });
+    const sid = `ses_zero_${tenant}`;
+
+    await ingest(
+      makeEvent({
+        id: `evt_zero_${crypto.randomUUID().replace(/-/g, "")}`,
+        session_id: sid,
+        trace_id: `trc_zero_${tenant}`,
+        time: daysAgo(999),
+      }),
+      key
+    );
+
+    const summary = await pruneAll();
+    assert.equal(await db.getProjectEventCount(tenant), 1, "retention_days=0 means keep forever");
+    assert.equal(summary.details.find(d => d.tenant_id === tenant), undefined);
+  });
+
+  test("--dry-run reports counts but deletes nothing", async () => {
+    const { tenant, key } = await makeRetentionProject({ tier: "free" });
+    const sid = `ses_dry_${tenant}`;
+
+    for (let i = 0; i < 2; i++) {
+      await ingest(
+        makeEvent({
+          id: `evt_dry_${i}_${crypto.randomUUID().replace(/-/g, "")}`,
+          session_id: sid,
+          trace_id: `trc_dry_${tenant}`,
+          time: daysAgo(50),
+        }),
+        key
+      );
+    }
+
+    const summary = await pruneAll({ dryRun: true });
+    assert.equal(summary.dryRun, true);
+    const detail = summary.details.find(d => d.tenant_id === tenant);
+    assert.equal(detail.events_deleted, 2, "dry-run reports what would be deleted");
+    assert.equal(detail.sessions_deleted, 0, "dry-run does not compute session deletes");
+
+    // Nothing was actually deleted.
+    assert.equal(await db.getProjectEventCount(tenant), 2, "dry-run left events intact");
+    assert.ok(await db.getSession(sid), "dry-run left the session intact");
+  });
+});
