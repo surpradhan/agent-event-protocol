@@ -8,6 +8,7 @@
  *   aep emit     — Emit a single event to the ingest server
  *   aep session  — Query events for a session
  *   aep export   — Export session events as JSON or CSV
+ *   aep audit    — Build / verify a tamper-evident audit bundle
  *   aep workflow — Query a full workflow tree by trace_id
  *   aep validate — Validate a local event JSON file (existing)
  *
@@ -119,6 +120,7 @@ Commands:
   emit       Emit a single event to the ingest server
   session    Query events for a session
   export     Export session events as JSON or CSV
+  audit      Build / verify a tamper-evident audit bundle
   workflow   Query a full workflow tree by trace_id
   validate   Validate a local event JSON file
 
@@ -335,6 +337,147 @@ async function cmdExport(positional, flags, serverUrl, apiKey) {
 }
 
 // ---------------------------------------------------------------------------
+// Command: audit  (Phase 14 PR-A — tamper-evident audit bundles)
+// ---------------------------------------------------------------------------
+
+function auditHelp() {
+  console.log(`
+\x1b[1maep audit\x1b[0m — Build / verify a tamper-evident, HMAC-signed audit bundle
+
+Usage:
+  aep audit export <session_id> [--out bundle.json] [flags]
+  aep audit verify <bundle.json> [--json]
+
+export — fetch a session's events (via the read API), package them into a
+         signed bundle and write it out. Requires AUDIT_SIGNING_SECRET to be set
+         (the server-side audit signing key, distinct from per-API-key secrets).
+
+  --out  <file>   Write the bundle to a file (default: stdout)
+  --type <type>   Filter to a specific event type
+  --q    <text>   Full-text search query
+
+verify — recompute the content digest and manifest signature of a bundle file
+         offline and report whether it is intact. Requires AUDIT_SIGNING_SECRET.
+         Exit code 0 = valid, 1 = invalid/tampered.
+
+  --json          Emit the machine-readable verification result as JSON
+
+Environment:
+  AUDIT_SIGNING_SECRET   HMAC secret used to sign / verify audit bundles (required)
+`);
+}
+
+function readAuditSecret() {
+  const secret = process.env.AUDIT_SIGNING_SECRET;
+  if (!secret) {
+    die(
+      "AUDIT_SIGNING_SECRET is not set. Audit export/verify needs a server-side " +
+      "signing secret (distinct from per-API-key HMAC secrets). " +
+      "Set it, e.g. export AUDIT_SIGNING_SECRET=$(openssl rand -hex 32)"
+    );
+  }
+  return secret;
+}
+
+async function cmdAuditExport(positional, flags, serverUrl, apiKey) {
+  // positional: ["audit", "export", "<session_id>"]
+  const sessionId = positional[2];
+  if (!sessionId) die("Usage: aep audit export <session_id> [--out bundle.json]");
+  if (!apiKey)    die("API key required. Set --key or AEP_API_KEY env var.");
+
+  const secret = readAuditSecret();
+  const { buildAuditBundle } = require("./audit");
+
+  const qs = new URLSearchParams({ format: "json" });
+  if (flags.type) qs.set("type", flags.type);
+  if (flags.q)    qs.set("q", flags.q);
+
+  const res = await request("GET", `${serverUrl}/sessions/${sessionId}/export?${qs}`, null, {
+    Authorization: `Bearer ${apiKey}`,
+  });
+
+  if (res.status !== 200) {
+    die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+  }
+
+  const events = (res.body && res.body.events) || [];
+
+  // Derive scope metadata from the returned events.
+  const traceIds = new Set(events.map(e => e.trace_id).filter(Boolean));
+  const tenants  = new Set(events.map(e => e.tenant).filter(Boolean));
+  const meta = {
+    session_id: sessionId,
+    ...(traceIds.size === 1 ? { trace_id: [...traceIds][0] } : {}),
+    ...(tenants.size === 1  ? { tenant_id: [...tenants][0] } : {}),
+  };
+
+  const bundle = buildAuditBundle({ events, meta, secret, now: new Date() });
+
+  const out = JSON.stringify(bundle, null, 2);
+  if (flags.out) {
+    require("fs").writeFileSync(flags.out, out + "\n");
+    console.log(`\x1b[32m✓\x1b[0m Audit bundle written to ${flags.out}`);
+    console.log(
+      `  ${bundle.manifest.event_count} event(s), content_digest=${bundle.manifest.content_digest.slice(0, 16)}…`
+    );
+  } else {
+    process.stdout.write(out + "\n");
+  }
+}
+
+async function cmdAuditVerify(positional, flags) {
+  // positional: ["audit", "verify", "<bundle.json>"]
+  const filePath = positional[2];
+  if (!filePath) die("Usage: aep audit verify <bundle.json> [--json]");
+
+  const secret = readAuditSecret();
+  const { verifyAuditBundle } = require("./audit");
+
+  const fs = require("fs");
+  const path = require("path");
+  const fullPath = path.resolve(filePath);
+
+  let bundle;
+  try {
+    const raw = fs.readFileSync(fullPath, "utf8").replace(/^\uFEFF/, "");
+    bundle = JSON.parse(raw);
+  } catch (e) {
+    die(`Could not read/parse '${fullPath}': ${e.message}`);
+  }
+
+  const result = verifyAuditBundle(bundle, secret, { now: new Date() });
+
+  if (flags.json) {
+    console.log(JSON.stringify(result, null, 2));
+  } else if (result.valid) {
+    console.log(`\x1b[32m✓ VALID\x1b[0m  ${fullPath}`);
+    console.log(`  content_digest_match:     ${result.content_digest_match}`);
+    console.log(`  manifest_signature_valid: ${result.manifest_signature_valid}`);
+    console.log(`  events:                   ${result.per_event.length}`);
+  } else {
+    console.error(`\x1b[31m✗ INVALID / TAMPERED\x1b[0m  ${fullPath}`);
+    console.error(`  content_digest_match:     ${result.content_digest_match}`);
+    console.error(`  manifest_signature_valid: ${result.manifest_signature_valid}`);
+    result.errors.forEach(e => console.error(`  - ${e}`));
+  }
+
+  process.exit(result.valid ? 0 : 1);
+}
+
+async function cmdAudit(positional, flags, serverUrl, apiKey) {
+  if (flags.help) { auditHelp(); return; }
+
+  const sub = positional[1];
+  switch (sub) {
+    case "export": return cmdAuditExport(positional, flags, serverUrl, apiKey);
+    case "verify": return cmdAuditVerify(positional, flags);
+    default:
+      auditHelp();
+      die("Usage: aep audit <export|verify> ...");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Command: workflow
 // ---------------------------------------------------------------------------
 
@@ -441,6 +584,7 @@ async function main() {
       case "emit":     await cmdEmit(flags, serverUrl, apiKey); break;
       case "session":  await cmdSession(positional, flags, serverUrl, apiKey); break;
       case "export":   await cmdExport(positional, flags, serverUrl, apiKey); break;
+      case "audit":    await cmdAudit(positional, flags, serverUrl, apiKey); break;
       case "workflow": await cmdWorkflow(positional, flags, serverUrl, apiKey); break;
       case "validate": await cmdValidate(positional, flags); break;
       default:

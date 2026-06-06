@@ -4,6 +4,54 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Tamper-evident audit export bundles — Phase 14 PR-A, 2026-06-06
+
+**First slice of the Compliance & Audit Suite (Phase 14).** A signed, offline-
+verifiable JSON audit bundle built on AEP's existing HMAC primitives. JSON only —
+the download endpoints (PR-B) and PDF rendering (PR-C) come later.
+
+- **New module** [`src/audit.js`](./src/audit.js) — pure / deterministic
+  (`now` is injected; never reads the clock):
+  - `buildAuditBundle({ events, meta, secret, now })` → `{ aep_audit_version,
+    manifest, events, signature }`. The `manifest` records `scope`
+    (`session_id` / `trace_id`), `tenant_id`, `event_count`, `time_range`, a
+    `content_digest` (SHA-256 over the ordered events), `exported_at`, and a
+    `per_event_signatures` summary. The bundle `signature` is an HMAC-SHA256 over
+    the manifest.
+  - `verifyAuditBundle(bundle, secret)` → `{ valid, errors, content_digest_match,
+    manifest_signature_valid, per_event }`. Recomputes the digest and the manifest
+    signature and compares them timing-safe (`crypto.timingSafeEqual`).
+  - **Tamper-evidence (detection, not immutability):** mutating any event byte
+    (including nested **payload** fields), reordering events, or adding/dropping
+    an event breaks `content_digest_match`; editing the manifest breaks
+    `manifest_signature_valid`. Because the digest lives inside the signed
+    manifest, an attacker cannot edit an event and silently re-patch the digest.
+- **Canonicalization refactor (no behaviour change):** the per-event
+  `canonicalize` helper moved into [`src/_canonical.js`](./src/_canonical.js) and
+  is re-exported from `src/signature.js`; `verifySignature` is byte-identical
+  (regression-locked by `tests/unit/signature.test.js`). The audit path uses a
+  new deep `stableStringify` in the same module so the digest covers nested
+  payloads (the per-event signature's array-replacer rule does not — kept that
+  way for cross-SDK parity; see the note below).
+- **New env var `AUDIT_SIGNING_SECRET`** — server-side audit signing key, distinct
+  from per-API-key HMAC secrets. When unset, audit export/verify fail with a clear
+  error (mirrors how `ADMIN_TOKEN` gates `/admin/*`). Documented in `.env.example`,
+  `SECURITY.md`, and `AUTH.md`.
+- **CLI** ([`src/cli.js`](./src/cli.js)):
+  - `aep audit export <session_id> [--out bundle.json] [--type] [--q]` — fetches
+    the session's events via the read API, builds + signs the bundle.
+  - `aep audit verify <bundle.json> [--json]` — offline verify; exit 0 valid / 1
+    invalid; human or JSON output.
+- **Tests:** `tests/unit/audit.test.js` (tamper matrix, round-trip, error paths)
+  and `tests/unit/signature.test.js` (canonicalize + `verifySignature` regression
+  lock) folded into the existing unit suite — **no new CI job** (drift-guard
+  untouched, still 13 required checks).
+- **Known limitation / follow-up:** the per-event transport signature still
+  covers only the envelope (not nested payloads) for cross-SDK parity. The audit
+  bundle closes this gap for compliance via its deep digest; unifying the two
+  (deepening the per-event signature across the Python/Go/Node SDKs) is a
+  candidate for a later PR.
+
 ## Operations & deployment guide — Phase 13 PR-E (docs), 2026-06-06
 
 **Docs only — no code, no CI, no SDK changes.** The capstone of Phase 13 (Hosted

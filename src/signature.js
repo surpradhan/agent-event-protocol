@@ -49,25 +49,15 @@
  */
 
 const crypto = require("crypto");
+const { canonicalize } = require("./_canonical");
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
-
-/**
- * Produce the canonical JSON string used as the HMAC input.
- * Removes the `signature` field and sorts all remaining top-level keys.
- *
- * @param {object} event  Full event envelope (may include `signature`).
- * @returns {string}      Deterministic JSON string.
- */
-function canonicalize(event) {
-  // Shallow copy so we don't mutate the caller's object.
-  const copy = Object.assign({}, event);
-  delete copy.signature;
-  const sortedKeys = Object.keys(copy).sort();
-  return JSON.stringify(copy, sortedKeys);
-}
+//
+// `canonicalize` now lives in ./_canonical so the audit bundle path
+// (src/audit.js) hashes events with the EXACT same rule.  It is re-exported
+// below for backwards compatibility and convenience.
 
 /**
  * Verify the HMAC-SHA256 signature on an event envelope.
@@ -122,4 +112,4 @@ function verifySignature(event, secret) {
 // Exports
 // ---------------------------------------------------------------------------
 
-module.exports = { verifySignature };
+module.exports = { verifySignature, canonicalize };

@@ -29,6 +29,7 @@ If `DASHBOARD_TOKEN` is not set, the dashboard and all read endpoints are **open
 | `LOG_LEVEL` | No (default: `info`) | Pino log level: `trace` \| `debug` \| `info` \| `warn` \| `error` \| `fatal` |
 | `LOG_PRETTY` | No (default: `false`) | Set to `true` for human-readable logs (requires `pino-pretty`; dev only) |
 | `RATE_LIMIT_RPM` | No (default: `300`) | Max `POST /events` requests per API key per 60-second window. `0` disables. |
+| `AUDIT_SIGNING_SECRET` | For audit export/verify | Server-side HMAC secret that signs/verifies tamper-evident audit bundles (`aep audit`). Distinct from per-API-key HMAC secrets. When unset, audit export/verify fail with a clear error. |
 
 See `.env.example` for the full annotated template.
 
@@ -215,6 +216,48 @@ await fetch('http://localhost:8787/events', {
 | 401 | Signature algorithm not `hmac-sha256` |
 | 401 | Signature value is missing or wrong |
 | 400 | Event fails schema validation (separate from signature) |
+
+---
+
+## Audit Export (tamper-evident bundles)
+
+> Phase 14 PR-A. JSON bundles only; download endpoints and PDF rendering come in
+> later PRs.
+
+`aep audit export` packages a session's events into a signed, offline-verifiable
+bundle. The bundle carries two cryptographic checks:
+
+1. **`manifest.content_digest`** — a SHA-256 over the canonical, ordered event
+   sequence. Modifying any event (including nested payloads), reordering events,
+   or adding/dropping one changes this digest.
+2. **`signature`** — an HMAC-SHA256 over the manifest, keyed by
+   `AUDIT_SIGNING_SECRET`. Because `content_digest` is part of the manifest, the
+   signature transitively covers the events, and the manifest itself cannot be
+   edited without invalidating the signature.
+
+This provides **tamper *detection*** — not storage immutability. The
+`AUDIT_SIGNING_SECRET` is a *server-side* key, separate from the per-API-key HMAC
+secrets above (which sign individual events in transit). Keep it secret and
+stable: rotating it invalidates signatures on previously exported bundles.
+
+```bash
+export AUDIT_SIGNING_SECRET=$(openssl rand -hex 32)
+
+# Build a signed bundle for a session (events fetched via the read API):
+aep audit export ses_abc123 --out bundle.json
+
+# Verify it offline anywhere the secret is available (exit 0 = valid, 1 = tampered):
+aep audit verify bundle.json
+aep audit verify bundle.json --json   # machine-readable result
+```
+
+If `AUDIT_SIGNING_SECRET` is unset, both commands fail with a clear error
+(mirroring how `ADMIN_TOKEN` gates the `/admin/*` routes).
+
+> **Note on scope:** the per-event transport signature (above) canonicalizes only
+> the envelope, so it does not by itself cover nested payload bytes. The audit
+> bundle's `content_digest` uses a deeper serialization that *does* cover
+> payloads, which is what makes the bundle suitable for compliance review.
 
 ---
 
