@@ -1,0 +1,42 @@
+# OpenTelemetry Collector config for the Vercel AI SDK → AEP example.
+#
+# Requires a Collector built via ocb that includes the `aep` exporter —
+# see otelbridge/builder-config.yaml and otelbridge/README.md. The prebuilt
+# otel/opentelemetry-collector-contrib image does NOT include the aep exporter.
+#
+# This config uses only the receivers/processors/exporters declared in the
+# stock otelbridge/builder-config.yaml (otlp receiver, batch processor, aep +
+# debug exporters). To classify Vercel ai.toolCall spans as AEP tool events
+# (or failed spans as error.raised), you'd need to add `transformprocessor`
+# to builder-config.yaml and rebuild — see docs/integrations/vercel-ai-sdk.md
+# "Improving the mapping" for the OTTL sketch.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    send_batch_size: 100
+    timeout: 5s
+
+exporters:
+  aep:
+    server_url: http://localhost:8787
+    api_key: ${env:AEP_API_KEY}
+    batch_size: 100
+    flush_interval: 5s
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [aep]
+  telemetry:
+    logs:
+      level: info
