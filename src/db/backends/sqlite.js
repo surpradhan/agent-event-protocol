@@ -284,33 +284,59 @@ class SqliteBackend extends StorageBackend {
       // ----- api_keys -----
       insertApiKey: db.prepare(`
         INSERT INTO api_keys
-          (id, key_hash, key_prefix, tenant_id, label, scopes, hmac_secret, created_at)
+          (id, key_hash, key_prefix, tenant_id, project_id, label, scopes, hmac_secret, created_at)
         VALUES
-          (@id, @key_hash, @key_prefix, @tenant_id, @label, @scopes, @hmac_secret, @created_at)
+          (@id, @key_hash, @key_prefix, @tenant_id, @project_id, @label, @scopes, @hmac_secret, @created_at)
       `),
 
       getApiKeyByHash: db.prepare(`
-        SELECT id, key_hash, key_prefix, tenant_id, label, scopes, hmac_secret,
+        SELECT id, key_hash, key_prefix, tenant_id, project_id, label, scopes, hmac_secret,
                created_at, revoked_at
         FROM   api_keys
         WHERE  key_hash = ?
       `),
 
       getApiKeyById: db.prepare(`
-        SELECT id, key_hash, key_prefix, tenant_id, label, scopes, hmac_secret,
+        SELECT id, key_hash, key_prefix, tenant_id, project_id, label, scopes, hmac_secret,
                created_at, revoked_at
         FROM   api_keys
         WHERE  id = ?
       `),
 
       listApiKeys: db.prepare(`
-        SELECT id, key_prefix, tenant_id, label, scopes, created_at, revoked_at
+        SELECT id, key_prefix, tenant_id, project_id, label, scopes, created_at, revoked_at
         FROM   api_keys
         ORDER  BY created_at DESC
       `),
 
       revokeApiKey: db.prepare(`
         UPDATE api_keys SET revoked_at = ? WHERE id = ?
+      `),
+
+      // ----- projects (Phase 13 PR-C) -----
+      insertProject: db.prepare(`
+        INSERT INTO projects
+          (id, name, tenant_id, tier, event_quota, retention_days, created_at)
+        VALUES
+          (@id, @name, @tenant_id, @tier, @event_quota, @retention_days, @created_at)
+      `),
+
+      getProject: db.prepare(`
+        SELECT id, name, tenant_id, tier, event_quota, retention_days, created_at
+        FROM   projects
+        WHERE  id = ?
+      `),
+
+      listProjects: db.prepare(`
+        SELECT id, name, tenant_id, tier, event_quota, retention_days, created_at
+        FROM   projects
+        ORDER  BY created_at DESC
+      `),
+
+      // Per-project quota accounting: events carry tenant_id, so a project's
+      // usage is the count of events for the project's tenant.
+      getProjectEventCount: db.prepare(`
+        SELECT COUNT(*) AS n FROM events WHERE tenant_id = ?
       `)
     };
 
@@ -530,6 +556,24 @@ class SqliteBackend extends StorageBackend {
   async revokeApiKey(id) {
     const info = this._stmts.revokeApiKey.run(new Date().toISOString(), id);
     return info.changes > 0;
+  }
+
+  // ----- projects (Phase 13 PR-C) -----
+
+  async createProject(record) {
+    this._stmts.insertProject.run(record);
+  }
+
+  async getProject(id) {
+    return this._stmts.getProject.get(id) || null;
+  }
+
+  async listProjects() {
+    return this._stmts.listProjects.all();
+  }
+
+  async getProjectEventCount(tenantId) {
+    return this._stmts.getProjectEventCount.get(tenantId).n;
   }
 
   // ----- pagination -----

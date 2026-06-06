@@ -114,6 +114,7 @@ const SCHEMA_DDL = `
     key_hash    TEXT    NOT NULL UNIQUE,
     key_prefix  TEXT    NOT NULL,
     tenant_id   TEXT    NOT NULL,
+    project_id  TEXT    NOT NULL DEFAULT 'default',
     label       TEXT    NOT NULL DEFAULT '',
     scopes      TEXT    NOT NULL DEFAULT '["read","write"]',
     hmac_secret TEXT,
@@ -121,7 +122,29 @@ const SCHEMA_DDL = `
     revoked_at  TEXT
   );
 
-  CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys (tenant_id);
+  CREATE INDEX IF NOT EXISTS idx_api_keys_tenant  ON api_keys (tenant_id);
+  CREATE INDEX IF NOT EXISTS idx_api_keys_project ON api_keys (project_id);
+
+  -- ----- projects (Phase 13 PR-C) ------------------------------------------
+  CREATE TABLE IF NOT EXISTS projects (
+    id             TEXT    NOT NULL PRIMARY KEY,
+    name           TEXT    NOT NULL DEFAULT '',
+    tenant_id      TEXT    NOT NULL,
+    tier           TEXT    NOT NULL DEFAULT 'free',
+    event_quota    INTEGER,
+    retention_days INTEGER,
+    created_at     TEXT    NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_projects_tenant ON projects (tenant_id);
+
+  -- Seed the 'default' project so legacy keys/data keep working unchanged.
+  INSERT INTO projects
+    (id, name, tenant_id, tier, event_quota, retention_days, created_at)
+  VALUES
+    ('default', 'Default Project', 'default', 'enterprise', NULL, NULL,
+     '1970-01-01T00:00:00.000Z')
+  ON CONFLICT (id) DO NOTHING;
 `;
 
 // Standard projection of a sessions row (column order matches SqliteBackend).
@@ -438,13 +461,14 @@ class PostgresBackend extends StorageBackend {
   async createApiKey(record) {
     await this._pool.query(
       `INSERT INTO api_keys
-         (id, key_hash, key_prefix, tenant_id, label, scopes, hmac_secret, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+         (id, key_hash, key_prefix, tenant_id, project_id, label, scopes, hmac_secret, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
         record.id,
         record.key_hash,
         record.key_prefix,
         record.tenant_id,
+        record.project_id ?? "default",
         record.label,
         record.scopes,
         record.hmac_secret ?? null,
@@ -455,7 +479,7 @@ class PostgresBackend extends StorageBackend {
 
   async getApiKeyByHash(keyHash) {
     const { rows } = await this._pool.query(
-      `SELECT id, key_hash, key_prefix, tenant_id, label, scopes, hmac_secret,
+      `SELECT id, key_hash, key_prefix, tenant_id, project_id, label, scopes, hmac_secret,
               created_at, revoked_at
        FROM   api_keys
        WHERE  key_hash = $1`,
@@ -466,7 +490,7 @@ class PostgresBackend extends StorageBackend {
 
   async getApiKeyById(id) {
     const { rows } = await this._pool.query(
-      `SELECT id, key_hash, key_prefix, tenant_id, label, scopes, hmac_secret,
+      `SELECT id, key_hash, key_prefix, tenant_id, project_id, label, scopes, hmac_secret,
               created_at, revoked_at
        FROM   api_keys
        WHERE  id = $1`,
@@ -477,7 +501,7 @@ class PostgresBackend extends StorageBackend {
 
   async listApiKeys() {
     const { rows } = await this._pool.query(
-      `SELECT id, key_prefix, tenant_id, label, scopes, created_at, revoked_at
+      `SELECT id, key_prefix, tenant_id, project_id, label, scopes, created_at, revoked_at
        FROM   api_keys
        ORDER  BY created_at DESC`
     );
@@ -490,6 +514,52 @@ class PostgresBackend extends StorageBackend {
       [new Date().toISOString(), id]
     );
     return result.rowCount > 0;
+  }
+
+  // ----- projects (Phase 13 PR-C) -----
+
+  async createProject(record) {
+    await this._pool.query(
+      `INSERT INTO projects
+         (id, name, tenant_id, tier, event_quota, retention_days, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        record.id,
+        record.name,
+        record.tenant_id,
+        record.tier,
+        record.event_quota ?? null,
+        record.retention_days ?? null,
+        record.created_at
+      ]
+    );
+  }
+
+  async getProject(id) {
+    const { rows } = await this._pool.query(
+      `SELECT id, name, tenant_id, tier, event_quota, retention_days, created_at
+       FROM   projects
+       WHERE  id = $1`,
+      [id]
+    );
+    return rows[0] || null;
+  }
+
+  async listProjects() {
+    const { rows } = await this._pool.query(
+      `SELECT id, name, tenant_id, tier, event_quota, retention_days, created_at
+       FROM   projects
+       ORDER  BY created_at DESC`
+    );
+    return rows;
+  }
+
+  async getProjectEventCount(tenantId) {
+    const { rows } = await this._pool.query(
+      "SELECT COUNT(*) AS n FROM events WHERE tenant_id = $1",
+      [tenantId]
+    );
+    return Number(rows[0].n);
   }
 
   // ----- pagination -----

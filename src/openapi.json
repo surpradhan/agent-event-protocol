@@ -204,11 +204,25 @@
           "id": { "type": "string" },
           "keyPrefix": { "type": "string", "example": "aep_3f8a9b" },
           "tenantId": { "type": "string" },
+          "projectId": { "type": "string", "example": "default" },
           "label": { "type": "string" },
           "scopes": { "type": "array", "items": { "type": "string" } },
           "createdAt": { "type": "string", "format": "date-time" },
           "revokedAt": { "type": "string", "format": "date-time", "nullable": true },
           "active": { "type": "boolean" }
+        }
+      },
+      "Project": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "example": "default" },
+          "name": { "type": "string", "example": "Default Project" },
+          "tenantId": { "type": "string" },
+          "tier": { "type": "string", "enum": ["free", "team", "enterprise"] },
+          "eventQuota": { "type": ["integer", "null"], "description": "Max accepted events; null = unlimited" },
+          "retentionDays": { "type": ["integer", "null"], "description": "Retention policy in days; null = unlimited" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "usage": { "type": "integer", "description": "Current accepted-event count for the project's tenant (list/get only)" }
         }
       },
       "ErrorResponse": {
@@ -322,7 +336,24 @@
             }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "429": {
+            "description": "Rate limit hit, or the key's project has reached its event quota. The `Retry-After` header indicates when to retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "accepted": { "type": "boolean", "example": false },
+                    "error":    { "type": "string" },
+                    "quota":    { "type": "integer", "description": "The project's event quota (quota responses only)" },
+                    "usage":    { "type": "integer", "description": "Current accepted-event count (quota responses only)" },
+                    "project":  { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -593,6 +624,11 @@
                 "required": ["tenantId"],
                 "properties": {
                   "tenantId": { "type": "string", "example": "acme-corp" },
+                  "projectId": {
+                    "type": "string",
+                    "description": "Project the key is bound to (must exist). Defaults to 'default' (unlimited).",
+                    "example": "default"
+                  },
                   "label": { "type": "string", "example": "prod-writer" },
                   "scopes": {
                     "type": "array",
@@ -623,6 +659,7 @@
                     "id": { "type": "string" },
                     "keyPrefix": { "type": "string" },
                     "tenantId": { "type": "string" },
+                    "projectId": { "type": "string" },
                     "label": { "type": "string" },
                     "scopes": { "type": "array", "items": { "type": "string" } },
                     "signingEnabled": { "type": "boolean" }
@@ -712,6 +749,124 @@
               }
             }
           }
+        }
+      }
+    },
+    "/admin/projects": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Create a project on a subscription tier",
+        "operationId": "createProject",
+        "security": [{ "AdminAuth": [] }],
+        "description": "Creates a project. The named tier's default event quota and retention are materialised onto the project row; either may be overridden per-project. A project is the unit that carries quota/retention; API keys bind to it.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["tenantId"],
+                "properties": {
+                  "name": { "type": "string", "example": "Team A" },
+                  "tenantId": { "type": "string", "example": "acme-corp" },
+                  "tier": {
+                    "type": "string",
+                    "enum": ["free", "team", "enterprise"],
+                    "default": "free"
+                  },
+                  "eventQuota": {
+                    "type": ["integer", "null"],
+                    "description": "Override the tier's default event quota. null = unlimited.",
+                    "example": 100000
+                  },
+                  "retentionDays": {
+                    "type": ["integer", "null"],
+                    "description": "Override the tier's default retention. null = unlimited.",
+                    "example": 30
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Project created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "project": { "$ref": "#/components/schemas/Project" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Forbidden" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "503": { "description": "Admin API not enabled" }
+        }
+      },
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List all projects (with current usage)",
+        "operationId": "listProjects",
+        "security": [{ "AdminAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Project list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "projects": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/Project" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "503": { "description": "Admin API not enabled" }
+        }
+      }
+    },
+    "/admin/projects/{id}": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Get a single project (with current usage)",
+        "operationId": "getProject",
+        "security": [{ "AdminAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Project id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "project": { "$ref": "#/components/schemas/Project" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "503": { "description": "Admin API not enabled" }
         }
       }
     },
