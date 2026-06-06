@@ -133,12 +133,15 @@ Tested against Node 20.x and 22.x.
 
 Releases are cut from `main` by pushing a `node-sdk-vX.Y.Z` tag — the
 [`Release Node SDK`](../../.github/workflows/release-node-sdk.yml) workflow
-then builds, tests, and runs `npm publish --provenance --access public` for
-this package. To cut a release:
+then verifies the tag, builds and tests, and — only after a required-reviewer
+approval — runs `npm publish --provenance --access public` for this package.
+To cut a release:
 
 1. Open a PR that bumps `sdks/node/package.json` `"version"` to the new
    `X.Y.Z` and adds a CHANGELOG entry. Squash-merge once CI is green.
-2. From the merged `main`, tag the release commit and push the tag:
+2. From the merged `main`, tag the **squash commit on `main`** (not the
+   pre-squash branch head — that commit never lands on `main` and the ancestry
+   check in step 3 would reject it) and push the tag:
 
    ```bash
    git tag node-sdk-v0.3.0
