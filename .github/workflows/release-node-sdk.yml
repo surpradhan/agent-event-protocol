@@ -54,6 +54,14 @@ on:
     tags:
       - 'node-sdk-v*'
 
+# Serialize releases: never let two tag pushes publish at the same time. A
+# stable group (not per-tag) means any in-flight release blocks the next one
+# rather than racing it; we never cancel a publish that may already be partway
+# through, so cancel-in-progress stays false.
+concurrency:
+  group: release-node-sdk
+  cancel-in-progress: false
+
 jobs:
   # Pre-flight: cheap guardrails that run *before* the approval gate, so a
   # mis-cut tag is rejected without ever pausing a reviewer.
@@ -62,7 +70,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      # Actions are pinned to immutable commit SHAs (not floating tags)
+      # throughout this release workflow; bump the SHA + comment together on
+      # upgrade. See the publish job for why pinning matters most there.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           # Full history so the ancestry check can resolve origin/main; a
           # shallow checkout would not contain main's commits.
@@ -83,7 +94,7 @@ jobs:
           fi
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: 'npm'
@@ -117,10 +128,13 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v4
+      # Pinned to an immutable commit SHA (not a floating tag): this job path
+      # holds id-token: write + the npm token, so a hijacked action tag must not
+      # be able to inject into it. Bump the SHA + comment together on upgrade.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           registry-url: 'https://registry.npmjs.org'
