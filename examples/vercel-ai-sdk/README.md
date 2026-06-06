@@ -24,7 +24,9 @@ spans currently map onto AEP event types.
 > (see [`otelbridge/README.md`](../../otelbridge/README.md)).
 
 ```bash
-# 1. Install Vercel AI SDK + OTEL deps (in this directory)
+# 1. Install Vercel AI SDK + OTEL deps in this directory. (npm writes a
+#    package.json + node_modules here; both are gitignored — see .gitignore —
+#    so they won't be accidentally committed to the AEP repo.)
 npm init -y >/dev/null
 npm install ai @ai-sdk/openai zod \
   @opentelemetry/sdk-node \
