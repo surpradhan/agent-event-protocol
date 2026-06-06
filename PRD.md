@@ -422,6 +422,8 @@ opt-in routes to richer classification are documented (a Collector
 future first-party Node instrumentor); the OTEL bridge is the recommended
 path until a stable Vercel callback API ships.
 
+**Release pipeline (2026-06-06):** The Node SDK is published to npm as `@surpradhan/aep` (scoped, public). Releases are cut by pushing a `node-sdk-vX.Y.Z` tag — the [`release-node-sdk.yml`](.github/workflows/release-node-sdk.yml) workflow then builds, tests, and runs `npm publish --provenance --access public`, attesting via Sigstore that the published tarball was built from this repo at that tag. The tarball ships only `dist/`, `README.md`, `LICENSE`, and `package.json` (verified by `npm pack --dry-run`). The release workflow is a separate file from `ci.yml` and is tag-triggered, so it is not a required PR status check and the drift-guard is unaffected.
+
 ### Phase 13: Hosted SaaS — aep.dev (Q3 2026)
 
 **Objective:** Remove the self-hosting barrier and make AEP a product people depend on daily.
