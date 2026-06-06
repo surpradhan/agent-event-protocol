@@ -4,6 +4,38 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Operations & deployment guide — Phase 13 PR-E (docs), 2026-06-06
+
+**Docs only — no code, no CI, no SDK changes.** The capstone of Phase 13 (Hosted
+SaaS): an operator-facing guide that ties together the Postgres backend (PR-B),
+projects / tiers / quotas (PR-C), and retention / pruning (PR-D) for a production
+deployment.
+
+- **New doc** [`OPERATIONS.md`](./OPERATIONS.md):
+  - **Choosing a storage backend** — SQLite (default) vs Postgres, `STORAGE_BACKEND`
+    + `DATABASE_URL` (with `PG*` libpq fallback), and the idempotent on-boot schema.
+  - **Postgres production deployment** — connection string, a minimal
+    `docker-compose` Postgres overlay, managed-PG notes, and `pg` connection-pool
+    sizing guidance.
+  - **Projects, tiers & quotas** — creating projects (`POST /admin/projects`),
+    binding keys via `projectId`, the tier defaults table, `TIER_*` env overrides,
+    and what a `429` + `Retry-After` means for clients — with the documented
+    caveats (metered by `tenant_id`, event-count not bytes, soft single-node limit).
+  - **Retention & pruning runbook** — what `npm run prune` does, `--dry-run` /
+    `--json` / `--help`, the keep-forever rule, the tenant-scoping caveat,
+    idempotency/observability, and concrete **crontab** + **Kubernetes `CronJob`**
+    scheduling recipes (reusing the server image with `command: ["node",
+    "src/prune.js"]` against the same DB Secret).
+  - **Phase 13 production checklist.**
+- **Cross-links added** from [`README.md`](./README.md) (docs table),
+  [`SETUP.md`](./SETUP.md) (§16 Production Considerations + corrected the
+  "Persistent storage" note now that the Postgres backend has shipped), and
+  `.claude/CLAUDE.md` (docs tree).
+- **Drift-guard impact: none** — docs only, no CI workflow change (still 13
+  required checks).
+
+---
+
 ## Node SDK 0.3.0 — first npm release, 2026-06-06
 
 First published release of the Node SDK (`@surpradhan/aep`) to the public npm

@@ -586,6 +586,12 @@ docker run -p 8787:8787 \
 
 ## 16. Production Considerations
 
+> **Running AEP as a service?** For storage-backend selection (SQLite vs
+> Postgres), multi-tenant projects / tiers / quotas, and the retention / pruning
+> runbook (with cron and Kubernetes `CronJob` recipes), see the dedicated
+> [OPERATIONS.md](./OPERATIONS.md) guide. The notes below remain the quick
+> reference for a single-node deployment.
+
 ### Authentication & secrets
 
 Set `ADMIN_TOKEN` and `DASHBOARD_TOKEN` before any network-accessible deployment. API keys are stored as SHA-256 hashes; raw keys are shown once on creation. For additional hardening, deploy behind HTTPS and consider storing HMAC secrets in an external secrets manager (Vault, AWS Secrets Manager, etc.).
@@ -596,7 +602,7 @@ Per-API-key rate limiting is built in. The ingest endpoint enforces a fixed-wind
 
 ### Persistent storage
 
-Events and session metadata are stored in SQLite at `data/aep.db` and survive server restarts. The path is overridable via `DATABASE_PATH`. For higher throughput or multi-node deployments, consider migrating to PostgreSQL or placing a message queue (Kafka, SQS) in front of the ingest endpoint.
+Events and session metadata are stored in SQLite at `data/aep.db` by default and survive server restarts. The path is overridable via `DATABASE_PATH`. For higher throughput or multi-node deployments, switch to the built-in **PostgreSQL** backend (`STORAGE_BACKEND=postgres` + `DATABASE_URL`) — see [OPERATIONS.md §1–2](./OPERATIONS.md#1-choosing-a-storage-backend) — or place a message queue (Kafka, SQS) in front of the ingest endpoint.
 
 ### Deduplication at scale
 
