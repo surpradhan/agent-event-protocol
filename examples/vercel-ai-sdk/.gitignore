@@ -1,0 +1,5 @@
+# This example's "Run it" steps `npm init`/`npm install` here; keep the
+# generated package metadata + deps out of the AEP repo.
+node_modules/
+package.json
+package-lock.json
