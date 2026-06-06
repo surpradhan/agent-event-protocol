@@ -4,9 +4,10 @@
  * src/db/index.js — storage backend selector + async public API
  *
  * This module is a thin selector in front of a pluggable StorageBackend
- * (see ./backends/interface.js).  Today it always selects the SQLite backend
- * (./backends/sqlite.js); a future phase adds a Postgres backend behind the
- * same interface without touching any caller.
+ * (see ./backends/interface.js).  It selects the SQLite backend
+ * (./backends/sqlite.js) by default, or the Postgres backend
+ * (./backends/postgres.js) when STORAGE_BACKEND=postgres — both implement the
+ * same interface, so no caller changes when switching engines.
  *
  * The public API is **async** — every data-access function returns a Promise.
  * better-sqlite3 is internally synchronous, so the SQLite backend resolves
@@ -29,11 +30,14 @@
  *
  * Environment variables
  * ---------------------
- * STORAGE_BACKEND — which backend to use (default: "sqlite"; only "sqlite" today)
+ * STORAGE_BACKEND — which backend to use ("sqlite" (default) | "postgres")
  * DATABASE_PATH   — path to the SQLite file (read by the SQLite backend)
+ * DATABASE_URL    — Postgres connection string (read by the Postgres backend;
+ *                   falls back to standard PG* libpq env vars when unset)
  */
 
 const { SqliteBackend } = require("./backends/sqlite");
+const { PostgresBackend } = require("./backends/postgres");
 
 // ---------------------------------------------------------------------------
 // Backend selection + lifecycle
@@ -42,9 +46,9 @@ const { SqliteBackend } = require("./backends/sqlite");
 let backend = null;
 
 /**
- * Construct the configured StorageBackend.  Today this always returns the
- * SQLite backend; a future phase switches on STORAGE_BACKEND to return a
- * Postgres backend implementing the same interface.
+ * Construct the configured StorageBackend.  Switches on STORAGE_BACKEND:
+ * "sqlite" (default) returns the SQLite backend, "postgres" returns the
+ * Postgres backend — both implement the same interface.
  *
  * @returns {import('./backends/interface').StorageBackend}
  */
@@ -53,8 +57,10 @@ function createBackend() {
   switch (kind) {
     case "sqlite":
       return new SqliteBackend();
+    case "postgres":
+      return new PostgresBackend();
     default:
-      throw new Error(`Unknown STORAGE_BACKEND: '${kind}' (supported: sqlite)`);
+      throw new Error(`Unknown STORAGE_BACKEND: '${kind}' (supported: sqlite, postgres)`);
   }
 }
 
