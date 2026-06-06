@@ -26,7 +26,8 @@
  * insertEvent, getSessionEvents, getAllSessions, getSession, getSessionTree,
  * getWorkflow, getSessionCount, getMetrics, incrementCounter,
  * getPaginatedSessions, getPaginatedEvents,
- * createApiKey, getApiKeyByHash, getApiKeyById, listApiKeys, revokeApiKey
+ * createApiKey, getApiKeyByHash, getApiKeyById, listApiKeys, revokeApiKey,
+ * createProject, getProject, listProjects, getProjectEventCount
  *
  * Environment variables
  * ---------------------
@@ -181,6 +182,22 @@ async function revokeApiKey(id) {
   return getBackend().revokeApiKey(id);
 }
 
+async function createProject(record) {
+  return getBackend().createProject(record);
+}
+
+async function getProject(id) {
+  return getBackend().getProject(id);
+}
+
+async function listProjects() {
+  return getBackend().listProjects();
+}
+
+async function getProjectEventCount(tenantId) {
+  return getBackend().getProjectEventCount(tenantId);
+}
+
 // ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
@@ -212,5 +229,10 @@ module.exports = {
   getApiKeyByHash,
   getApiKeyById,
   listApiKeys,
-  revokeApiKey
+  revokeApiKey,
+  // Projects / tiers / quotas (Phase 13 PR-C)
+  createProject,
+  getProject,
+  listProjects,
+  getProjectEventCount
 };

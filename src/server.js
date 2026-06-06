@@ -18,6 +18,8 @@ const {
 const logger                   = require("./logger");
 const { metricsMiddleware, getPrometheusText } = require("./metrics");
 const { ingestRateLimit }      = require("./middleware/rateLimit");
+const { enforceQuota, recordAccepted } = require("./middleware/quota");
+const { TIER_NAMES, DEFAULT_TIER, getTierPolicy, isValidTier } = require("./tiers");
 const { validateQueryParams, validatePathParams } = require("./middleware/queryValidation");
 
 // ============================================================================
@@ -534,7 +536,7 @@ app.get("/stream", requireReadAccess, (req, res) => {
 
 // POST /events — ingest a single event
 // Rate limiting is applied per-key AFTER authentication resolves req.api_key_id.
-app.post("/events", requireApiKey("write"), ingestRateLimit, async (req, res) => {
+app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async (req, res) => {
   await db.incrementCounter("received");
 
   const event = req.body;
@@ -604,6 +606,10 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, async (req, res) =>
     return res.status(200).json({ accepted: true, duplicate: true, id: event.id });
   }
 
+  // Account the accepted event against the project's quota cache so the
+  // in-memory usage stays correct between DB refreshes (see middleware/quota.js).
+  recordAccepted(req.project_id || "default");
+
   logger.debug(
     { event_id: event.id, type: event.type, session_id: event.session_id, tenant_id: req.tenant_id },
     "event ingested"
@@ -671,7 +677,7 @@ app.get("/rejections", requireReadAccess, (req, res) => {
 
 // POST /admin/keys — generate a new API key
 app.post("/admin/keys", requireAdminAuth, async (req, res) => {
-  const { tenantId, label, scopes, hmacSecret } = req.body || {};
+  const { tenantId, projectId, label, scopes, hmacSecret } = req.body || {};
 
   if (!tenantId || typeof tenantId !== "string") {
     return res.status(400).json({ error: "'tenantId' is required and must be a non-empty string" });
@@ -685,15 +691,30 @@ app.post("/admin/keys", requireAdminAuth, async (req, res) => {
     });
   }
 
+  // If a project is named, it must exist. Defaults to the seeded 'default'
+  // project (unlimited) so existing key-creation calls keep working unchanged.
+  const resolvedProjectId = projectId || "default";
+  if (typeof resolvedProjectId !== "string") {
+    return res.status(400).json({ error: "'projectId' must be a string" });
+  }
+  const project = await db.getProject(resolvedProjectId);
+  if (!project) {
+    return res.status(400).json({ error: `Project not found: '${resolvedProjectId}'` });
+  }
+
   try {
     const result = await generateApiKey({
       tenantId,
+      projectId:  resolvedProjectId,
       label:      label      || "",
       scopes:     resolvedScopes,
       hmacSecret: hmacSecret || null
     });
 
-    logger.info({ tenant_id: result.tenantId, key_id: result.id, label: result.label }, "API key created");
+    logger.info(
+      { tenant_id: result.tenantId, project_id: result.projectId, key_id: result.id, label: result.label },
+      "API key created"
+    );
 
     return res.status(201).json({
       message:        "API key created. Store the key securely — it will not be shown again.",
@@ -701,6 +722,7 @@ app.post("/admin/keys", requireAdminAuth, async (req, res) => {
       id:             result.id,
       keyPrefix:      result.keyPrefix,
       tenantId:       result.tenantId,
+      projectId:      result.projectId,
       label:          result.label,
       scopes:         result.scopes,
       signingEnabled: !!hmacSecret
@@ -717,6 +739,7 @@ app.get("/admin/keys", requireAdminAuth, async (_req, res) => {
     id:        k.id,
     keyPrefix: k.key_prefix,
     tenantId:  k.tenant_id,
+    projectId: k.project_id || "default",
     label:     k.label,
     scopes:    JSON.parse(k.scopes || "[]"),
     createdAt: k.created_at,
@@ -738,6 +761,98 @@ app.delete("/admin/keys/:id", requireAdminAuth, async (req, res) => {
   await db.revokeApiKey(req.params.id);
   logger.info({ key_id: req.params.id }, "API key revoked");
   res.json({ ok: true, message: "API key revoked", id: req.params.id });
+});
+
+// ---------------------------------------------------------------------------
+// Routes — Admin: projects / tiers / quotas (Phase 13 PR-C)
+// ---------------------------------------------------------------------------
+
+/**
+ * Serialise a project DB row for API responses.  Adds a `usage` field (current
+ * accepted-event count for the project's tenant) so operators can see headroom.
+ */
+async function serializeProject(row, includeUsage = false) {
+  const out = {
+    id:            row.id,
+    name:          row.name,
+    tenantId:      row.tenant_id,
+    tier:          row.tier,
+    eventQuota:    row.event_quota ?? null,    // null = unlimited
+    retentionDays: row.retention_days ?? null, // null = unlimited
+    createdAt:     row.created_at
+  };
+  if (includeUsage) {
+    out.usage = await db.getProjectEventCount(row.tenant_id);
+  }
+  return out;
+}
+
+// POST /admin/projects — create a project on a named tier.
+// The tier's default event_quota / retention_days are materialised onto the
+// project row; either can be overridden per-project via the request body.
+app.post("/admin/projects", requireAdminAuth, async (req, res) => {
+  const { name, tenantId, tier, eventQuota, retentionDays } = req.body || {};
+
+  if (!tenantId || typeof tenantId !== "string") {
+    return res.status(400).json({ error: "'tenantId' is required and must be a non-empty string" });
+  }
+
+  const resolvedTier = tier || DEFAULT_TIER;
+  if (!isValidTier(resolvedTier)) {
+    return res.status(400).json({
+      error: "'tier' must be one of: " + TIER_NAMES.join(", ")
+    });
+  }
+
+  // Per-project overrides: undefined → inherit tier default; null → unlimited.
+  const policy = getTierPolicy(resolvedTier);
+  const resolvedQuota = eventQuota === undefined ? policy.event_quota : eventQuota;
+  const resolvedRetention = retentionDays === undefined ? policy.retention_days : retentionDays;
+
+  if (resolvedQuota !== null && (!Number.isInteger(resolvedQuota) || resolvedQuota < 0)) {
+    return res.status(400).json({ error: "'eventQuota' must be a non-negative integer or null (unlimited)" });
+  }
+  if (resolvedRetention !== null && (!Number.isInteger(resolvedRetention) || resolvedRetention < 0)) {
+    return res.status(400).json({ error: "'retentionDays' must be a non-negative integer or null (unlimited)" });
+  }
+
+  const record = {
+    id:             crypto.randomUUID(),
+    name:           typeof name === "string" ? name : "",
+    tenant_id:      tenantId,
+    tier:           resolvedTier,
+    event_quota:    resolvedQuota,
+    retention_days: resolvedRetention,
+    created_at:     new Date().toISOString()
+  };
+
+  try {
+    await db.createProject(record);
+    logger.info(
+      { project_id: record.id, tenant_id: record.tenant_id, tier: record.tier },
+      "project created"
+    );
+    return res.status(201).json({ project: await serializeProject(record) });
+  } catch (err) {
+    logger.error({ err }, "failed to create project");
+    return res.status(500).json({ error: sanitizeInput(err.message) });
+  }
+});
+
+// GET /admin/projects — list all projects (with current usage).
+app.get("/admin/projects", requireAdminAuth, async (_req, res) => {
+  const rows = await db.listProjects();
+  const projects = await Promise.all(rows.map(r => serializeProject(r, true)));
+  res.json({ projects });
+});
+
+// GET /admin/projects/:id — fetch a single project (with current usage).
+app.get("/admin/projects/:id", requireAdminAuth, async (req, res) => {
+  const row = await db.getProject(req.params.id);
+  if (!row) {
+    return res.status(404).json({ error: "Project not found" });
+  }
+  res.json({ project: await serializeProject(row, true) });
 });
 
 // ---------------------------------------------------------------------------

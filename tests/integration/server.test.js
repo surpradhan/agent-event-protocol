@@ -1014,3 +1014,203 @@ describe("Security — SSE Connection Limits", () => {
     assert.fail("Should have hit 429 limit during connection attempts");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 13 PR-C — Projects / tiers / quotas
+//
+// Backend-agnostic: this whole block runs identically under SQLite and under
+// the Postgres parity job (STORAGE_BACKEND=postgres).
+// ---------------------------------------------------------------------------
+
+describe("Admin API — /admin/projects (tiers)", () => {
+  let adminHeaders;
+  before(() => {
+    adminHeaders = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${adminToken}`,
+    };
+  });
+
+  test("a seeded 'default' project exists with unlimited quota", async () => {
+    const res = await fetch(`${baseUrl}/admin/projects/default`, { headers: adminHeaders });
+    assert.equal(res.status, 200);
+    const { project } = await res.json();
+    assert.equal(project.id, "default");
+    assert.equal(project.tier, "enterprise");
+    assert.equal(project.eventQuota, null, "default project quota is unlimited");
+    assert.equal(project.retentionDays, null);
+  });
+
+  test("POST /admin/projects creates a project and materialises tier defaults", async () => {
+    const res = await fetch(`${baseUrl}/admin/projects`, {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({ name: "Team A", tenantId: "tenant-team-a", tier: "team" }),
+    });
+    assert.equal(res.status, 201);
+    const { project } = await res.json();
+    assert.equal(project.tier, "team");
+    assert.equal(project.tenantId, "tenant-team-a");
+    // team tier default quota (90-day retention)
+    assert.equal(project.retentionDays, 90);
+    assert.ok(Number.isInteger(project.eventQuota), "team tier has a finite event quota");
+  });
+
+  test("POST /admin/projects supports per-project quota override", async () => {
+    const res = await fetch(`${baseUrl}/admin/projects`, {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({ tenantId: "tenant-override", tier: "free", eventQuota: 42 }),
+    });
+    assert.equal(res.status, 201);
+    const { project } = await res.json();
+    assert.equal(project.eventQuota, 42);
+  });
+
+  test("POST /admin/projects rejects an unknown tier with 400", async () => {
+    const res = await fetch(`${baseUrl}/admin/projects`, {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({ tenantId: "tenant-bad", tier: "platinum" }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("POST /admin/projects requires tenantId", async () => {
+    const res = await fetch(`${baseUrl}/admin/projects`, {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({ tier: "free" }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("GET /admin/projects lists projects with usage", async () => {
+    const res = await fetch(`${baseUrl}/admin/projects`, { headers: adminHeaders });
+    assert.equal(res.status, 200);
+    const { projects } = await res.json();
+    assert.ok(Array.isArray(projects));
+    assert.ok(projects.some(p => p.id === "default"));
+    assert.ok(projects.every(p => typeof p.usage === "number"));
+  });
+
+  test("GET /admin/projects/:id returns 404 for an unknown project", async () => {
+    const res = await fetch(`${baseUrl}/admin/projects/does-not-exist`, { headers: adminHeaders });
+    assert.equal(res.status, 404);
+  });
+
+  test("admin/projects requires the admin token", async () => {
+    const res = await fetch(`${baseUrl}/admin/projects`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.ok([401, 403, 503].includes(res.status), `Expected 4xx, got ${res.status}`);
+  });
+});
+
+describe("API keys bind to a project", () => {
+  test("POST /admin/keys with a valid projectId binds the key", async () => {
+    // Create a project first.
+    const pRes = await fetch(`${baseUrl}/admin/projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: "tenant-keybind", tier: "free" }),
+    });
+    const { project } = await pRes.json();
+
+    const kRes = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: "tenant-keybind", projectId: project.id, label: "bound" }),
+    });
+    assert.equal(kRes.status, 201);
+    const kBody = await kRes.json();
+    assert.equal(kBody.projectId, project.id);
+
+    // Listing surfaces the binding.
+    const listRes = await fetch(`${baseUrl}/admin/keys`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    const { keys } = await listRes.json();
+    const found = keys.find(k => k.id === kBody.id);
+    assert.ok(found, "created key appears in the listing");
+    assert.equal(found.projectId, project.id);
+  });
+
+  test("POST /admin/keys with an unknown projectId returns 400", async () => {
+    const res = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: "tenant-x", projectId: "no-such-project" }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("a key with no projectId defaults to the 'default' project", async () => {
+    const res = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: "tenant-default-proj", label: "no-project" }),
+    });
+    const body = await res.json();
+    assert.equal(body.projectId, "default");
+  });
+});
+
+describe("POST /events — quota enforcement", () => {
+  test("ingest is rejected with 429 once a project's event quota is reached", async () => {
+    const QUOTA = 3;
+    const tenant = "tenant-quota-" + crypto.randomUUID().slice(0, 8);
+
+    // Project with a tiny quota.
+    const pRes = await fetch(`${baseUrl}/admin/projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: tenant, tier: "free", eventQuota: QUOTA }),
+    });
+    const { project } = await pRes.json();
+
+    // A write key bound to that project + tenant.
+    const kRes = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: tenant, projectId: project.id, scopes: ["read", "write"] }),
+    });
+    const quotaKey = (await kRes.json()).key;
+
+    // First QUOTA events accepted.
+    for (let i = 0; i < QUOTA; i++) {
+      const ev = makeEvent({
+        id: `evt_quota_${i}_${crypto.randomUUID().replace(/-/g, "")}`,
+        session_id: `ses_quota_${tenant}`,
+        trace_id: `trc_quota_${tenant}`,
+      });
+      const r = await ingest(ev, quotaKey);
+      assert.equal(r.status, 202, `event ${i} should be accepted`);
+    }
+
+    // The next one is over quota → 429 with a Retry-After header.
+    const over = await ingest(
+      makeEvent({
+        id: `evt_quota_over_${crypto.randomUUID().replace(/-/g, "")}`,
+        session_id: `ses_quota_${tenant}`,
+        trace_id: `trc_quota_${tenant}`,
+      }),
+      quotaKey
+    );
+    assert.equal(over.status, 429);
+    const body = await over.json();
+    assert.equal(body.accepted, false);
+    assert.equal(body.quota, QUOTA);
+    assert.equal(over.headers.get("Retry-After"), "3600");
+  });
+
+  test("the unlimited default project never blocks ingest on quota", async () => {
+    // writeKey is bound to the default (enterprise/unlimited) project.
+    for (let i = 0; i < 5; i++) {
+      const r = await ingest(
+        makeEvent({ id: `evt_unl_${i}_${crypto.randomUUID().replace(/-/g, "")}` })
+      );
+      assert.equal(r.status, 202);
+    }
+  });
+});

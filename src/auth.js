@@ -130,13 +130,15 @@ function extractBearerOrQuery(req) {
  * Generate a new API key, persist it to the DB, and return the one-time
  * visible raw key alongside the stored record metadata.
  *
- * @param {{ tenantId: string, label?: string, scopes?: string[], hmacSecret?: string|null }} opts
- * @returns {{ key: string, id: string, keyPrefix: string, tenantId: string, label: string, scopes: string[] }}
+ * @param {{ tenantId: string, projectId?: string, label?: string, scopes?: string[], hmacSecret?: string|null }} opts
+ * @returns {{ key: string, id: string, keyPrefix: string, tenantId: string, projectId: string, label: string, scopes: string[] }}
  */
-async function generateApiKey({ tenantId, label = "", scopes = ["read", "write"], hmacSecret = null }) {
+async function generateApiKey({ tenantId, projectId = "default", label = "", scopes = ["read", "write"], hmacSecret = null }) {
   if (!tenantId || typeof tenantId !== "string") {
     throw new Error("tenantId is required and must be a non-empty string");
   }
+
+  const resolvedProjectId = projectId || "default";
 
   const id     = crypto.randomUUID();
   const rawKey = "aep_" + crypto.randomBytes(24).toString("hex"); // aep_ + 48 hex chars
@@ -148,13 +150,14 @@ async function generateApiKey({ tenantId, label = "", scopes = ["read", "write"]
     key_hash:    keyHash,
     key_prefix:  keyPrefix,
     tenant_id:   tenantId,
+    project_id:  resolvedProjectId,
     label,
     scopes:      JSON.stringify(scopes),
     hmac_secret: hmacSecret,
     created_at:  new Date().toISOString()
   });
 
-  return { key: rawKey, id, keyPrefix, tenantId, label, scopes };
+  return { key: rawKey, id, keyPrefix, tenantId, projectId: resolvedProjectId, label, scopes };
 }
 
 // ---------------------------------------------------------------------------
@@ -166,6 +169,7 @@ async function generateApiKey({ tenantId, label = "", scopes = ["read", "write"]
  *
  * On success:
  *   req.tenant_id        — the tenant bound to the key
+ *   req.project_id       — the project bound to the key (default: 'default')
  *   req.api_key_id       — the key's UUID
  *   req.api_key_scopes   — string[] of granted scopes
  *   req.api_key_record   — full DB row (includes hmac_secret for ingest use)
@@ -206,6 +210,7 @@ function requireApiKey(scope) {
     }
 
     req.tenant_id      = record.tenant_id;
+    req.project_id     = record.project_id || "default";
     req.api_key_id     = record.id;
     req.api_key_scopes = JSON.parse(record.scopes || "[]");
     req.api_key_record = record;
@@ -252,6 +257,7 @@ async function requireReadAccess(req, res, next) {
       const scopes = JSON.parse(record.scopes || "[]");
       if (scopes.includes("read")) {
         req.tenant_id      = record.tenant_id;
+        req.project_id     = record.project_id || "default";
         req.api_key_id     = record.id;
         req.api_key_scopes = scopes;
         req.is_admin       = false;

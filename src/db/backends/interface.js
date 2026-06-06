@@ -141,6 +141,32 @@ class StorageBackend {
   async revokeApiKey(id) {
     throw new Error("StorageBackend.revokeApiKey() not implemented");
   }
+
+  // ----- projects (Phase 13 PR-C) -----
+
+  /** Persist a new project record. */
+  async createProject(record) {
+    throw new Error("StorageBackend.createProject() not implemented");
+  }
+
+  /** Look up a project by its id, or null. */
+  async getProject(id) {
+    throw new Error("StorageBackend.getProject() not implemented");
+  }
+
+  /** Return all projects (most-recently-created first). */
+  async listProjects() {
+    throw new Error("StorageBackend.listProjects() not implemented");
+  }
+
+  /**
+   * Count accepted events that currently count against a project's quota.
+   * Quota is metered per project by the project's tenant_id (events carry
+   * tenant_id, not project_id). Resolves a Number.
+   */
+  async getProjectEventCount(tenantId) {
+    throw new Error("StorageBackend.getProjectEventCount() not implemented");
+  }
 }
 
 module.exports = { StorageBackend };
