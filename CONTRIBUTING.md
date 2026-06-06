@@ -132,6 +132,15 @@ Then open a PR on GitHub with a clear title and description.
 
 A review approval is **not** currently required to merge, but a maintainer still reviews every PR. Force-pushes to `main` and branch deletion are disabled, and these rules apply to maintainers too.
 
+### Releasing the Node SDK
+
+The npm release of `@surpradhan/aep` is gated to the same standard as merging to `main`. Pushing a `node-sdk-v*` tag triggers the [`Release Node SDK`](.github/workflows/release-node-sdk.yml) workflow, which:
+
+1. **Verifies the tag is on reviewed code** — the `verify` job fails fast unless the tagged commit is an ancestor of `origin/main`, so a tag cut from an unreviewed or off-`main` commit can never publish.
+2. **Requires a human approval to publish** — the `publish` job runs in the `npm-publish` deployment environment (required reviewers), and `npm publish` only runs after a maintainer approves the deployment. `NPM_TOKEN` is an *environment* secret on `npm-publish`, so it is only exposed to that gated job.
+
+This is intentionally a release workflow, **not** a required PR status check, so it is not part of the required-checks list above and the drift-guard does not track it. See `sdks/node/README.md` → *Publishing / Releases* for the full flow and the one-time maintainer environment setup.
+
 ---
 
 ## ✅ Pull Request Checklist

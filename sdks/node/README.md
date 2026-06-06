@@ -145,14 +145,36 @@ this package. To cut a release:
    git push origin node-sdk-v0.3.0
    ```
 
-3. The workflow runs `npm ci` → `npm run build` → `npm test` → `npm publish`
-   with [npm provenance](https://docs.npmjs.com/generating-provenance-statements)
+3. The `verify` job runs immediately: it confirms the tagged commit is an
+   ancestor of `origin/main` (so the release can only be cut from reviewed,
+   merged code), then runs `npm ci` → `npm run build` → `npm test`. A tag that
+   points at an unreviewed or off-`main` commit fails here and never reaches the
+   publish step.
+4. Once `verify` is green, the workflow requests a deployment to the
+   **`npm-publish`** environment, which has **required reviewers**. A maintainer
+   approves it in the Actions UI, and only then does the `publish` job run
+   `npm publish` with [npm provenance](https://docs.npmjs.com/generating-provenance-statements)
    enabled, attesting that the tarball was built from this repo at that tag.
+
+Why both gates: `main` is PR-protected, but tags are not — anyone with write
+access could otherwise tag any commit and trigger a real publish. The ancestry
+check rejects off-`main` tags cheaply, and the required-reviewer environment
+makes the publish itself need a human approval, enforced by GitHub Actions
+independent of who pushed the tag. Provenance attests *what* was built but does
+not gate *which commit* gets released, which is why these two checks are added
+on top of it.
 
 The published tarball matches `npm pack --dry-run` locally — only `dist/`,
 `README.md`, `LICENSE`, and `package.json` ship; `src/`, `tests/`, `demos/`,
 and tooling configs are excluded by the `"files"` allowlist in `package.json`.
 
-**One-time maintainer setup:** add an npm automation token with publish
-access for `@surpradhan/aep` as the `NPM_TOKEN` action secret on the repo
-(Settings → Secrets and variables → Actions).
+**One-time maintainer setup (GitHub UI — not code):**
+
+1. Generate an npm automation token with publish access for `@surpradhan/aep`
+   (npm → Access Tokens → Automation).
+2. Create a deployment environment named **`npm-publish`**
+   (Settings → Environments → New environment) and add the release owners under
+   **Required reviewers**.
+3. Add the npm token as an **environment** secret named `NPM_TOKEN` on the
+   `npm-publish` environment — *not* as a repo-wide Actions secret — so it is
+   only ever exposed to the approval-gated `publish` job.
