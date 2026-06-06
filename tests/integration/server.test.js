@@ -36,6 +36,10 @@ function clearCache() {
 clearCache();
 
 const { app } = require("../../src/server");
+// The DB API is async and lazily initialised: server.js only auto-init()s when
+// run as the main module. Tests drive `app` directly, so we must initialise the
+// storage backend ourselves (open connection + run migrations) before listening.
+const db = require("../../src/db");
 
 // ---------------------------------------------------------------------------
 // Server lifecycle
@@ -55,6 +59,9 @@ before(async () => {
   // Set DASHBOARD_TOKEN so that requireReadAccess properly enforces auth in tests
   // (without it the middleware allows unauthenticated access in dev mode)
   process.env.DASHBOARD_TOKEN = "test-dash-token-" + crypto.randomUUID();
+
+  // Initialise the storage backend before the server handles any request.
+  await db.init();
 
   await new Promise((resolve) => {
     server = app.listen(0, "127.0.0.1", () => {
@@ -91,6 +98,7 @@ before(async () => {
 
 after(async () => {
   await new Promise((resolve) => server.close(resolve));
+  await db.closeDb();
   try { fs.unlinkSync(TEST_DB); } catch (_) {}
   delete process.env.ADMIN_TOKEN;
   delete process.env.DASHBOARD_TOKEN;

@@ -25,7 +25,7 @@
  *      Accepts the token via Authorization: Bearer <token> only.
  *
  * Key management helpers exported for use in server.js:
- *   generateApiKey({ tenantId, label, scopes, hmacSecret })
+ *   await generateApiKey({ tenantId, label, scopes, hmacSecret })
  *     → { key, id, keyPrefix, tenantId, label, scopes }
  *
  * Internal helpers:
@@ -133,7 +133,7 @@ function extractBearerOrQuery(req) {
  * @param {{ tenantId: string, label?: string, scopes?: string[], hmacSecret?: string|null }} opts
  * @returns {{ key: string, id: string, keyPrefix: string, tenantId: string, label: string, scopes: string[] }}
  */
-function generateApiKey({ tenantId, label = "", scopes = ["read", "write"], hmacSecret = null }) {
+async function generateApiKey({ tenantId, label = "", scopes = ["read", "write"], hmacSecret = null }) {
   if (!tenantId || typeof tenantId !== "string") {
     throw new Error("tenantId is required and must be a non-empty string");
   }
@@ -143,7 +143,7 @@ function generateApiKey({ tenantId, label = "", scopes = ["read", "write"], hmac
   const keyHash   = hashKey(rawKey);
   const keyPrefix = rawKey.slice(0, 12); // "aep_" + first 8 hex chars
 
-  getDb().createApiKey({
+  await getDb().createApiKey({
     id,
     key_hash:    keyHash,
     key_prefix:  keyPrefix,
@@ -174,7 +174,7 @@ function generateApiKey({ tenantId, label = "", scopes = ["read", "write"], hmac
  * @returns {import('express').RequestHandler}
  */
 function requireApiKey(scope) {
-  return (req, res, next) => {
+  return async (req, res, next) => {
     const rawKey = extractApiKey(req);
 
     if (!rawKey) {
@@ -185,7 +185,7 @@ function requireApiKey(scope) {
     }
 
     const keyHash = hashKey(rawKey);
-    const record  = getDb().getApiKeyByHash(keyHash);
+    const record  = await getDb().getApiKeyByHash(keyHash);
 
     if (!record) {
       return res.status(401).json({ error: "Invalid API key" });
@@ -229,7 +229,7 @@ function requireApiKey(scope) {
  *
  * @returns {import('express').RequestHandler}
  */
-function requireReadAccess(req, res, next) {
+async function requireReadAccess(req, res, next) {
   const dashToken = process.env.DASHBOARD_TOKEN;
 
   // 1. Try dashboard token (grants full read, no tenant filter).
@@ -246,7 +246,7 @@ function requireReadAccess(req, res, next) {
   const rawKey = extractApiKey(req);
   if (rawKey) {
     const keyHash = hashKey(rawKey);
-    const record  = getDb().getApiKeyByHash(keyHash);
+    const record  = await getDb().getApiKeyByHash(keyHash);
 
     if (record && !record.revoked_at) {
       const scopes = JSON.parse(record.scopes || "[]");
