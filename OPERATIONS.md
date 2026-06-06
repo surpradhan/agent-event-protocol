@@ -178,8 +178,9 @@ at creation. You can override either per-project in the request body
 -d '{"tenantId":"acme","tier":"team","eventQuota":2000000,"retentionDays":60}'
 ```
 
-The response (and `GET /admin/projects`, `GET /admin/projects/:id`) includes the
-project's current usage. List and inspect:
+The create response returns the project record; `GET /admin/projects` and
+`GET /admin/projects/:id` additionally include the project's current usage. List
+and inspect:
 
 ```bash
 curl -s http://localhost:8787/admin/projects     -H "Authorization: Bearer $ADMIN_TOKEN"
