@@ -4,6 +4,32 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Node SDK 0.3.0 — first npm release, 2026-06-06
+
+First published release of the Node SDK (`@surpradhan/aep`) to the public npm
+registry. There are **no SDK code changes since `0.2.0`** — the version is
+bumped to start the public npm line at `0.3.0`, and the published tarball is
+functionally identical to what `0.2.0` would have been.
+
+- **`sdks/node/package.json` / `sdks/node/package-lock.json`** — version
+  `0.2.0` → `0.3.0`.
+- **Released via the tag-triggered `Release Node SDK` workflow.** Pushing
+  `node-sdk-v0.3.0` (on the squash commit on `main`) runs `npm publish
+  --provenance --access public`. The release is gated to reviewed code: the
+  pipeline fails unless the tagged commit is an ancestor of `origin/main`, and
+  the actual publish runs only after a required-reviewer approval in the
+  `npm-publish` deployment environment (see #49 / #50 and
+  `sdks/node/README.md` → Publishing / Releases).
+- **Contents (unchanged from `0.2.0`):** SDK core — `createEvent`,
+  `validateEvent`, `signEvent`/`verifySignature`, and `AEPClient` (dual
+  ESM + CJS, cross-language HMAC parity) — plus zero-code LangChain.js /
+  LangGraph auto-instrumentation via `instrument()`. The tarball ships only
+  `dist/` (+ README, LICENSE, package.json) via the `"files"` allowlist.
+
+Drift-guard impact: none — version/docs only, no CI workflow change.
+
+---
+
 ## Vercel AI SDK integration docs (OTEL bridge), 2026-06-06
 
 **Docs + example only — no new instrumentor code, no SDK or CI changes.** The
