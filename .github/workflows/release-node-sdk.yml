@@ -4,26 +4,48 @@
 # This is a *release* workflow only — it never runs on push to a branch and
 # never runs on pull requests. It is NOT a required PR status check, so the
 # `.github/scripts/check_required_checks.py` drift-guard does NOT need to
-# (and must not) list this job. PR-time test coverage for the Node SDK is
+# (and must not) list these jobs. PR-time test coverage for the Node SDK is
 # already provided by the `Node SDK tests (20.x / 22.x)` jobs in ci.yml.
 #
-# ── Maintainer setup ────────────────────────────────────────────────────────
+# ── Why two jobs ────────────────────────────────────────────────────────────
+# `main` is PR-protected (review + green CI before merge), but *tags* are not —
+# anyone with write access can push a `node-sdk-v*` tag at any commit, including
+# one that never landed on `main`. npm provenance attests *what source* a tarball
+# came from but does not stop a tag being cut from unreviewed code. So the publish
+# is gated twice, independently:
+#
+#   verify  → fails fast (before any approval is requested) unless the tagged
+#             commit is an ancestor of origin/main, i.e. it was merged via PR.
+#             Also builds + tests, so the approver sees a green pre-flight.
+#   publish → runs in the `npm-publish` Environment, which has required
+#             reviewers. The actual `npm publish` only happens after a human
+#             approves the deployment — enforced by Actions itself, independent
+#             of who pushed the tag.
+#
+# ── Maintainer setup (one-time, GitHub UI — cannot be done from code) ────────
 # 1. Generate an npm automation token with publish access for
 #    `@surpradhan/aep` (npm → Access Tokens → Automation).
-# 2. Add it to this repo as the `NPM_TOKEN` action secret
-#    (Settings → Secrets and variables → Actions → New repository secret).
+# 2. Create a deployment Environment named `npm-publish`
+#    (Settings → Environments → New environment) and add yourself / the release
+#    owners under **Required reviewers**. Optionally restrict it to `node-sdk-v*`
+#    tags via the environment's deployment-branch/tag rules.
+# 3. Add the npm token as an *environment* secret named `NPM_TOKEN` on the
+#    `npm-publish` environment (NOT as a repo-wide Actions secret). Scoping it to
+#    the environment means the token is only ever exposed to the gated job.
 #
 # ── Cutting a release ───────────────────────────────────────────────────────
 # 1. Bump `sdks/node/package.json` `"version"` on a PR; squash-merge to main.
 # 2. From main, tag the release commit and push the tag:
 #        git tag node-sdk-v0.3.0
 #        git push origin node-sdk-v0.3.0
-# 3. This workflow then builds, tests, and publishes to npm with provenance.
-#    The published tarball matches `npm pack` locally (only `dist/`, README,
-#    LICENSE, and package.json).
+# 3. `verify` runs immediately. If the tag is on merged main and build+test pass,
+#    a deployment to `npm-publish` is requested — approve it in the Actions UI to
+#    let `publish` build, test, and publish to npm with provenance. The published
+#    tarball matches `npm pack` locally (only `dist/`, README, LICENSE, and
+#    package.json).
 #
-# Provenance requires `id-token: write` (OIDC) on the job so the npm CLI can
-# request a Sigstore-signed attestation from GitHub's OIDC provider.
+# Provenance requires `id-token: write` (OIDC) on the publish job so the npm CLI
+# can request a Sigstore-signed attestation from GitHub's OIDC provider.
 
 name: Release Node SDK
 
@@ -32,23 +54,49 @@ on:
     tags:
       - 'node-sdk-v*'
 
+# Serialize releases: never let two tag pushes publish at the same time. A
+# stable group (not per-tag) means any in-flight release blocks the next one
+# rather than racing it; we never cancel a publish that may already be partway
+# through, so cancel-in-progress stays false.
+concurrency:
+  group: release-node-sdk
+  cancel-in-progress: false
+
 jobs:
-  publish:
-    name: Publish @surpradhan/aep to npm
+  # Pre-flight: cheap guardrails that run *before* the approval gate, so a
+  # mis-cut tag is rejected without ever pausing a reviewer.
+  verify:
+    name: Verify release tag (ancestry + build + test)
     runs-on: ubuntu-latest
 
-    permissions:
-      contents: read
-      id-token: write
-
     steps:
-      - uses: actions/checkout@v4
+      # Actions are pinned to immutable commit SHAs (not floating tags)
+      # throughout this release workflow; bump the SHA + comment together on
+      # upgrade. See the publish job for why pinning matters most there.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # Full history so the ancestry check can resolve origin/main; a
+          # shallow checkout would not contain main's commits.
+          fetch-depth: 0
+
+      - name: Verify tag points at a commit merged to main
+        # The tagged commit must be reachable from origin/main — i.e. it landed
+        # on main through the PR-protected merge path. This rejects tags cut from
+        # unreviewed or off-main commits before any publish/approval happens.
+        run: |
+          git fetch --quiet --no-tags origin main
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "✓ $GITHUB_SHA is an ancestor of origin/main — tag cut from reviewed, merged code."
+          else
+            echo "::error::Tag $GITHUB_REF_NAME ($GITHUB_SHA) is not an ancestor of origin/main."
+            echo "::error::Releases must be cut from commits merged to main via PR. Refusing to publish."
+            exit 1
+          fi
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
-          registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
           cache-dependency-path: sdks/node/package-lock.json
 
@@ -65,6 +113,41 @@ jobs:
         # AEP server is reachable — same as the PR-time `node-sdk-test` job.
         working-directory: sdks/node
         run: npm test
+
+  # Gated publish: only runs after `verify` is green AND a required reviewer
+  # approves the deployment to the `npm-publish` environment. NPM_TOKEN is an
+  # *environment* secret on `npm-publish`, so it is only exposed here.
+  publish:
+    name: Publish @surpradhan/aep to npm
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: npm-publish
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      # Pinned to an immutable commit SHA (not a floating tag): this job path
+      # holds id-token: write + the npm token, so a hijacked action tag must not
+      # be able to inject into it. Bump the SHA + comment together on upgrade.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+          cache-dependency-path: sdks/node/package-lock.json
+
+      - name: Install dependencies
+        working-directory: sdks/node
+        run: npm ci
+
+      - name: Build (dual ESM + CJS)
+        working-directory: sdks/node
+        run: npm run build
 
       - name: Publish to npm with provenance
         working-directory: sdks/node
