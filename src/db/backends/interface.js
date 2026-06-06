@@ -167,6 +167,40 @@ class StorageBackend {
   async getProjectEventCount(tenantId) {
     throw new Error("StorageBackend.getProjectEventCount() not implemented");
   }
+
+  // ----- retention / pruning (Phase 13 PR-D) -----
+
+  /**
+   * Delete events for a tenant whose `time` is strictly older than `cutoff`
+   * (an ISO-8601 string), then reconcile the derived `sessions` summary rows:
+   * sessions that lost all their events are deleted, and sessions that lost
+   * some are recomputed (event_count / started_at / updated_at) from their
+   * remaining events.  The whole operation runs in a single transaction.
+   *
+   * Retention is scoped by the project's `tenant_id` (events carry tenant_id,
+   * not project_id) — exactly like quota metering in PR-C.
+   *
+   * @param {string} tenantId  the project's tenant
+   * @param {string} cutoff    ISO-8601 timestamp; events with time < cutoff go
+   * @returns {Promise<{ events_deleted: number, sessions_deleted: number }>}
+   *          counts as native numbers on every backend.
+   */
+  async pruneEventsBefore(tenantId, cutoff) {
+    throw new Error("StorageBackend.pruneEventsBefore() not implemented");
+  }
+
+  /**
+   * Count events for a tenant whose `time` is strictly older than `cutoff`
+   * (an ISO-8601 string), without deleting anything.  Used by the prune
+   * job's `--dry-run` mode to report what *would* be deleted.  Resolves a Number.
+   *
+   * @param {string} tenantId
+   * @param {string} cutoff  ISO-8601 timestamp
+   * @returns {Promise<number>}
+   */
+  async countEventsBefore(tenantId, cutoff) {
+    throw new Error("StorageBackend.countEventsBefore() not implemented");
+  }
 }
 
 module.exports = { StorageBackend };

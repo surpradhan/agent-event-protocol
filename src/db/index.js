@@ -27,7 +27,8 @@
  * getWorkflow, getSessionCount, getMetrics, incrementCounter,
  * getPaginatedSessions, getPaginatedEvents,
  * createApiKey, getApiKeyByHash, getApiKeyById, listApiKeys, revokeApiKey,
- * createProject, getProject, listProjects, getProjectEventCount
+ * createProject, getProject, listProjects, getProjectEventCount,
+ * countEventsBefore, pruneEventsBefore
  *
  * Environment variables
  * ---------------------
@@ -198,6 +199,14 @@ async function getProjectEventCount(tenantId) {
   return getBackend().getProjectEventCount(tenantId);
 }
 
+async function countEventsBefore(tenantId, cutoff) {
+  return getBackend().countEventsBefore(tenantId, cutoff);
+}
+
+async function pruneEventsBefore(tenantId, cutoff) {
+  return getBackend().pruneEventsBefore(tenantId, cutoff);
+}
+
 // ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
@@ -234,5 +243,8 @@ module.exports = {
   createProject,
   getProject,
   listProjects,
-  getProjectEventCount
+  getProjectEventCount,
+  // Retention / pruning (Phase 13 PR-D)
+  countEventsBefore,
+  pruneEventsBefore
 };
