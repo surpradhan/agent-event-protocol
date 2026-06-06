@@ -20,9 +20,17 @@ const fs = require("fs");
 // Bootstrap: isolate the database before any server code is loaded
 // ---------------------------------------------------------------------------
 
-// Use a fresh temp DB per test run so we don't touch data/aep.db
+// Backend under test: defaults to SQLite. The Postgres parity CI job sets
+// STORAGE_BACKEND=postgres (+ DATABASE_URL) to run this exact same suite against
+// a Postgres service container — proving both backends behave identically.
+const USE_POSTGRES = (process.env.STORAGE_BACKEND || "").toLowerCase() === "postgres";
+
+// SQLite only: use a fresh temp DB file per run so we don't touch data/aep.db.
+// Under Postgres there is no file to manage — db.init() targets DATABASE_URL.
 const TEST_DB = path.join(os.tmpdir(), `aep-test-${Date.now()}.db`);
-process.env.DATABASE_PATH = TEST_DB;
+if (!USE_POSTGRES) {
+  process.env.DATABASE_PATH = TEST_DB;
+}
 
 // Clear require cache entries so a fresh DB singleton is created even if
 // another test file already loaded these modules.
@@ -99,10 +107,12 @@ before(async () => {
 after(async () => {
   await new Promise((resolve) => server.close(resolve));
   await db.closeDb();
-  try { fs.unlinkSync(TEST_DB); } catch (_) {}
+  if (!USE_POSTGRES) {
+    try { fs.unlinkSync(TEST_DB); } catch (_) {}
+    delete process.env.DATABASE_PATH;
+  }
   delete process.env.ADMIN_TOKEN;
   delete process.env.DASHBOARD_TOKEN;
-  delete process.env.DATABASE_PATH;
 });
 
 // ---------------------------------------------------------------------------

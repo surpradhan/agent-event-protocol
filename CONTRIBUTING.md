@@ -122,6 +122,7 @@ Then open a PR on GitHub with a clear title and description.
   - `Node SDK tests (20.x)`
   - `Node SDK tests (22.x)`
   - `test (20.x)`
+  - `Postgres parity tests`
   - `build`
   - `docker`
   - `Required checks in sync`

@@ -23,139 +23,19 @@ const Database         = require("better-sqlite3");
 const { runMigrations } = require("../migrate");
 const { StorageBackend } = require("./interface");
 
+// Pure, backend-agnostic helpers (formatSession, buildTree, computeMaxDepth,
+// cursor codec, applyTextFilter) live in ./_helpers so the SQLite and Postgres
+// backends share byte-identical logic and therefore identical return shapes.
+const {
+  formatSession,
+  buildTree,
+  computeMaxDepth,
+  decodeCursor,
+  encodeCursor,
+  applyTextFilter
+} = require("./_helpers");
+
 const DEFAULT_DB_PATH = path.join(__dirname, "..", "..", "..", "data", "aep.db");
-
-// ---------------------------------------------------------------------------
-// Pure helpers (operate on plain arrays / strings — no DB instance needed)
-// ---------------------------------------------------------------------------
-
-/**
- * Format a raw sessions row into the public session shape (all fields included).
- */
-function formatSession(row) {
-  return {
-    session_id:        row.session_id,
-    trace_id:          row.trace_id,
-    source:            row.source,
-    parent_session_id: row.parent_session_id ?? null,
-    agent_role:        row.agent_role        ?? null,
-    event_count:       row.event_count,
-    started_at:        row.started_at,
-    updated_at:        row.updated_at
-  };
-}
-
-/**
- * Given a flat array of session rows and a root session_id, build a recursive
- * tree structure: { session, children: [{ session, children: [...] }] }.
- */
-function buildTree(rows, rootId) {
-  const byId     = {};
-  const byParent = {};
-
-  for (const row of rows) {
-    byId[row.session_id] = row;
-    const parent = row.parent_session_id || null;
-    if (!byParent[parent]) byParent[parent] = [];
-    byParent[parent].push(row.session_id);
-  }
-
-  function buildNode(id) {
-    const childIds = byParent[id] || [];
-    return {
-      session:  formatSession(byId[id]),
-      children: childIds.map(buildNode)
-    };
-  }
-
-  return buildNode(rootId);
-}
-
-/**
- * Compute the maximum tree depth across all sessions.  Groups sessions by
- * trace_id, builds a tree per trace, then returns the deepest leaf depth.
- * A single-session workflow has depth 1.
- */
-function computeMaxDepth(rows) {
-  if (rows.length === 0) return 0;
-
-  const idSet    = new Set(rows.map(r => r.session_id));
-  const byParent = {};
-
-  for (const row of rows) {
-    const parent =
-      row.parent_session_id && idSet.has(row.parent_session_id)
-        ? row.parent_session_id
-        : null;
-    if (!byParent[parent]) byParent[parent] = [];
-    byParent[parent].push(row.session_id);
-  }
-
-  const memo = {};
-  function depthOf(id, visited = new Set()) {
-    if (memo[id] !== undefined) return memo[id];
-    if (visited.has(id)) return 1; // Cycle detected
-    if (visited.size > 1000) return 1; // Depth limit exceeded
-
-    const children = byParent[id] || [];
-    if (children.length === 0) {
-      memo[id] = 1;
-      return 1;
-    }
-
-    visited.add(id);
-    const childDepths = children.map(child => depthOf(child, visited));
-    visited.delete(id);
-
-    const depth = 1 + Math.max(...childDepths);
-    memo[id] = depth;
-    return depth;
-  }
-
-  const roots = rows.filter(
-    r => !r.parent_session_id || !idSet.has(r.parent_session_id)
-  );
-
-  if (roots.length === 0) return 0;
-  return Math.max(...roots.map(r => depthOf(r.session_id)));
-}
-
-/**
- * Decode a base64url cursor string.  Returns null on any error.
- */
-function decodeCursor(cursor) {
-  if (!cursor) return null;
-  try {
-    return JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
-  } catch (_) {
-    return null;
-  }
-}
-
-/**
- * Encode a cursor object to a base64url string.
- */
-function encodeCursor(obj) {
-  return Buffer.from(JSON.stringify(obj), "utf8").toString("base64url");
-}
-
-/**
- * Apply the free-text `q` filter to an array of events (mirrors the original
- * in-memory implementation: matches id, type, causation_id, or payload).
- */
-function applyTextFilter(events, q) {
-  if (!q) return events;
-  const query = q.toLowerCase();
-  return events.filter(e => {
-    const payload = JSON.stringify(e.payload || {}).toLowerCase();
-    return (
-      e.id.toLowerCase().includes(query) ||
-      e.type.toLowerCase().includes(query) ||
-      (e.causation_id || "").toLowerCase().includes(query) ||
-      payload.includes(query)
-    );
-  });
-}
 
 // ---------------------------------------------------------------------------
 // SqliteBackend
