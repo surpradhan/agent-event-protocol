@@ -32,10 +32,11 @@ const result = await generateText({
     metadata: {
       "demo.kind": "vercel-ai-sdk-otel-bridge",
     },
-    // Off by default — turning these on includes the prompt + tool args/results
-    // in payload.attributes. Mind PII before enabling in production.
-    recordInputs: true,
-    recordOutputs: true,
+    // Off by default — uncommenting these includes the prompt + tool
+    // args/results in payload.attributes. Mind PII before enabling, especially
+    // in production. Left disabled here to match the default Vercel behavior.
+    // recordInputs: true,
+    // recordOutputs: true,
   },
 });
 
