@@ -4,6 +4,59 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Phase 12g (PR2) — Node.js LangChain.js / LangGraph auto-instrumentation, 2026-06-05
+
+Builds on the Node SDK core (PR1). No change to the SDK core's event output or to
+any other SDK. Adds the first **Node-runtime** zero-code framework instrumentation,
+completing the user's "all three remaining SDKs" (OpenAI Agents 12e, Claude Agent
+SDK 12f, Node.js 12g).
+
+**New: `instrument()` for LangChain.js / LangGraph** (`sdks/node/src/instrument.ts`)
+
+`await instrument()` patches `CompiledStateGraph.invoke`/`.stream` to inject an AEP
+callback handler, so an unmodified `graph.invoke(...)` emits a full AEP causation
+DAG with no other code changes. Tested against `@langchain/langgraph` 1.x +
+`@langchain/core` 1.x.
+
+- **Architecture mirrors the Python SDK.** A transport-neutral `EmissionCore`
+  (background drain-loop emitter + bounded run table) owns all
+  causation/trace/session/handoff threading and exposes semantic ops
+  (`openAgentRun`/`closeAgentRun`/`openToolRun`/…). A framework-agnostic
+  `LangGraphMapper` (never imports LangChain → unit-testable with plain objects)
+  translates normalized callback info into core calls. The LangChain
+  `BaseCallbackHandler` adapter is built lazily and is the only piece that touches
+  the framework.
+- **Event mapping (settled against a real offline trace):** the graph run (no
+  parent) → orchestrator `task.*`; each LangGraph node (`metadata.langgraph_node`)
+  with a tracked parent → sub-agent `task.*` via `handoff.started`/`completed`;
+  `tool` callbacks → `tool.called`/`tool.result`/`error.raised`. One `trace_id`
+  per run; every `causation_id` resolves to a real emitted event. Intermediate
+  runnables and framework-internal hidden chains (e.g. `__start__`, tagged
+  `langsmith:hidden`) are skipped to keep the DAG clean.
+- **LangChain is an optional peer** — imported dynamically only when instrumenting,
+  marked external in the build (never bundled), so the core SDK has no LangChain
+  dependency and `instrument()` is a clean no-op + warning when it's absent.
+- **Host-safe** — callbacks are pure observers that never throw into the host run;
+  emit failures are swallowed on the drain loop; the run table is bounded with
+  eviction + warnings; idempotent (un)instrument restores the patched methods.
+- **Public API:** `instrument(options?)` / `uninstrument()` / `flush(timeoutMs?)`
+  (all async), plus `EmissionCore` / `LangGraphMapper` exported for advanced use.
+
+**Demo** — `sdks/node/demos/langgraph-multiagent.mjs`: a 2-node graph
+(researcher → writer) with a `web_search` tool, runnable **offline with no LLM
+key**, emitting a clean DAG then printing the server-reconstructed session tree.
+
+**Tests** — 13 unit tests drive the `LangGraphMapper` mapping with fabricated
+callback info + a recorder client (runnable without LangChain installed) — covering
+orchestrator pair, node sub-agent + handoff, hidden-chain skip, intermediate-runnable
+skip, untracked-parent fallback, tool called/result/error, tool-arg coercion,
+chain failure, two-node trace, run-cap bound, and emit-failure host-safety — plus a
+live integration test that runs a real LangGraph graph through `instrument()` and
+asserts the server DAG (auto-skips when no server is reachable). Built-`dist`
+ESM+CJS verified to instrument end-to-end.
+
+---
+
 ## Phase 12g (PR1) — Node.js / TypeScript SDK core, 2026-06-05
 
 No breaking changes to the event envelope schema or existing API contracts, and
