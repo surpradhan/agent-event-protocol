@@ -1,0 +1,73 @@
+# Publishes the Node SDK (`@surpradhan/aep`, in sdks/node/) to npm with
+# provenance when a `node-sdk-v*` tag is pushed.
+#
+# This is a *release* workflow only — it never runs on push to a branch and
+# never runs on pull requests. It is NOT a required PR status check, so the
+# `.github/scripts/check_required_checks.py` drift-guard does NOT need to
+# (and must not) list this job. PR-time test coverage for the Node SDK is
+# already provided by the `Node SDK tests (20.x / 22.x)` jobs in ci.yml.
+#
+# ── Maintainer setup ────────────────────────────────────────────────────────
+# 1. Generate an npm automation token with publish access for
+#    `@surpradhan/aep` (npm → Access Tokens → Automation).
+# 2. Add it to this repo as the `NPM_TOKEN` action secret
+#    (Settings → Secrets and variables → Actions → New repository secret).
+#
+# ── Cutting a release ───────────────────────────────────────────────────────
+# 1. Bump `sdks/node/package.json` `"version"` on a PR; squash-merge to main.
+# 2. From main, tag the release commit and push the tag:
+#        git tag node-sdk-v0.3.0
+#        git push origin node-sdk-v0.3.0
+# 3. This workflow then builds, tests, and publishes to npm with provenance.
+#    The published tarball matches `npm pack` locally (only `dist/`, README,
+#    LICENSE, and package.json).
+#
+# Provenance requires `id-token: write` (OIDC) on the job so the npm CLI can
+# request a Sigstore-signed attestation from GitHub's OIDC provider.
+
+name: Release Node SDK
+
+on:
+  push:
+    tags:
+      - 'node-sdk-v*'
+
+jobs:
+  publish:
+    name: Publish @surpradhan/aep to npm
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+          cache-dependency-path: sdks/node/package-lock.json
+
+      - name: Install dependencies
+        working-directory: sdks/node
+        run: npm ci
+
+      - name: Build (dual ESM + CJS)
+        working-directory: sdks/node
+        run: npm run build
+
+      - name: Run tests
+        # Unit tests run without a server; integration tests auto-skip when no
+        # AEP server is reachable — same as the PR-time `node-sdk-test` job.
+        working-directory: sdks/node
+        run: npm test
+
+      - name: Publish to npm with provenance
+        working-directory: sdks/node
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public

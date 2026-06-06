@@ -128,3 +128,31 @@ npm run format       # prettier
   reachable; set `AEP_INGEST_URL` / `AEP_API_KEY` to run them.
 
 Tested against Node 20.x and 22.x.
+
+## Publishing / Releases
+
+Releases are cut from `main` by pushing a `node-sdk-vX.Y.Z` tag — the
+[`Release Node SDK`](../../.github/workflows/release-node-sdk.yml) workflow
+then builds, tests, and runs `npm publish --provenance --access public` for
+this package. To cut a release:
+
+1. Open a PR that bumps `sdks/node/package.json` `"version"` to the new
+   `X.Y.Z` and adds a CHANGELOG entry. Squash-merge once CI is green.
+2. From the merged `main`, tag the release commit and push the tag:
+
+   ```bash
+   git tag node-sdk-v0.3.0
+   git push origin node-sdk-v0.3.0
+   ```
+
+3. The workflow runs `npm ci` → `npm run build` → `npm test` → `npm publish`
+   with [npm provenance](https://docs.npmjs.com/generating-provenance-statements)
+   enabled, attesting that the tarball was built from this repo at that tag.
+
+The published tarball matches `npm pack --dry-run` locally — only `dist/`,
+`README.md`, `LICENSE`, and `package.json` ship; `src/`, `tests/`, `demos/`,
+and tooling configs are excluded by the `"files"` allowlist in `package.json`.
+
+**One-time maintainer setup:** add an npm automation token with publish
+access for `@surpradhan/aep` as the `NPM_TOKEN` action secret on the repo
+(Settings → Secrets and variables → Actions).

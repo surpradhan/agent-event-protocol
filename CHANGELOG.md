@@ -4,6 +4,41 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Node SDK — npm release pipeline, 2026-06-06
+
+Makes the already-merged Node SDK (`@surpradhan/aep`, `sdks/node/`, currently
+`0.2.0`) cleanly publishable to the public npm registry, and adds the GitHub
+Actions workflow that does the actual publish. No version bump and no real
+publish in this change — only the plumbing.
+
+- **`sdks/node/package.json`** — added `publishConfig` (`{"access": "public",
+  "provenance": true}`), `repository` (with `"directory": "sdks/node"`),
+  `homepage`, `bugs`, `author`, `keywords`, and a `prepublishOnly: npm run
+  build` script. The `"files": ["dist"]` allowlist (plus npm's
+  always-included README + LICENSE + package.json) ensures `npm pack` ships
+  only the built artifacts — `src/`, `tests/`, `demos/`, `tsconfig.json`,
+  `tsup.config.ts`, `vitest.config.ts`, `.prettierrc.json`, and
+  `package-lock.json` are all excluded.
+- **`sdks/node/LICENSE`** — MIT, matching the root repo license, so the
+  published tarball includes a license file (npm auto-includes it).
+- **`.github/workflows/release-node-sdk.yml`** — triggered ONLY on tags
+  matching `node-sdk-v*` (never on push to a branch, never on a PR). The
+  job checks out, sets up Node 20 with the npm registry, runs `npm ci →
+  build → test`, then `npm publish --provenance --access public`. The job
+  is granted `id-token: write` so the npm CLI can request the Sigstore
+  attestation that backs provenance. Publish auth comes from the
+  `NPM_TOKEN` repo secret (maintainer adds it once).
+- **Docs** — `sdks/node/README.md` gains a "Publishing / Releases" section
+  describing the bump-version → tag → workflow flow, and `PRD.md` notes
+  that the Node SDK is now published on npm with provenance.
+
+Drift-guard impact: none. The release workflow is a separate file (not
+`ci.yml`) and a tag-triggered publish job is not a PR status check, so the
+12 required checks tracked by `.github/scripts/check_required_checks.py`
+are unchanged.
+
+---
+
 ## Phase 12g (PR2) — Node.js LangChain.js / LangGraph auto-instrumentation, 2026-06-05
 
 Builds on the Node SDK core (PR1). No change to the SDK core's event output or to
