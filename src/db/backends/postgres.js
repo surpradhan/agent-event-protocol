@@ -578,6 +578,17 @@ class PostgresBackend extends StorageBackend {
     try {
       await client.query("BEGIN");
 
+      // Affected session IDs: the sessions whose events match the delete
+      // predicate, captured BEFORE the delete (same predicate as the delete).
+      // Both cleanup steps below are scoped to this set — reconciling tenant-
+      // wide would silently rewrite started_at on out-of-time-order sessions
+      // that lost nothing, and do needless per-session subquery work.
+      const affectedRes = await client.query(
+        "SELECT DISTINCT session_id FROM events WHERE tenant_id = $1 AND time < $2",
+        [tenantId, cutoff]
+      );
+      const affected = affectedRes.rows.map(r => r.session_id);
+
       // result.rowCount is already a JS number (unlike COUNT(*)'s bigint string).
       const del = await client.query(
         "DELETE FROM events WHERE tenant_id = $1 AND time < $2",
@@ -585,25 +596,31 @@ class PostgresBackend extends StorageBackend {
       );
       const events_deleted = del.rowCount;
 
-      // Nothing deleted → sessions already consistent; skip the reconcile work.
+      // Nothing deleted → no affected sessions; skip the cleanup work.
       if (events_deleted === 0) {
         await client.query("COMMIT");
         return { events_deleted: 0, sessions_deleted: 0 };
       }
 
-      // Drop sessions for this tenant that no longer have any events.
+      // Postgres supports array binding, so the affected set is passed as a
+      // single $2 array param (= ANY($2)).  Semantically identical to the
+      // SqliteBackend's IN (...) list over the same captured set.
+      //
+      // Delete-empties must run BEFORE reconcile so reconcile never hits a
+      // zero-event session (which would set started_at/updated_at to NULL and
+      // violate the NOT NULL columns).  Restricted to the affected set.
       const empties = await client.query(
         `DELETE FROM sessions
          WHERE  tenant_id = $1
+           AND  session_id = ANY($2)
            AND  session_id NOT IN (
                   SELECT DISTINCT session_id FROM events WHERE tenant_id = $1
                 )`,
-        [tenantId]
+        [tenantId, affected]
       );
       const sessions_deleted = empties.rowCount;
 
-      // Recompute aggregates for the tenant's surviving sessions from their
-      // remaining events (mirrors SqliteBackend.reconcileSessions exactly).
+      // Recompute aggregates only for the affected sessions that still exist.
       await client.query(
         `UPDATE sessions
          SET
@@ -619,8 +636,8 @@ class PostgresBackend extends StorageBackend {
              SELECT MAX(e.time) FROM events e
              WHERE e.session_id = sessions.session_id AND e.tenant_id = sessions.tenant_id
            )
-         WHERE tenant_id = $1`,
-        [tenantId]
+         WHERE tenant_id = $1 AND session_id = ANY($2)`,
+        [tenantId, affected]
       );
 
       await client.query("COMMIT");

@@ -1368,6 +1368,74 @@ describe("Retention / pruning", () => {
     assert.equal(summary.details.find(d => d.tenant_id === tenant), undefined);
   });
 
+  test("untouched sessions are not reconciled (prune scoped to affected sessions)", async () => {
+    // Regression for the tenant-wide reconcile bug: a prune that touches one
+    // session in a tenant must NOT rewrite aggregates on a sibling session that
+    // lost no events. The insert path sets started_at to the FIRST-INSERTED
+    // event's time (never recomputed), so a session whose events arrive
+    // out-of-time-order has stored started_at != MIN(time). A tenant-wide
+    // reconcile silently rewrites that started_at to MIN(time) — a value the
+    // write path never produces. Scoped reconcile leaves it untouched.
+    const { tenant, key } = await makeRetentionProject({ tier: "free" });
+
+    // Session A: has an OLD event (>30d) → will be pruned + reconciled.
+    const aSid = `ses_affected_${tenant}`;
+    for (const t of [daysAgo(60), daysAgo(1)]) {
+      const r = await ingest(
+        makeEvent({
+          id: `evt_a_${crypto.randomUUID().replace(/-/g, "")}`,
+          session_id: aSid,
+          trace_id: `trc_affected_${tenant}`,
+          time: t,
+        }),
+        key
+      );
+      assert.equal(r.status, 202);
+    }
+
+    // Session B (untouched): all events RECENT (none pruned), ingested
+    // out-of-time-order — emit the LATER event first, then the EARLIER one — so
+    // its stored started_at (first-inserted = later) differs from MIN(time).
+    const bSid = `ses_untouched_${tenant}`;
+    const bLater = daysAgo(2);
+    const bEarlier = daysAgo(5);
+    for (const t of [bLater, bEarlier]) {
+      const r = await ingest(
+        makeEvent({
+          id: `evt_b_${crypto.randomUUID().replace(/-/g, "")}`,
+          session_id: bSid,
+          trace_id: `trc_untouched_${tenant}`,
+          time: t,
+        }),
+        key
+      );
+      assert.equal(r.status, 202);
+    }
+
+    const bBefore = await db.getSession(bSid);
+    assert.equal(bBefore.event_count, 2, "B has 2 events before prune");
+    // Sanity: stored started_at is the first-inserted (later) time, NOT MIN(time).
+    assert.equal(bBefore.started_at, bLater, "B started_at = first-inserted time");
+    assert.ok(bBefore.started_at > bEarlier, "B is genuinely out-of-time-order");
+
+    const summary = await pruneAll();
+
+    // Session A was pruned + reconciled.
+    const detail = summary.details.find(d => d.tenant_id === tenant);
+    assert.ok(detail, "summary includes this tenant");
+    assert.equal(detail.events_deleted, 1, "only A's old event deleted");
+    assert.equal(detail.sessions_deleted, 0, "A still has a recent event");
+    const aAfter = await db.getSession(aSid);
+    assert.equal(aAfter.event_count, 1, "A reconciled to its surviving event");
+
+    // Session B must be COMPLETELY unchanged — this is what fails on the old
+    // tenant-wide reconcile (it would rewrite started_at to bEarlier = MIN).
+    const bAfter = await db.getSession(bSid);
+    assert.equal(bAfter.started_at, bBefore.started_at, "B started_at unchanged");
+    assert.equal(bAfter.event_count, bBefore.event_count, "B event_count unchanged");
+    assert.equal(bAfter.updated_at, bBefore.updated_at, "B updated_at unchanged");
+  });
+
   test("--dry-run reports counts but deletes nothing", async () => {
     const { tenant, key } = await makeRetentionProject({ tier: "free" });
     const sid = `ses_dry_${tenant}`;
