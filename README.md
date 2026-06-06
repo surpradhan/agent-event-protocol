@@ -182,6 +182,13 @@ await instrument();           // then run your graph as usual — emits a full A
 
 See [`sdks/node/README.md`](sdks/node/README.md) for the full Node SDK reference.
 
+**Vercel AI SDK** is supported via the OpenTelemetry bridge — flip on
+`experimental_telemetry: { isEnabled: true }`, point an OTEL Collector running
+the AEP exporter at AEP, and `generateText` / `streamText` / `ai.toolCall` spans
+land as AEP events with full trace/causation preserved. See
+[`docs/integrations/vercel-ai-sdk.md`](docs/integrations/vercel-ai-sdk.md) for
+the wiring and an honest write-up of the current mapping gaps.
+
 ### Production Deployment (With Auth)
 
 ```bash
@@ -468,7 +475,8 @@ MIT License: see [LICENSE](./LICENSE) for details.
 - [x] **AutoGen auto-instrumentation** — [`aep.instrument()`](sdks/python/aep/instrument.py) · zero-code `run_stream` tap for AutoGen AgentChat teams (Phase 12d)
 - [x] **OpenAI Agents SDK auto-instrumentation** — [`aep.instrument()`](sdks/python/aep/instrument.py) · zero-code tracing-processor registration for `Runner.run` (Phase 12e)
 - [x] **Anthropic Claude Agent SDK auto-instrumentation** — [`aep.instrument()`](sdks/python/aep/instrument.py) · zero-code hook injection for `query()` / `ClaudeSDKClient` (Phase 12f)
-- [x] **Node.js / LangChain.js auto-instrumentation** — [`instrument()`](sdks/node/src/instrument.ts) · zero-code `CompiledStateGraph` callback injection for LangGraph (Phase 12g PR2); Vercel AI SDK via the OTEL bridge (`experimental_telemetry`)
+- [x] **Node.js / LangChain.js auto-instrumentation** — [`instrument()`](sdks/node/src/instrument.ts) · zero-code `CompiledStateGraph` callback injection for LangGraph (Phase 12g PR2)
+- [x] **Vercel AI SDK** — docs-only path through the OTEL bridge: `experimental_telemetry` → OTEL Collector → [`otelbridge/`](otelbridge/) AEP exporter (see [`docs/integrations/vercel-ai-sdk.md`](docs/integrations/vercel-ai-sdk.md))
 - [ ] Advanced filtering & visualization in dashboard
 - [ ] Webhook integration for alerts
 - [ ] S3/cloud export for long-term storage

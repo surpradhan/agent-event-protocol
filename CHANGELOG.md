@@ -4,6 +4,52 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Vercel AI SDK integration docs (OTEL bridge), 2026-06-06
+
+**Docs + example only — no new instrumentor code, no SDK or CI changes.** The
+Vercel AI SDK (`ai` package) already emits OpenTelemetry spans natively when
+`experimental_telemetry: { isEnabled: true }` is set, and AEP's Phase 12a
+Collector exporter (`otelbridge/`) already maps OTEL spans to AEP events. This
+change documents how to wire those together and is explicit about how cleanly
+Vercel's spans land — verified directly against `ai@6.0.197`'s
+`recordSpan` source.
+
+- **New doc** `docs/integrations/vercel-ai-sdk.md` — end-to-end wiring:
+  enable `experimental_telemetry` → boot the OTEL Node SDK → OTLP to a Collector
+  built with `otelbridge/builder-config.yaml` → AEP. Copy-pasteable Vercel
+  `generateText({..., experimental_telemetry:{isEnabled:true, metadata:{...}}})`
+  + tracing.ts + Collector config snippets. Documents the verified span shape
+  (`ai.generateText` / `.doGenerate`, `ai.streamText` / `.doStream`,
+  `ai.generateObject` / `.doGenerate`, `ai.streamObject` / `.doStream`,
+  `ai.embed` / `embedMany` / `.doEmbed`, `ai.rerank` / `.doRerank`,
+  `ai.toolCall`) and attributes (`operation.name`, `resource.name`,
+  `ai.operationId`, `ai.telemetry.functionId`, `ai.telemetry.metadata.<key>`,
+  `ai.model.{provider,id}`, `ai.settings.*`, `ai.toolCall.{name,id,args,result}`,
+  `gen_ai.*`).
+- **Honest mapping caveat.** All Vercel `ai.*` spans are emitted with OTEL kind
+  `INTERNAL` (the SDK's `recordSpan` does not set a kind). The existing AEP
+  mapper's tool rule requires `kind ∈ {CLIENT, SERVER}` and its error rule
+  requires `"error"` in the span name, so under the stock mapper every Vercel
+  span (including `ai.toolCall` and failed spans) classifies as
+  `task.completed`. The full payload (`gen_ai.*` under `payload.gen_ai`,
+  `ai.*` under `payload.attributes`, `span_name` preserved) is captured — what
+  is lost today is per-event-type classification. The doc documents three paths
+  to richer mapping (Collector `transformprocessor` rewrite, an AEP mapper
+  pass, or a future first-party instrumentor) and recommends the OTEL bridge
+  for now.
+- **New example** `examples/vercel-ai-sdk/` — `tracing.mjs` (OTEL Node SDK boot)
+  + `app.mjs` (`generateText` + one tool, telemetry enabled) +
+  `collector-config.yaml` (uses only components shipped in
+  `otelbridge/builder-config.yaml`). Illustrative only: running it needs an LLM
+  API key, a running Collector, and a running AEP server, so there is **no** CI
+  test for it.
+- **README + PRD updated**; the Phase 12g roadmap entry is now split into a
+  ✅ Node/LangChain.js line and a ✅ Vercel AI SDK (docs-only OTEL bridge) line.
+- **No code changes** under `sdks/node/src/`; no CI job added; no required-checks
+  list change (drift-guard verified — still 12 checks).
+
+---
+
 ## Node SDK — npm release pipeline, 2026-06-06
 
 Makes the already-merged Node SDK (`@surpradhan/aep`, `sdks/node/`, currently
