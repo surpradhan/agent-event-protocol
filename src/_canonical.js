@@ -120,6 +120,14 @@ function stableStringify(value) {
  * are where runtimes differ and must be reconciled when the SDK emitters adopt
  * v2 — see issue #59.
  *
+ * Marker coverage: the whole `signature` object is dropped before hashing, so
+ * the `signature.canon` version marker is INTENTIONALLY outside HMAC coverage —
+ * it's a verification *hint*, not an authenticated assertion. Stripping
+ * `canon:"v2"` in flight only drops the verifier into transition mode (which
+ * accepts the same deep signature anyway); it cannot forge a signature without
+ * the secret. This stays self-consistent through the migration: once v1 is
+ * retired and the server *requires* v2, a stripped/absent marker is rejected.
+ *
  * @param {object} event  Full event envelope (may include `signature`).
  * @returns {string}      Deterministic JSON string over the whole event.
  */
