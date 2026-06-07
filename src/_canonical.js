@@ -101,4 +101,40 @@ function stableStringify(value) {
   return JSON.stringify(sortDeep(value));
 }
 
-module.exports = { canonicalize, stableStringify, sortDeep };
+/**
+ * Canonical form for a **v2** per-event signature (issue #59): drop the
+ * `signature` field (a value cannot sign itself) and deep-stable-stringify the
+ * rest, so the digest covers the FULL event including nested payloads.
+ *
+ * This is the same deep rule the Phase 14 audit bundle already uses for its
+ * per-event content digest — `audit.js` builds on this function — so a v2
+ * signature and the audit digest agree on what "the canonical event" is.
+ *
+ * Contrast with `canonicalize` (v1), which is envelope-only for cross-SDK
+ * parity. See the module header and AUTH.md for the v1→v2 migration.
+ *
+ * Cross-language note: byte-exactness of v2 across Node/Python/Go requires a
+ * shared number-serialization rule (this reference impl uses ECMAScript
+ * `JSON.stringify` semantics). Typical payloads (strings, integers, booleans,
+ * nested objects/arrays) already agree; float edge cases (e.g. `1.0`, `1e-7`)
+ * are where runtimes differ and must be reconciled when the SDK emitters adopt
+ * v2 — see issue #59.
+ *
+ * Marker coverage: the whole `signature` object is dropped before hashing, so
+ * the `signature.canon` version marker is INTENTIONALLY outside HMAC coverage —
+ * it's a verification *hint*, not an authenticated assertion. Stripping
+ * `canon:"v2"` in flight only drops the verifier into transition mode (which
+ * accepts the same deep signature anyway); it cannot forge a signature without
+ * the secret. This stays self-consistent through the migration: once v1 is
+ * retired and the server *requires* v2, a stripped/absent marker is rejected.
+ *
+ * @param {object} event  Full event envelope (may include `signature`).
+ * @returns {string}      Deterministic JSON string over the whole event.
+ */
+function canonicalizeV2(event) {
+  const copy = Object.assign({}, event);
+  delete copy.signature;
+  return stableStringify(copy);
+}
+
+module.exports = { canonicalize, canonicalizeV2, stableStringify, sortDeep };
