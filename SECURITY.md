@@ -41,6 +41,15 @@ AEP provides the following security properties:
 - **HMAC-SHA256 Signing**: Optional event signature verification
 - **Timing-Safe Comparison**: Prevents timing attacks on signatures
 - **Deduplication**: Duplicate events detected by UUID + timestamp
+- **Tamper-evident audit bundles** (Phase 14): `aep audit export` packages a
+  session's events into a JSON bundle with a SHA-256 `content_digest` over the
+  ordered events and an HMAC-SHA256 signature (keyed by `AUDIT_SIGNING_SECRET`)
+  over the manifest. `aep audit verify` recomputes both offline, so any post-hoc
+  modification to an event (including nested payloads), the event ordering, or
+  the manifest is **detectable**. This is a *detection* guarantee, not storage
+  immutability — for WORM/immutability requirements, layer immutable storage
+  (e.g. object-lock buckets) underneath. The audit signing secret is server-side
+  and distinct from the per-API-key HMAC secrets used to sign individual events.
 
 ### ✅ Input Validation
 - **JSON Schema Validation**: All event fields validated with AJV
