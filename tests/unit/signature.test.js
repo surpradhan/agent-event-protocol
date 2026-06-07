@@ -167,6 +167,17 @@ describe("verifySignature canonicalization versions (issue #59)", () => {
     assert.match(res.error, /Unsupported signature canonicalization/);
   });
 
+  test("a non-string canon (number/null/object/array/empty) is rejected, never throws", () => {
+    // `null` must NOT be treated as "absent" — only literal omission enables
+    // transition mode. Type-confusion inputs must fail cleanly.
+    for (const bad of [1, 0, true, false, null, [], {}, ""]) {
+      const ev = makeSigned({ form: canonicalizeV2 });   // valid deep sig, unmarked
+      ev.signature.canon = bad;                           // then inject a bad marker
+      const res = verifySignature(ev, SECRET);
+      assert.equal(res.valid, false, `canon=${JSON.stringify(bad)} should be invalid`);
+    }
+  });
+
   test("the wrong secret fails for both v1 and v2", () => {
     assert.equal(verifySignature(makeSigned({ canon: "v1", form: canonicalize }), "nope").valid, false);
     assert.equal(verifySignature(makeSigned({ canon: "v2", form: canonicalizeV2 }), "nope").valid, false);

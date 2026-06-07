@@ -124,6 +124,12 @@ function verifySignature(event, secret) {
 
   // Choose which canonical form(s) to check based on the declared version.
   // Absent marker → try both (transition mode; see the header note).
+  //
+  // Timing note: in transition mode an unmarked event may run a second HMAC +
+  // constant-time compare when the first form doesn't match. Each compare is
+  // itself constant-time; the only thing the extra round can reveal is "the v1
+  // form didn't match" — never key material or the secret — so it is not a
+  // signature-forgery oracle. A marked sig ("v1"/"v2") only ever does one round.
   let canonicalForms;
   if (canon === "v2") {
     canonicalForms = [canonicalizeV2(event)];
