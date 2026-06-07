@@ -218,6 +218,62 @@ describe("audit tamper detection", () => {
   });
 });
 
+describe("audit hardening", () => {
+  test("a __proto__ key in a payload is covered by the digest (no silent drop)", () => {
+    // JSON.parse produces __proto__ as a real own, enumerable property — a naive
+    // recursive sort onto a plain {} would set the prototype and DROP it from the
+    // digest, allowing tamper-evasion. The null-prototype sortDeep must preserve it.
+    const make = (v) =>
+      JSON.parse(`{"specversion":"0.2.0","id":"evt_p","time":"2026-06-06T10:00:00.000Z",`
+        + `"source":"a","type":"task.created","session_id":"ses_1","trace_id":"trc_1",`
+        + `"payload":{"__proto__":{"k":${v}},"a":1}}`);
+
+    // Two sequences differing ONLY inside __proto__ must NOT collide.
+    const d1 = computeContentDigest([make(1)]);
+    const d2 = computeContentDigest([make(999)]);
+    assert.notEqual(d1, d2, "__proto__ content must affect the digest");
+
+    // And a __proto__ edit on a built bundle is detected.
+    const bundle = buildAuditBundle({ events: [make(1)], secret: SECRET, now: NOW });
+    const tampered = clone(bundle);
+    tampered.events[0].payload.__proto__ = { k: 999 };
+    const result = verifyAuditBundle(tampered, SECRET);
+    assert.equal(result.content_digest_match, false);
+    assert.equal(result.valid, false);
+
+    // Sanity: building/verifying a __proto__-bearing event does not pollute or throw.
+    assert.equal(verifyAuditBundle(bundle, SECRET).valid, true);
+    assert.equal(({}).k, undefined, "Object.prototype must not be polluted");
+  });
+
+  test("aep_audit_version is signed (inside the manifest)", () => {
+    const bundle = buildAuditBundle({ events: sampleEvents(), secret: SECRET, now: NOW });
+    assert.equal(bundle.manifest.aep_audit_version, "0.1.0");
+    assert.equal(bundle.aep_audit_version, "0.1.0");
+  });
+
+  test("editing the (unsigned) top-level aep_audit_version is detected", () => {
+    const bundle = buildAuditBundle({ events: sampleEvents(), secret: SECRET, now: NOW });
+    const tampered = clone(bundle);
+    tampered.aep_audit_version = "9.9.9-EVIL";
+    const result = verifyAuditBundle(tampered, SECRET);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes("aep_audit_version mismatch")));
+  });
+
+  test("editing the signed manifest.aep_audit_version breaks the signature", () => {
+    const bundle = buildAuditBundle({ events: sampleEvents(), secret: SECRET, now: NOW });
+    const tampered = clone(bundle);
+    // Keep top-level and manifest in agreement so the cross-check passes — the
+    // signature alone must catch it.
+    tampered.aep_audit_version = "9.9.9-EVIL";
+    tampered.manifest.aep_audit_version = "9.9.9-EVIL";
+    const result = verifyAuditBundle(tampered, SECRET);
+    assert.equal(result.manifest_signature_valid, false);
+    assert.equal(result.valid, false);
+  });
+});
+
 describe("audit error / guard paths", () => {
   test("buildAuditBundle requires a non-empty secret", () => {
     assert.throws(

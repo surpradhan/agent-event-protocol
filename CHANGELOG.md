@@ -26,6 +26,11 @@ the download endpoints (PR-B) and PDF rendering (PR-C) come later.
     an event breaks `content_digest_match`; editing the manifest breaks
     `manifest_signature_valid`. Because the digest lives inside the signed
     manifest, an attacker cannot edit an event and silently re-patch the digest.
+  - **Hardening:** the deep serializer uses a null-prototype accumulator so a
+    payload key literally named `__proto__` is covered by the digest (a plain
+    object would silently drop it → tamper-evasion); and `aep_audit_version` is
+    included in the *signed* manifest (with a top-level copy cross-checked at
+    verify time) so the bundle format version can't be downgraded undetected.
 - **Canonicalization refactor (no behaviour change):** the per-event
   `canonicalize` helper moved into [`src/_canonical.js`](./src/_canonical.js) and
   is re-exported from `src/signature.js`; `verifySignature` is byte-identical

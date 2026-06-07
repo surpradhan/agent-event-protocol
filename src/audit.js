@@ -189,6 +189,10 @@ function buildAuditBundle({ events, meta = {}, secret, now } = {}) {
   if (meta.trace_id) scope.trace_id = meta.trace_id;
 
   const manifest = {
+    // Signed so the bundle format version cannot be downgraded without detection
+    // (the top-level copy below is for at-a-glance reading and is cross-checked
+    // against this signed value at verify time).
+    aep_audit_version: AUDIT_VERSION,
     scope,
     tenant_id: meta.tenant_id ?? null,
     event_count: events.length,
@@ -293,6 +297,21 @@ function verifyAuditBundle(bundle, secret, { now } = {}) {
         errors.push("manifest signature is invalid (manifest was modified or the wrong secret was used)");
       }
     }
+  }
+
+  // --- version cross-check ---
+  // `aep_audit_version` is duplicated at the bundle top level for readability; the
+  // signed copy lives inside the manifest. If the (unsigned) top-level value has
+  // been edited to disagree with the signed one, flag it — this closes the
+  // downgrade-attack surface for version-aware verifiers.
+  if (
+    manifest && typeof manifest === "object" &&
+    bundle.aep_audit_version !== undefined &&
+    bundle.aep_audit_version !== manifest.aep_audit_version
+  ) {
+    errors.push(
+      `aep_audit_version mismatch: bundle '${bundle.aep_audit_version}' vs signed manifest '${manifest.aep_audit_version}'`
+    );
   }
 
   const perEvent = eventList.map((e, index) => ({

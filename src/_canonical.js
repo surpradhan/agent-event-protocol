@@ -61,11 +61,19 @@ function canonicalize(obj) {
  * Recursively sort object keys so two structurally-equal values always produce
  * the same JSON.  Arrays preserve order (order is semantically meaningful);
  * object key order is normalised.  Pure — does not mutate its input.
+ *
+ * Built on a null-prototype object on purpose: a normal `{}` has an inherited
+ * `__proto__` accessor, so `out["__proto__"] = …` would set the prototype
+ * instead of creating an own key — silently DROPPING a payload field literally
+ * named `__proto__` (which `JSON.parse` produces as a real own property) from
+ * the serialization, and thus from the tamper-evidence digest.  A null-prototype
+ * object has no such accessor, so every own key — including `__proto__` — round-
+ * trips faithfully.  (This also means no `Object.prototype` pollution.)
  */
 function sortDeep(value) {
   if (Array.isArray(value)) return value.map(sortDeep);
   if (value && typeof value === "object") {
-    const out = {};
+    const out = Object.create(null);
     for (const key of Object.keys(value).sort()) out[key] = sortDeep(value[key]);
     return out;
   }
