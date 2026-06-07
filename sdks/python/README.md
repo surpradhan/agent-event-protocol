@@ -400,6 +400,24 @@ with AEPClient(hmac_secret="my-hmac-secret") as client:
     client.emit(event)  # signs before sending
 ```
 
+### Canonicalization versions (`canon`) — issue #59
+
+The default canonical form (**v1**) sorts only top-level keys and drops nested
+object contents, so a v1 signature covers the envelope but **not nested
+payloads**. Pass `canon="v2"` for a deep canonical form that covers nested
+payloads (and adds a `signature.canon: "v2"` marker):
+
+```python
+sign_event(event, secret="my-hmac-secret", canon="v2")  # deep; covers payloads
+```
+
+`canonicalize_v2(event)` exposes the deep form directly. It is **byte-identical
+to the server and the Node SDK** for JSON values shared across runtimes (locked
+by a server-derived known-answer test). `verify_signature` is version-aware
+(honours `canon`; an absent marker accepts either form). **v1 remains the
+default**; flipping the default to v2 and retiring v1 across all SDKs is tracked
+in [issue #59](https://github.com/surpradhan/agent-event-protocol/issues/59).
+
 ---
 
 ## Validation
