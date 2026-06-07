@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canonicalize, signEvent, verifySignature } from "../../src/signature";
+import { canonicalize, canonicalizeV2, signEvent, verifySignature } from "../../src/signature";
 import type { AEPEvent } from "../../src/types";
 
 const SECRET = "shared-secret-123";
@@ -79,5 +79,59 @@ describe("signature", () => {
   it("never throws on malformed base64", () => {
     const event = { ...FIXED_EVENT, signature: { alg: "hmac-sha256", value: "!!!notb64!!!" } };
     expect(verifySignature(event, SECRET).valid).toBe(false);
+  });
+});
+
+// Known-answer for the v2 (deep) canonical form, produced by the SERVER
+// reference implementation (src/_canonical.js canonicalizeV2 + HMAC) over
+// FIXED_EVENT/SECRET. Locks the Node SDK's v2 byte-form to the server's.
+const V2_REFERENCE_SIGNATURE = "M3OGzpZ4+SX0MStNZ0wJtb+TV+h/xcy9yPIRC0VaoJQ=";
+
+describe("signature v2 (deep canonicalization — issue #59)", () => {
+  it("v1 remains the default (no canon marker, envelope-only)", () => {
+    const signed = signEvent({ ...FIXED_EVENT }, SECRET);
+    expect(signed.signature?.value).toBe(PYTHON_SIGNATURE);
+    expect(signed.signature?.canon).toBeUndefined();
+  });
+
+  it("signs v2 byte-identically to the server reference and marks canon", () => {
+    const signed = signEvent({ ...FIXED_EVENT }, SECRET, { canon: "v2" });
+    expect(signed.signature?.alg).toBe("hmac-sha256");
+    expect(signed.signature?.canon).toBe("v2");
+    expect(signed.signature?.value).toBe(V2_REFERENCE_SIGNATURE);
+  });
+
+  it("v2 canonical form includes the deep-sorted nested payload", () => {
+    const canon = canonicalizeV2({ ...FIXED_EVENT });
+    expect(canon).toContain('"payload":{"framework":"node","nested":{"a":1,"b":2}}');
+    expect(canon.includes('"signature"')).toBe(false);
+  });
+
+  it("v2 round-trips and DETECTS nested payload tampering", () => {
+    const signed = signEvent({ ...FIXED_EVENT }, SECRET, { canon: "v2" });
+    expect(verifySignature(signed, SECRET)).toEqual({ valid: true });
+
+    const tampered = { ...signed, payload: { framework: "node", nested: { b: 2, a: 999 } } };
+    expect(verifySignature(tampered, SECRET).valid).toBe(false);
+  });
+
+  it("a v2-signed event with a v1 marker does NOT verify (version honoured)", () => {
+    const signed = signEvent({ ...FIXED_EVENT }, SECRET, { canon: "v2" });
+    signed.signature!.canon = "v1";
+    expect(verifySignature(signed, SECRET).valid).toBe(false);
+  });
+
+  it("an unmarked deep signature still verifies (transition mode / Go interop)", () => {
+    const signed = signEvent({ ...FIXED_EVENT }, SECRET, { canon: "v2" });
+    delete signed.signature!.canon; // simulate an unmarked deep emitter
+    expect(verifySignature(signed, SECRET).valid).toBe(true);
+  });
+
+  it("rejects an unknown canon value with a clear error", () => {
+    const signed = signEvent({ ...FIXED_EVENT }, SECRET, { canon: "v2" });
+    signed.signature!.canon = "v9";
+    const res = verifySignature(signed, SECRET);
+    expect(res.valid).toBe(false);
+    expect(res.error).toContain("Unsupported signature canonicalization");
   });
 });
