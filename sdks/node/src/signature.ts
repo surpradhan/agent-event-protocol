@@ -117,6 +117,13 @@ function timingSafeEqualB64(providedB64: string, expectedB64: string): boolean {
  * `signature.canon` ("v2" → deep only, "v1" → shallow only, absent → transition
  * mode that accepts either form). Never throws — all failure paths return
  * `{ valid: false, error }`. Uses a timing-safe compare.
+ *
+ * Timing note (mirrors the server's `src/signature.js`): in transition mode an
+ * unmarked event may run a second HMAC + constant-time compare when the first
+ * form doesn't match. Each compare is itself constant-time; the only thing the
+ * extra round can reveal is "the v1 form didn't match" — never key material or
+ * the secret — so it is not a signature-forgery oracle. A marked sig ("v1"/"v2")
+ * only ever does one round.
  */
 export function verifySignature(event: AEPEvent, secret: string): SignatureResult {
   const sig = event?.signature;
