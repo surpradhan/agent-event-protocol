@@ -4,6 +4,40 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Versioned signature canonicalization — server verifier (issue #59), 2026-06-07
+
+**Server-only, additive, non-breaking** — the foundation slice for unifying the
+per-event signature canonical form across implementations (issue #59). No SDK
+emitter changes yet; those follow in their own PRs.
+
+- **Problem:** the per-event HMAC canonical form diverged — the server, Python
+  SDK, and Node SDK use a shallow envelope-only rule (nested `payload` serializes
+  as `{}`, so payload tampering is invisible), while the Go SDK already signs a
+  *deep* form. A Go-signed event with a payload therefore failed server
+  verification (latent interop bug), and no per-event signature covered payloads.
+- **`src/_canonical.js`:** new `canonicalizeV2(event)` — the deep, recursively
+  key-sorted canonical form covering the whole event including nested payloads.
+  `canonicalize` (v1, shallow) is unchanged and still byte-identical. The Phase 14
+  audit bundle's per-event serialization now reuses `canonicalizeV2`, so a v2
+  signature and the audit `content_digest` agree on "the canonical event".
+- **`src/signature.js`:** `verifySignature` is now **version-aware** via an
+  optional `signature.canon` marker:
+  - `canon: "v2"` → verified against the deep form only.
+  - `canon: "v1"` → verified against the shallow form only.
+  - `canon` absent → **transition mode**: accepted if it matches *either* form,
+    so every existing emitter keeps working — including the unmarked deep
+    Go-SDK signatures, which now verify (the interop bug is fixed). Both forms are
+    HMAC-keyed by the same secret, so this widens accepted encodings without
+    weakening security. An unknown `canon` is rejected with a clear error.
+- **No event-schema change** (`signature` is already `additionalProperties:true`);
+  **no new CI job** (drift-guard untouched, 13 checks); tests folded into the
+  existing unit suite. `verifySignature` back-compat regression-locked.
+- **Docs:** `AUTH.md` documents the v1/v2 forms, the `canon` marker, the
+  transition behaviour, and the cross-language number-format caveat.
+- **Deferred to follow-up PRs (issue #59):** migrate the Node/Python/Go SDK
+  *emitters* to sign v2 (with a shared number-serialization rule + cross-language
+  known-answer parity tests), then flip the default to v2 and retire v1.
+
 ## Tamper-evident audit export bundles — Phase 14 PR-A, 2026-06-06
 
 **First slice of the Compliance & Audit Suite (Phase 14).** A signed, offline-

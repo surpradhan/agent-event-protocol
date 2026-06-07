@@ -215,7 +215,48 @@ await fetch('http://localhost:8787/events', {
 | 401 | Signature missing (key requires signing) |
 | 401 | Signature algorithm not `hmac-sha256` |
 | 401 | Signature value is missing or wrong |
+| 401 | Unsupported `signature.canon` (must be `v1` or `v2`) |
 | 400 | Event fails schema validation (separate from signature) |
+
+### Canonicalization versions (`signature.canon`) — issue #59
+
+The canonical form above (steps 1–6) is **v1**: it sorts only the *top-level*
+keys and passes them as `JSON.stringify`'s array replacer, which — as a side
+effect — drops nested object contents (a `payload` serializes as `{}`). So a v1
+signature covers the **envelope but not nested payloads**.
+
+**v2** is a deep canonical form: drop `signature`, then recursively key-sort the
+**whole** event (envelope *and* nested payloads) before HMAC. A v2 signature
+therefore detects payload tampering — and it is the same deep rule the Phase 14
+audit bundle uses for its `content_digest`.
+
+Events MAY declare their form with an optional `signature.canon` field:
+
+```json
+"signature": { "alg": "hmac-sha256", "value": "<base64>", "canon": "v2" }
+```
+
+The server verifier is version-aware **and backward-compatible**:
+
+| `signature.canon` | Verified against |
+|---|---|
+| `"v2"` | deep form only |
+| `"v1"` | shallow (envelope-only) form only |
+| *absent* | **transition mode** — accepted if it matches *either* form |
+
+Transition mode keeps every existing emitter working unchanged (legacy shallow
+emitters, and the Go SDK which already signs the deep form without a marker) with
+no security weakening — both forms are HMAC-keyed by the same secret. New
+emitters should set `canon: "v2"` so payload coverage is guaranteed; a future
+release can then require `v2` and retire `v1`.
+
+> **Cross-language note:** byte-exact v2 across the Node/Python/Go SDKs requires
+> a shared number-serialization rule (this server uses ECMAScript
+> `JSON.stringify` semantics). Typical payloads (strings, integers, booleans,
+> nested objects/arrays) already agree across runtimes; float edge cases
+> (`1.0`, `1e-7`) differ and are reconciled as each SDK emitter adopts v2. The
+> SDK emitters still sign **v1** today — only the server's *verifier* understands
+> v2 so far. Tracked in issue #59.
 
 ---
 

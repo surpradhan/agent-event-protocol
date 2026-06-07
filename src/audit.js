@@ -43,7 +43,7 @@
  */
 
 const crypto = require("crypto");
-const { stableStringify } = require("./_canonical");
+const { stableStringify, canonicalizeV2 } = require("./_canonical");
 
 const AUDIT_VERSION = "0.1.0";
 
@@ -58,18 +58,18 @@ const DEFAULT_DIGEST_ALG = "sha256";
 // ---------------------------------------------------------------------------
 
 /**
- * Deterministic serialization of a single event for the content digest.  Drops
- * the event's own transport `signature` field (a value cannot sign itself, and
- * whether the event was signed in transit must not perturb the bundle digest),
- * then deep-stable-stringifies the rest (envelope AND nested payload).
+ * Deterministic serialization of a single event for the content digest. This is
+ * exactly the v2 per-event canonical form (`canonicalizeV2`): drop the event's
+ * own transport `signature` field (a value cannot sign itself, and whether the
+ * event was signed in transit must not perturb the bundle digest), then
+ * deep-stable-stringify the rest (envelope AND nested payload). Sharing the rule
+ * means a v2 signature and the audit digest agree on "the canonical event".
  *
  * @param {object} event
  * @returns {string}
  */
 function serializeEvent(event) {
-  const copy = Object.assign({}, event);
-  delete copy.signature;
-  return stableStringify(copy);
+  return canonicalizeV2(event);
 }
 
 /**
