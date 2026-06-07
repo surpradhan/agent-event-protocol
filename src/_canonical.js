@@ -85,6 +85,15 @@ function sortDeep(value) {
  * Unlike `canonicalize`, nested payloads are included, so it is suitable for the
  * tamper-evident audit digest.  Order-independent for object keys; whitespace-free.
  *
+ * Equality is JSON-*value* equality, not byte equality of any original source
+ * text: it inherits `JSON.stringify` semantics, so `1` / `1.0` / `1e0` collapse
+ * to `1`, an explicit `undefined` property is dropped (same as an absent one),
+ * and `NaN` / `Infinity` become `null`. For audit bundles this is fine — the
+ * events come from the store as already-parsed JSON, where those forms cannot
+ * represent a meaningful difference an attacker could hide — but callers feeding
+ * raw source text should be aware the digest proves value-integrity, not
+ * byte-for-byte fidelity of the original encoding.
+ *
  * @param {*} value  Any JSON-serialisable value.
  * @returns {string} Deterministic JSON string.
  */

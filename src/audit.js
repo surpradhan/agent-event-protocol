@@ -296,8 +296,13 @@ function verifyAuditBundle(bundle, secret, { now } = {}) {
       }
     }
     // Cross-check the recorded event_count against the actual array length —
-    // catches a dropped/added event even though the digest already would.
-    if (typeof manifest.event_count === "number" && manifest.event_count !== eventList.length) {
+    // catches a dropped/added event even though the digest already would. A
+    // missing/non-number count on an otherwise-populated manifest is itself an
+    // error: defense-in-depth shouldn't be silently skippable by deleting it
+    // (the manifest signature would catch the deletion too, but be explicit).
+    if (typeof manifest.event_count !== "number") {
+      errors.push("manifest.event_count is missing or not a number");
+    } else if (manifest.event_count !== eventList.length) {
       errors.push(
         `manifest.event_count (${manifest.event_count}) does not match the number of bundled events (${eventList.length})`
       );

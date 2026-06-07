@@ -413,9 +413,17 @@ async function cmdAuditExport(positional, flags, serverUrl, apiKey) {
     );
   }
 
-  // Derive scope metadata from the returned events.
+  // Derive scope metadata from the returned events. trace_id / tenant_id are
+  // only recorded when the session has exactly one distinct value; tell the user
+  // when we omit one so an absent scope field isn't mistaken for missing data.
   const traceIds = new Set(events.map(e => e.trace_id).filter(Boolean));
   const tenants  = new Set(events.map(e => e.tenant).filter(Boolean));
+  if (traceIds.size > 1) {
+    console.error(`\x1b[33m!\x1b[0m Session spans ${traceIds.size} trace_ids — omitting trace_id from the bundle scope.`);
+  }
+  if (tenants.size > 1) {
+    console.error(`\x1b[33m!\x1b[0m Session spans ${tenants.size} tenants — omitting tenant_id from the bundle scope.`);
+  }
   const meta = {
     session_id: sessionId,
     ...(traceIds.size === 1 ? { trace_id: [...traceIds][0] } : {}),

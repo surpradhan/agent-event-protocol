@@ -35,6 +35,11 @@ the download endpoints (PR-B) and PDF rendering (PR-C) come later.
     sha512) instead of assuming sha256, `buildAuditBundle` rejects an invalid
     `now` with a clear error, and `aep audit export` refuses to sign a
     misleading empty bundle for a missing/empty session unless `--allow-empty`.
+    Post-review polish: a missing/non-number `manifest.event_count` is now itself
+    a verify error (defense-in-depth can't be silently deleted); `aep audit
+    export` warns when it omits `trace_id`/`tenant_id` scope because a session
+    spans multiple values; and `stableStringify`'s JSON-value-equality semantics
+    are documented.
 - **Canonicalization refactor (no behaviour change):** the per-event
   `canonicalize` helper moved into [`src/_canonical.js`](./src/_canonical.js) and
   is re-exported from `src/signature.js`; `verifySignature` is byte-identical

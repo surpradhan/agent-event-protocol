@@ -261,6 +261,15 @@ describe("audit hardening", () => {
     assert.ok(result.errors.some(e => e.includes("aep_audit_version mismatch")));
   });
 
+  test("a missing/non-number manifest.event_count is rejected (cross-check not silently skippable)", () => {
+    const bundle = buildAuditBundle({ events: sampleEvents(), secret: SECRET, now: NOW });
+    const tampered = clone(bundle);
+    delete tampered.manifest.event_count;
+    const result = verifyAuditBundle(tampered, SECRET);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => /event_count is missing or not a number/.test(e)));
+  });
+
   test("editing the signed manifest.aep_audit_version breaks the signature", () => {
     const bundle = buildAuditBundle({ events: sampleEvents(), secret: SECRET, now: NOW });
     const tampered = clone(bundle);
