@@ -53,18 +53,32 @@ const workflow = await client.getWorkflow("trc_xyz");
 |--------|-------------|
 | `createEvent(source, type, sessionId, traceId, payload, options?)` | Build a v0.2.0 envelope; auto `id`/`time`; validates `type` + `agentRole`. |
 | `validateEvent(event)` | `{ valid, errors }` against the bundled envelope schema (+ optional `payload.$schema`). `[warn]`-prefixed errors are non-blocking. |
-| `signEvent(event, secret)` / `verifySignature(event, secret)` / `canonicalize(event)` | HMAC-SHA256 with the cross-language canonical form. |
+| `signEvent(event, secret, { canon })` / `verifySignature(event, secret)` / `canonicalize(event)` / `canonicalizeV2(event)` | HMAC-SHA256 signing/verification. `canon` selects the canonical form: `"v1"` (default) or `"v2"` (deep). |
 | `AEPClient` | Async `fetch`-based client: `emit`, `emitBatch`, `getSessions`, `getSessionEvents`, `getSessionTree`, `getSessionExport`, `getWorkflow`, `getMetrics`, `health`, `ready`. |
 | `EventType`, `AgentRole`, `CORE_EVENT_TYPES` | Protocol enums/constants. |
 | `AEPError` + `AEPValidationError` / `AEPAuthError` / `AEPRateLimitError` / `AEPNotFoundError` / `AEPConnectionError` / `AEPServerError` | Error hierarchy. |
 
 ### Cross-language signing
 
-The canonical form is **identical** across the Node, Python, and Go SDKs and the
-server: the envelope with `signature` removed and top-level keys sorted, via
-`JSON.stringify(copy, sortedKeys)`. A signature produced by this SDK verifies
-under the Python/Go verifiers and vice versa — locked by a parity test
+The **v1** canonical form is **identical** across the Node, Python, and Go SDKs
+and the server: the envelope with `signature` removed and top-level keys sorted,
+via `JSON.stringify(copy, sortedKeys)`. A v1 signature produced by this SDK
+verifies under the Python/Go verifiers and vice versa — locked by a parity test
 (`tests/unit/signature.test.ts`) against a Python-produced fixture.
+
+**v2 (deep) canonicalization — issue #59.** v1's array-replacer form drops nested
+object contents (`payload` → `{}`), so a v1 signature covers the envelope but not
+the payload. `signEvent(event, secret, { canon: "v2" })` instead uses a deep,
+recursively key-sorted canonical form (`canonicalizeV2`) that covers nested
+payloads and adds a `signature.canon: "v2"` marker. It is byte-identical to the
+server's v2 verifier (locked here by a server-derived known-answer vector), so
+v2-signed events verify on the AEP server with payload tamper-evidence.
+`verifySignature` is version-aware (honours `canon`; absent → accepts either
+form). **v1 remains the default** for now; flipping the default to v2 across all
+SDKs and retiring v1 is tracked in [issue #59]. The Python/Go emitters still sign
+v1 today.
+
+[issue #59]: https://github.com/surpradhan/agent-event-protocol/issues/59
 
 ## Auto-instrumentation (LangChain.js / LangGraph)
 

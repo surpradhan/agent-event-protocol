@@ -4,6 +4,34 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Node SDK: opt-in v2 (deep) signature canonicalization (issue #59), 2026-06-07
+
+**SDK feature, additive, non-breaking** — the first *emitter* migration toward
+the unified deep canonical form. The server already verifies v2 (prior PR); this
+lets the Node SDK *produce* it.
+
+- **`sdks/node/src/signature.ts`:**
+  - New `canonicalizeV2(event)` — deep, recursively key-sorted canonical form
+    covering nested payloads, **byte-identical to the server's `canonicalizeV2`**
+    (null-prototype accumulator so `__proto__` payload keys survive).
+  - `signEvent(event, secret, { canon })` — `canon` defaults to `"v1"`
+    (unchanged, envelope-only); `{ canon: "v2" }` signs the deep form and adds a
+    `signature.canon: "v2"` marker so payload tampering is detectable.
+  - `verifySignature` is now **version-aware**: honours `signature.canon`
+    (`"v2"`→deep, `"v1"`→shallow, absent→transition mode accepting either),
+    rejects unknown/unsupported markers — mirroring the server.
+  - `signature.canon` added to the `AEPEvent` signature type; `canonicalizeV2` +
+    `SignOptions` exported.
+- **Tests:** the existing **v1 cross-language known-answer** (Python-produced
+  fixture) is preserved unchanged; new tests lock the Node **v2** form to a
+  **server-derived known-answer vector**, prove v2 detects nested-payload
+  tampering, and cover version honouring / transition mode / unknown markers.
+- **Docs:** `sdks/node/README.md` documents v1 vs v2 and the `canon` option.
+- **No default change, no breaking change** (v1 stays the default; the Python/Go
+  emitters still sign v1). Flipping the default to v2 and retiring v1 remains
+  tracked in issue #59. Node SDK version unchanged (`0.3.0`); a release/version
+  bump is a separate step.
+
 ## Versioned signature canonicalization — server verifier (issue #59), 2026-06-07
 
 **Server-only, additive, non-breaking** — the foundation slice for unifying the

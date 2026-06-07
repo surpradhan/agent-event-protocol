@@ -17,7 +17,13 @@ export {
 export { DEFAULT_SERVER_URL, SPEC_VERSION } from "./constants.js";
 export { createEvent, type CreateEventOptions } from "./event.js";
 export { validateEvent } from "./validator.js";
-export { signEvent, verifySignature, canonicalize } from "./signature.js";
+export {
+  signEvent,
+  verifySignature,
+  canonicalize,
+  canonicalizeV2,
+  type SignOptions,
+} from "./signature.js";
 export { handleResponse, parseRetryAfter } from "./http.js";
 export {
   AEPClient,

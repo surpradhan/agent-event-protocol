@@ -50,7 +50,7 @@ export interface AEPEvent {
   idempotency_key?: string;
   schema?: string;
   content_type?: string;
-  signature?: { alg: string; value: string };
+  signature?: { alg: string; value: string; canon?: string };
   tenant?: string;
   labels?: Record<string, string>;
   extensions?: Record<string, unknown>;

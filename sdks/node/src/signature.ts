@@ -1,19 +1,39 @@
 /**
  * HMAC-SHA256 event signing + verification.
  *
- * The canonical form is **identical across the Node, Python, and Go SDKs and the
- * server** (`src/signature.js`): shallow-copy the event, drop `signature`, sort
- * the top-level keys, and `JSON.stringify(copy, sortedKeys)` — the replacer-array
- * form emits only those keys, at every nesting level, with no extra whitespace.
- * A signature produced here verifies under the Python/Go verifiers and vice
- * versa (locked by a cross-language parity test).
+ * Two canonicalization versions are supported (issue #59):
+ *
+ * • **v1 (legacy, default)** — `canonicalize`: shallow-copy the event, drop
+ *   `signature`, sort the top-level keys, and `JSON.stringify(copy, sortedKeys)`.
+ *   The replacer-array form emits only those keys at every nesting level, so
+ *   nested objects are emptied (`payload` → `{}`). It is **identical across the
+ *   Node, Python, and Go SDKs and the server** and is locked by a cross-language
+ *   known-answer test. It covers the envelope but NOT nested payloads.
+ *
+ * • **v2 (deep)** — `canonicalizeV2`: drop `signature`, then recursively
+ *   key-sort the WHOLE event (envelope AND nested payloads) before HMAC, so the
+ *   signature covers payload contents. This is the same deep rule the server
+ *   verifier (`src/_canonical.js`) and the Phase 14 audit bundle use. v2
+ *   signatures carry a `signature.canon: "v2"` marker.
+ *
+ * `signEvent` defaults to v1 (non-breaking); pass `{ canon: "v2" }` to opt in.
+ * `verifySignature` is version-aware and backward-compatible: it honours the
+ * `signature.canon` marker, and treats an absent marker as transition mode
+ * (accept either form), matching the server. Migrating the SDK *default* to v2
+ * across all languages is tracked in issue #59.
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { AEPEvent, SignatureResult } from "./types.js";
 
-/** Produce the canonical JSON string used as the HMAC input. */
+/** Canonicalization versions understood by this module. */
+const SUPPORTED_CANON = new Set(["v1", "v2"]);
+
+/**
+ * Produce the **v1** canonical JSON string (envelope-only; nested payloads are
+ * emptied by the array-replacer form). Kept byte-identical for cross-SDK parity.
+ */
 export function canonicalize(event: Record<string, unknown>): string {
   const copy: Record<string, unknown> = { ...event };
   delete copy.signature;
@@ -22,19 +42,88 @@ export function canonicalize(event: Record<string, unknown>): string {
 }
 
 /**
- * Sign `event` in place with HMAC-SHA256 and return it. Attaches
- * `event.signature = { alg: "hmac-sha256", value: <base64> }`.
+ * Recursively sort object keys so structurally-equal values serialize
+ * identically. Arrays preserve order; object keys are normalised. Built on a
+ * null-prototype accumulator so a payload key literally named `__proto__`
+ * (which `JSON.parse` yields as a real own property) is preserved rather than
+ * silently dropped via the prototype accessor — matching the server's
+ * `src/_canonical.js`.
  */
-export function signEvent(event: AEPEvent, secret: string): AEPEvent {
-  const canonical = canonicalize(event);
-  const value = createHmac("sha256", secret).update(canonical, "utf8").digest("base64");
-  event.signature = { alg: "hmac-sha256", value };
-  return event;
+function sortDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortDeep);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = Object.create(null);
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      out[key] = sortDeep((value as Record<string, unknown>)[key]);
+    }
+    return out;
+  }
+  return value;
 }
 
 /**
- * Verify the HMAC-SHA256 signature on an event envelope. Never throws — all
- * failure paths return `{ valid: false, error }`. Uses a timing-safe compare.
+ * Produce the **v2** (deep) canonical JSON string covering the whole event
+ * including nested payloads. Byte-identical to the server's `canonicalizeV2`.
+ *
+ * The whole `signature` object is dropped before hashing, so the
+ * `signature.canon` marker is intentionally OUTSIDE HMAC coverage — a hint, not
+ * an authenticated assertion (see issue #59 / AUTH.md).
+ */
+export function canonicalizeV2(event: Record<string, unknown>): string {
+  const copy: Record<string, unknown> = { ...event };
+  delete copy.signature;
+  return JSON.stringify(sortDeep(copy));
+}
+
+function digestFor(event: AEPEvent, canon: "v1" | "v2", secret: string): string {
+  const canonical = canon === "v2" ? canonicalizeV2(event) : canonicalize(event);
+  return createHmac("sha256", secret).update(canonical, "utf8").digest("base64");
+}
+
+/** Options for {@link signEvent}. */
+export interface SignOptions {
+  /** Canonicalization version: "v1" (default, envelope-only) or "v2" (deep). */
+  canon?: "v1" | "v2";
+}
+
+/**
+ * Sign `event` in place with HMAC-SHA256 and return it. Attaches
+ * `event.signature = { alg: "hmac-sha256", value: <base64> }`. With
+ * `{ canon: "v2" }` the signature covers nested payloads and a `canon: "v2"`
+ * marker is added; the default (v1) is unchanged for backward compatibility.
+ */
+export function signEvent(event: AEPEvent, secret: string, opts: SignOptions = {}): AEPEvent {
+  const canon = opts.canon ?? "v1";
+  const value = digestFor(event, canon, secret);
+  event.signature =
+    canon === "v2" ? { alg: "hmac-sha256", value, canon: "v2" } : { alg: "hmac-sha256", value };
+  return event;
+}
+
+/** Timing-safe base64 compare. Never throws; false on length mismatch / bad input. */
+function timingSafeEqualB64(providedB64: string, expectedB64: string): boolean {
+  try {
+    const providedBuf = Buffer.from(providedB64, "base64");
+    const expectedBuf = Buffer.from(expectedB64, "base64");
+    if (providedBuf.length !== expectedBuf.length) return false;
+    return timingSafeEqual(providedBuf, expectedBuf);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Verify the HMAC-SHA256 signature on an event envelope. Version-aware: honours
+ * `signature.canon` ("v2" → deep only, "v1" → shallow only, absent → transition
+ * mode that accepts either form). Never throws — all failure paths return
+ * `{ valid: false, error }`. Uses a timing-safe compare.
+ *
+ * Timing note (mirrors the server's `src/signature.js`): in transition mode an
+ * unmarked event may run a second HMAC + constant-time compare when the first
+ * form doesn't match. Each compare is itself constant-time; the only thing the
+ * extra round can reveal is "the v1 form didn't match" — never key material or
+ * the secret — so it is not a signature-forgery oracle. A marked sig ("v1"/"v2")
+ * only ever does one round.
  */
 export function verifySignature(event: AEPEvent, secret: string): SignatureResult {
   const sig = event?.signature;
@@ -51,21 +140,23 @@ export function verifySignature(event: AEPEvent, secret: string): SignatureResul
     return { valid: false, error: "signature.value is missing or not a string" };
   }
 
-  const canonical = canonicalize(event);
-  const expected = createHmac("sha256", secret).update(canonical, "utf8").digest("base64");
-
-  try {
-    const providedBuf = Buffer.from(sig.value, "base64");
-    const expectedBuf = Buffer.from(expected, "base64");
-    if (providedBuf.length !== expectedBuf.length) {
-      return { valid: false, error: "Signature mismatch" };
-    }
-    if (!timingSafeEqual(providedBuf, expectedBuf)) {
-      return { valid: false, error: "Signature mismatch" };
-    }
-  } catch {
-    return { valid: false, error: "Signature mismatch" };
+  const canon = sig.canon;
+  if (canon !== undefined && !SUPPORTED_CANON.has(canon as string)) {
+    return {
+      valid: false,
+      error: `Unsupported signature canonicalization '${canon}' — expected 'v1' or 'v2'`,
+    };
   }
 
-  return { valid: true };
+  // Absent marker → transition mode: accept either form (legacy shallow emitters
+  // and unmarked deep ones, e.g. the current Go SDK).
+  const forms: Array<"v1" | "v2"> =
+    canon === "v2" ? ["v2"] : canon === "v1" ? ["v1"] : ["v1", "v2"];
+
+  for (const form of forms) {
+    if (timingSafeEqualB64(sig.value, digestFor(event, form, secret))) {
+      return { valid: true };
+    }
+  }
+  return { valid: false, error: "Signature mismatch" };
 }
