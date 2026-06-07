@@ -47,6 +47,12 @@ const { stableStringify } = require("./_canonical");
 
 const AUDIT_VERSION = "0.1.0";
 
+// Digest algorithms the bundle format understands. New bundles always use
+// sha256; verification honours whatever the (signed) manifest declares, so the
+// format can adopt a stronger digest later without silently mis-verifying.
+const SUPPORTED_DIGEST_ALGS = new Set(["sha256", "sha512"]);
+const DEFAULT_DIGEST_ALG = "sha256";
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -79,13 +85,17 @@ function serializeEvents(events) {
 }
 
 /**
- * SHA-256 (hex) over the canonical serialization of the ordered events.
+ * Hex digest over the canonical serialization of the ordered events.
  * @param {object[]} events
+ * @param {string} [alg="sha256"]  a member of SUPPORTED_DIGEST_ALGS
  * @returns {string} lowercase hex digest
  */
-function computeContentDigest(events) {
+function computeContentDigest(events, alg = DEFAULT_DIGEST_ALG) {
+  if (!SUPPORTED_DIGEST_ALGS.has(alg)) {
+    throw new Error(`Unsupported content_digest_alg '${alg}'`);
+  }
   return crypto
-    .createHash("sha256")
+    .createHash(alg)
     .update(serializeEvents(events), "utf8")
     .digest("hex");
 }
@@ -180,9 +190,13 @@ function buildAuditBundle({ events, meta = {}, secret, now } = {}) {
   if (now === undefined || now === null) {
     throw new Error("buildAuditBundle: `now` must be injected (deterministic export)");
   }
+  const nowDate = new Date(now);
+  if (Number.isNaN(nowDate.getTime())) {
+    throw new Error("buildAuditBundle: `now` is not a valid date");
+  }
 
-  const exportedAt = new Date(now).toISOString();
-  const contentDigest = computeContentDigest(events);
+  const exportedAt = nowDate.toISOString();
+  const contentDigest = computeContentDigest(events, DEFAULT_DIGEST_ALG);
 
   const scope = {};
   if (meta.session_id) scope.session_id = meta.session_id;
@@ -198,7 +212,7 @@ function buildAuditBundle({ events, meta = {}, secret, now } = {}) {
     event_count: events.length,
     time_range: computeTimeRange(events),
     content_digest: contentDigest,
-    content_digest_alg: "sha256",
+    content_digest_alg: DEFAULT_DIGEST_ALG,
     exported_at: exportedAt,
     per_event_signatures: summarizePerEventSignatures(events),
   };
@@ -263,16 +277,23 @@ function verifyAuditBundle(bundle, secret, { now } = {}) {
   // --- content digest check ---
   let contentDigestMatch = false;
   if (manifest && typeof manifest === "object") {
-    const recomputed = computeContentDigest(eventList);
-    contentDigestMatch =
-      typeof manifest.content_digest === "string" &&
-      manifest.content_digest.length === recomputed.length &&
-      crypto.timingSafeEqual(
-        Buffer.from(manifest.content_digest, "utf8"),
-        Buffer.from(recomputed, "utf8")
-      );
-    if (!contentDigestMatch) {
-      errors.push("content_digest does not match the bundled events (events were modified, reordered, added, or dropped)");
+    // Honour the algorithm the (signed) manifest declares, defaulting to sha256
+    // for older bundles that predate the field.
+    const declaredAlg = manifest.content_digest_alg ?? DEFAULT_DIGEST_ALG;
+    if (!SUPPORTED_DIGEST_ALGS.has(declaredAlg)) {
+      errors.push(`Unsupported content_digest_alg '${declaredAlg}'`);
+    } else {
+      const recomputed = computeContentDigest(eventList, declaredAlg);
+      contentDigestMatch =
+        typeof manifest.content_digest === "string" &&
+        manifest.content_digest.length === recomputed.length &&
+        crypto.timingSafeEqual(
+          Buffer.from(manifest.content_digest, "utf8"),
+          Buffer.from(recomputed, "utf8")
+        );
+      if (!contentDigestMatch) {
+        errors.push("content_digest does not match the bundled events (events were modified, reordered, added, or dropped)");
+      }
     }
     // Cross-check the recorded event_count against the actual array length —
     // catches a dropped/added event even though the digest already would.

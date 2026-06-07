@@ -293,6 +293,28 @@ describe("audit error / guard paths", () => {
     );
   });
 
+  test("buildAuditBundle rejects an invalid now with a clean error (not a raw RangeError)", () => {
+    assert.throws(
+      () => buildAuditBundle({ events: sampleEvents(), secret: SECRET, now: "not-a-date" }),
+      /not a valid date/
+    );
+    assert.throws(
+      () => buildAuditBundle({ events: sampleEvents(), secret: SECRET, now: NaN }),
+      /not a valid date/
+    );
+  });
+
+  test("verifyAuditBundle honours content_digest_alg and rejects an unsupported one", () => {
+    const bundle = buildAuditBundle({ events: sampleEvents(), secret: SECRET, now: NOW });
+    // Re-sign a manifest that declares an unsupported digest alg so the signature
+    // is valid but the alg is bad — the verifier must still reject it.
+    const tampered = clone(bundle);
+    tampered.manifest.content_digest_alg = "md5";
+    const result = verifyAuditBundle(tampered, SECRET);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => /Unsupported content_digest_alg/.test(e)));
+  });
+
   test("buildAuditBundle requires events to be an array", () => {
     assert.throws(
       () => buildAuditBundle({ events: null, secret: SECRET, now: NOW }),

@@ -31,6 +31,10 @@ the download endpoints (PR-B) and PDF rendering (PR-C) come later.
     object would silently drop it → tamper-evasion); and `aep_audit_version` is
     included in the *signed* manifest (with a top-level copy cross-checked at
     verify time) so the bundle format version can't be downgraded undetected.
+    `verifyAuditBundle` also honours the signed `content_digest_alg` (sha256/
+    sha512) instead of assuming sha256, `buildAuditBundle` rejects an invalid
+    `now` with a clear error, and `aep audit export` refuses to sign a
+    misleading empty bundle for a missing/empty session unless `--allow-empty`.
 - **Canonicalization refactor (no behaviour change):** the per-event
   `canonicalize` helper moved into [`src/_canonical.js`](./src/_canonical.js) and
   is re-exported from `src/signature.js`; `verifySignature` is byte-identical

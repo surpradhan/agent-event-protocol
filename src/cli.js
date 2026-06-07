@@ -352,9 +352,12 @@ export — fetch a session's events (via the read API), package them into a
          signed bundle and write it out. Requires AUDIT_SIGNING_SECRET to be set
          (the server-side audit signing key, distinct from per-API-key secrets).
 
-  --out  <file>   Write the bundle to a file (default: stdout)
-  --type <type>   Filter to a specific event type
-  --q    <text>   Full-text search query
+  --out         <file>   Write the bundle to a file (default: stdout)
+  --type        <type>   Filter to a specific event type
+  --q           <text>   Full-text search query
+  --allow-empty          Export even when the session has 0 matching events
+                         (otherwise export fails — guards against signing a
+                         misleading empty bundle for a missing session)
 
 verify — recompute the content digest and manifest signature of a bundle file
          offline and report whether it is intact. Requires AUDIT_SIGNING_SECRET.
@@ -401,6 +404,14 @@ async function cmdAuditExport(positional, flags, serverUrl, apiKey) {
   }
 
   const events = (res.body && res.body.events) || [];
+
+  if (events.length === 0 && !flags["allow-empty"]) {
+    die(
+      `No events found for session '${sessionId}'. The session may not exist, ` +
+      "belong to another tenant, or have no events matching the filters. " +
+      "Pass --allow-empty to export an empty (but still signed) bundle anyway."
+    );
+  }
 
   // Derive scope metadata from the returned events.
   const traceIds = new Set(events.map(e => e.trace_id).filter(Boolean));
