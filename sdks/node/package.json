@@ -1,6 +1,6 @@
 {
   "name": "@surpradhan/aep",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Node.js / TypeScript SDK for the Agent Event Protocol (AEP) — framework-neutral observability for multi-agent AI systems, with LangChain.js / LangGraph auto-instrumentation.",
   "license": "MIT",
   "author": "Surabhi Pradhan",
