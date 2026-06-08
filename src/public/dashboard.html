@@ -262,6 +262,7 @@
       margin-bottom: 12px;
       align-items: center;
     }
+
     input, select {
       width: 100%; border: 1px solid var(--line2); border-radius: 8px;
       padding: 8px 12px; font-size: 12px;
@@ -541,7 +542,7 @@
 
       <!-- Timeline sub-view -->
       <div id="sv-timeline">
-      <div class="toolbar">
+        <div class="toolbar">
         <label class="sr-only" for="search-input">Search events</label>
         <input id="search-input" type="text" placeholder="Search event id, type, causation id, payload…" />
 
@@ -1012,15 +1013,24 @@ function filtersUrl(sid) {
   return `/sessions/${encodeURIComponent(sid)}/events${qs ? '?' + qs : ''}`;
 }
 
+function applyRoleFilter(events) {
+  const role = document.getElementById('role-filter').value;
+  return role
+    ? events.filter(e => (e.agent_role || '') === role)
+    : events;
+}
+
 async function loadTimeline() {
   if (!selSession) return;
   try {
     const d = await fetchJson(filtersUrl(selSession));
     const evs = d.events || [];
+    const filteredEvents = applyRoleFilter(evs);
+
     buildTypeOptions(evs);
-    curEvents = evs;
-    renderTimeline(evs);
-    if (subView === 'dag') renderDag(evs);
+    curEvents = filteredEvents;
+    renderTimeline(filteredEvents);
+    if (subView === 'dag') renderDag(filteredEvents);
   } catch(_) {}
 }
 
@@ -1452,6 +1462,7 @@ document.getElementById('type-filter').addEventListener('change',
   () => { activeIdx = -1; loadTimeline(); });
 document.getElementById('role-filter').addEventListener('change',
   () => { activeIdx = -1; loadTimeline(); });
+  
 // Session list filter
 document.getElementById('session-search').addEventListener('input',
   debounce(e => { sessionFilter = e.target.value.trim(); renderSessions(allSessions); }, 200));
