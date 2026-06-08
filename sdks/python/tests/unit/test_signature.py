@@ -230,6 +230,13 @@ def test_sign_then_verify_roundtrip():
 # v2 known-answer produced by the SERVER reference impl (src/_canonical.js
 # canonicalizeV2 + HMAC). Locks Python's v2 form byte-identically to the server
 # and the Node SDK — true cross-language v2 parity.
+#
+# NB: the field values below (e.g. payload.framework == "node", the source/ids)
+# are deliberately IDENTICAL to the Node SDK fixture — they are part of the
+# signed bytes that produce _V2_REFERENCE_SIGNATURE, so this Python test and the
+# Node test sign the exact same event. Do NOT "fix" the "node" naming: changing
+# any value here would change the canonical bytes and invalidate the shared
+# cross-language known-answer vector.
 _V2_SECRET = "shared-secret-123"
 _V2_FIXED_EVENT = {
     "specversion": "0.2.0",
@@ -249,6 +256,13 @@ def test_v1_remains_the_default():
     event = _minimal_event()
     sign_event(event, "secret")
     assert "canon" not in event["signature"]  # no marker on the default path
+
+
+def test_sign_event_rejects_unsupported_canon():
+    # A typo like "V2" must fail loudly instead of silently signing unmarked v1.
+    for bad in ("V2", "v3", "", "deep"):
+        with pytest.raises(ValueError, match="Unsupported canon"):
+            sign_event(_minimal_event(), "secret", canon=bad)  # type: ignore[arg-type]
 
 
 def test_v2_signs_byte_identically_to_server_reference():

@@ -36,10 +36,17 @@ def sign_event(
             ``"v2"`` (deep, covers nested payloads). ``"v2"`` also records a
             ``signature.canon`` marker.
 
+    Raises:
+        ValueError: if *canon* is not ``"v1"`` or ``"v2"``. (Fail loudly on a
+            typo rather than silently signing the wrong/unmarked form — the
+            verifier is strict about the marker, so the emitter is too.)
+
     The v1 path mirrors the canonical-form algorithm in src/signature.js
     (shallow-copy, drop ``signature``, sort top-level keys, JSON-encode); the v2
     path uses :func:`canonicalize_v2`.
     """
+    if canon not in _SUPPORTED_CANON:
+        raise ValueError(f"Unsupported canon {canon!r} — expected 'v1' or 'v2'")
     canonical = canonicalize_v2(event) if canon == "v2" else _canonicalize(event)
     digest = hmac.new(
         secret.encode("utf-8"),
