@@ -108,7 +108,7 @@ go test ./exporters/... -v
 
 There is no local Go toolchain in the authoring environment; everything here was
 verified inside `golang:1.21` via Docker (the module uses
-`replace github.com/surpradhan/aep-go => ../sdks/go`, so the SDK must be present
+`replace github.com/surpradhan/agent-event-protocol/sdks/go => ../sdks/go`, so the SDK must be present
 at that relative path):
 
 ```bash
@@ -129,4 +129,4 @@ docker run --rm -v "$PWD/..":/src:ro golang:1.21 sh -c '
 ## Dependencies
 
 - `go.opentelemetry.io/collector/{component,consumer,exporter,pdata}` v0.96.0 / pdata v1.3.0
-- `github.com/surpradhan/aep-go` (local, via `replace`) — for `CreateEvent` and the ingest `Client`
+- `github.com/surpradhan/agent-event-protocol/sdks/go` (local, via `replace`) — for `CreateEvent` and the ingest `Client`

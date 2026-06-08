@@ -209,7 +209,7 @@ The recommended way to emit events is one of the **official AEP SDKs**, which bu
 | Language | Package | Reference |
 |---|---|---|
 | Python | `pip install -e "sdks/python[dev]"` | [sdks/python/README.md](./sdks/python/README.md) |
-| Go | `go get github.com/surpradhan/aep-go` | [sdks/go/README.md](./sdks/go/README.md) |
+| Go | `go get github.com/surpradhan/agent-event-protocol/sdks/go@latest` | [sdks/go/README.md](./sdks/go/README.md) |
 
 The SDK READMEs are the canonical reference for each client — this guide cross-links to them rather than restating their APIs.
 
@@ -239,7 +239,7 @@ with AEPClient(server_url="http://localhost:8787", api_key="aep_...") as client:
 ### Go SDK (recommended)
 
 ```go
-import "github.com/surpradhan/aep-go/aep"
+import "github.com/surpradhan/agent-event-protocol/sdks/go/aep"
 
 event, _ := aep.CreateEvent(
     "agent://my-agent",

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/surpradhan/aep-go/aep"
+	"github.com/surpradhan/agent-event-protocol/sdks/go/aep"
 )
 
 // This example demonstrates a multi-agent research workflow where an orchestrator

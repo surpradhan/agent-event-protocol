@@ -4,8 +4,27 @@ A production-ready Go client library for the Agent Event Protocol (AEP) v0.2.0.
 
 ## Installation
 
+The Go SDK is a **subdirectory module** of the
+[`agent-event-protocol`](https://github.com/surpradhan/agent-event-protocol)
+monorepo — its module path is the repo path plus the `sdks/go` subdirectory:
+
 ```bash
-go get github.com/surpradhan/aep-go
+go get github.com/surpradhan/agent-event-protocol/sdks/go@latest
+```
+
+Pin a specific release instead of `@latest` with a bare semver version query —
+Go maps it to the underlying subdirectory-prefixed Git tag (`sdks/go/v0.3.0`)
+automatically, and `@v0.3.0` is what ends up in your `go.mod` `require` line
+(see [Releasing](#releasing-publishing)):
+
+```bash
+go get github.com/surpradhan/agent-event-protocol/sdks/go@v0.3.0
+```
+
+Import the package as:
+
+```go
+import "github.com/surpradhan/agent-event-protocol/sdks/go/aep"
 ```
 
 ## Quick Start
@@ -19,7 +38,7 @@ import (
 	"context"
 	"log"
 
-	"github.com/surpradhan/aep-go/aep"
+	"github.com/surpradhan/agent-event-protocol/sdks/go/aep"
 )
 
 func main() {
@@ -229,6 +248,59 @@ go test ./aep -cover -v
 - [AEP PRD](../../AEP_PRD.md)
 - [API Specification](../../README.md)
 - [Schema Reference](../../schemas/)
+
+## Releasing (publishing)
+
+Unlike npm or PyPI, **Go has no registry upload and no publish token.** A module
+is "published" simply by pushing a Git **tag**; the public Go module proxy
+(`proxy.golang.org`) and checksum database fetch the source from GitHub on demand
+the first time someone runs `go get`. There is intentionally **no credential or
+publish step** in CI.
+
+Because this SDK is a subdirectory module (its `go.mod` lives at `sdks/go/`, not
+at the repo root), Go's [module-in-subdirectory tag convention][subdir] applies:
+the version tag must be **prefixed with the module's subdirectory path**.
+
+To cut a release:
+
+```bash
+# 1. Make sure the release commit is merged to main (tags are NOT branch-protected —
+#    only ever tag a commit that already landed on main via PR).
+git checkout main && git pull
+
+# 2. Tag with the sdks/go/ prefix + semver, then push the tag.
+git tag sdks/go/v0.3.0
+git push origin sdks/go/v0.3.0
+```
+
+Consumers then resolve it as:
+
+```bash
+go get github.com/surpradhan/agent-event-protocol/sdks/go@v0.3.0   # exact version
+go get github.com/surpradhan/agent-event-protocol/sdks/go@latest   # newest tag via the proxy
+```
+
+> **Tag convention vs. version query:** the *Git tag* you push is
+> `sdks/go/vMAJOR.MINOR.PATCH` (e.g. `sdks/go/v0.3.0`) — the subdirectory prefix
+> is **required**; a bare `v0.3.0` tag would be read as a version of a *root*
+> module and would not resolve for this subdirectory module. The *version query*
+> consumers type is the **bare** semver `@v0.3.0` (Go maps it to the prefixed tag
+> for you, and that bare form is what appears in their `go.mod`). `@latest`
+> resolves to the highest `sdks/go/v*` semver tag via the proxy.
+
+`v0.3.0` is the **first real tag** for this module — earlier in-tree code was only
+ever consumable via a local `replace` directive (the previous module path,
+`github.com/surpradhan/aep-go`, pointed at a repository that does not exist), so
+there are no prior published versions to be backward-compatible with.
+
+An optional `Release Go SDK` GitHub Actions workflow (`.github/workflows/release-go-sdk.yml`)
+runs on `sdks/go/v*` tag pushes as a **smoke gate** — it verifies the tag is an
+ancestor of `origin/main` and runs `go build ./... && go test ./...`. It does
+**not** publish anything (Go has no publish step); it just fails loudly if a tag
+is cut from unreviewed code or doesn't build. It is tag-triggered only and is not
+a required PR check.
+
+[subdir]: https://go.dev/ref/mod#vcs-version
 
 ## License
 

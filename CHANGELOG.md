@@ -4,6 +4,32 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Go SDK — monorepo module path + first release (`sdks/go/v0.3.0`), 2026-06-08
+
+Makes the **Go SDK** actually `go get`-able for the first time. It shipped the
+issue #59 v2-default signature work but was never published — its `go.mod`
+declared `module github.com/surpradhan/aep-go`, a repository that **does not
+exist**, so the module could only be consumed via a local `replace` directive.
+
+- **Module path migrated** `github.com/surpradhan/aep-go` →
+  `github.com/surpradhan/agent-event-protocol/sdks/go` (Option B: a subdirectory
+  module of this monorepo — single source of truth, no mirror repo to sync). All
+  internal imports across `sdks/go/` (and the `otelbridge` module's `require` /
+  `replace` / imports, which depend on the SDK via the local path) were updated
+  accordingly.
+- **Consumer migration** (the old path never resolved, so no real consumers
+  break):
+  - `go get github.com/surpradhan/agent-event-protocol/sdks/go@latest`
+  - `import "github.com/surpradhan/agent-event-protocol/sdks/go/aep"`
+- **Releasing is by Git tag only** — Go has no registry upload/token. Subdirectory
+  modules use the path-prefixed tag convention `sdks/go/vMAJOR.MINOR.PATCH`; the
+  module proxy fetches from GitHub on demand. **`v0.3.0` is the first real tag**
+  (aligns with the v2-default milestone). A tag-triggered, non-publishing
+  `release-go-sdk.yml` smoke gate (ancestry + `go build`/`go test`) was added; it
+  is not a required PR check. See the Go SDK README "Releasing" section.
+- No protocol or behaviour change; no change to the required CI checks (the
+  existing `Go SDK unit tests` job still gates PRs).
+
 ## Node SDK `@surpradhan/aep` 0.4.0 — v2-default signatures (release), 2026-06-08
 
 Release of the issue #59 signature work for the Node SDK (npm `@surpradhan/aep`),

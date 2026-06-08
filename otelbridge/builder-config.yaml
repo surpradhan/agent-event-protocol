@@ -37,4 +37,4 @@ exporters:
 # so the paths are relative to _build/, not to this file.
 replaces:
   - github.com/surpradhan/aep-otel-bridge => ../
-  - github.com/surpradhan/aep-go => ../../sdks/go
+  - github.com/surpradhan/agent-event-protocol/sdks/go => ../../sdks/go

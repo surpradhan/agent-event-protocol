@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/surpradhan/aep-go/aep"
+	"github.com/surpradhan/agent-event-protocol/sdks/go/aep"
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )

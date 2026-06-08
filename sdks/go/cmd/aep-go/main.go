@@ -7,7 +7,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/surpradhan/aep-go/aep"
+	"github.com/surpradhan/agent-event-protocol/sdks/go/aep"
 )
 
 func main() {

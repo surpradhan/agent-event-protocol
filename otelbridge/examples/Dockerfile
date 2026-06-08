@@ -1,7 +1,7 @@
 # Demo application image.
 #
 # IMPORTANT: the build context must be the repository ROOT, because the
-# otelbridge module uses `replace github.com/surpradhan/aep-go => ../sdks/go`,
+# otelbridge module uses `replace github.com/surpradhan/agent-event-protocol/sdks/go => ../sdks/go`,
 # which lives outside otelbridge/. docker-compose.yml sets `context: ..`.
 #
 #   docker build -f otelbridge/examples/Dockerfile -t aep-demo-app .
