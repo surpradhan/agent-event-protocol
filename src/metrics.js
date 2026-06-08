@@ -11,8 +11,11 @@
  *
  * Exports
  * -------
- *   metricsMiddleware          — Express middleware; must be registered early
- *   getPrometheusText(dbStats) — Returns the full Prometheus text payload
+ *   metricsMiddleware            — Express middleware; must be registered early
+ *   getPrometheusText(dbStats)   — Returns the full Prometheus text payload
+ *   recordSignatureVerification  — Count an accepted signature by effective form
+ *   recordSignatureRejection     — Count a signature verification failure
+ *   getSignatureMetrics()        — Snapshot of signature counters (for JSON /metrics)
  */
 
 // Histogram bucket thresholds in seconds (standard Prometheus defaults)
@@ -24,6 +27,64 @@ const requestCounts = new Map();
 // Map: "METHOD route" → { buckets: number[], sum: number, count: number }
 // buckets[i] = number of requests with duration <= BUCKETS[i]  (cumulative)
 const latencyData = new Map();
+
+// ---------------------------------------------------------------------------
+// Signature canonicalization observability (issue #65, Phase A)
+// ---------------------------------------------------------------------------
+//
+// We want to see who is still relying on the legacy v1 (envelope-only) signature
+// form before the server stops accepting it. These counters classify each
+// signature verification on ingest by its EFFECTIVE canonical form (the form
+// that actually verified) plus whether the emitter set a `signature.canon`
+// marker. Labels are intentionally low cardinality — NO tenant/source/key
+// labels (those would explode Prometheus series; per-tenant attribution is done
+// via a sampled structured log instead, see src/server.js).
+
+// Map: "form|marked" → count   (accepted/verified signatures; form ∈ {v1,v2}, marked ∈ {true,false})
+const sigVerifications = new Map();
+
+// Map: "marked" → count        (verification failures; effective form is unknown on failure)
+const sigRejections = new Map();
+
+/**
+ * Record an accepted HMAC signature, classified by the effective canonical
+ * form and whether a `signature.canon` marker was present.
+ *
+ * @param {{ form: "v1"|"v2", marked: boolean }} info
+ */
+function recordSignatureVerification({ form, marked }) {
+  const key = `${form}|${marked ? "true" : "false"}`;
+  sigVerifications.set(key, (sigVerifications.get(key) || 0) + 1);
+}
+
+/**
+ * Record a failed HMAC signature verification. The effective form is unknown
+ * (no candidate matched), so we only label by whether a marker was present.
+ *
+ * @param {{ marked: boolean }} info
+ */
+function recordSignatureRejection({ marked }) {
+  const key = marked ? "true" : "false";
+  sigRejections.set(key, (sigRejections.get(key) || 0) + 1);
+}
+
+/**
+ * Snapshot of the signature counters for the JSON GET /metrics response.
+ *
+ * @returns {{ verifications: Array<{form,marked,count}>, rejections: Array<{marked,count}> }}
+ */
+function getSignatureMetrics() {
+  const verifications = [];
+  for (const [key, count] of sigVerifications) {
+    const [form, marked] = key.split("|");
+    verifications.push({ form, marked: marked === "true", count });
+  }
+  const rejections = [];
+  for (const [marked, count] of sigRejections) {
+    rejections.push({ marked: marked === "true", count });
+  }
+  return { verifications, rejections };
+}
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -136,6 +197,29 @@ function getPrometheusText(dbStats) {
     lines.push("");
   }
 
+  // ---- Signature canonicalization (issue #65) ------------------------------
+
+  if (sigVerifications.size > 0) {
+    lines.push("# HELP aep_signature_verifications_total Accepted HMAC signatures by effective canonical form (v1=legacy envelope-only, v2=deep). marked=whether a signature.canon marker was present.");
+    lines.push("# TYPE aep_signature_verifications_total counter");
+    for (const [key, count] of sigVerifications) {
+      const [form, marked] = key.split("|");
+      lines.push(
+        `aep_signature_verifications_total{${label("form", form)},${label("marked", marked)}} ${count}`
+      );
+    }
+    lines.push("");
+  }
+
+  if (sigRejections.size > 0) {
+    lines.push("# HELP aep_signature_verifications_rejected_total HMAC signature verifications that failed (effective form unknown). marked=whether a signature.canon marker was present.");
+    lines.push("# TYPE aep_signature_verifications_rejected_total counter");
+    for (const [marked, count] of sigRejections) {
+      lines.push(`aep_signature_verifications_rejected_total{${label("marked", marked)}} ${count}`);
+    }
+    lines.push("");
+  }
+
   // ---- HTTP request counts -------------------------------------------------
 
   if (requestCounts.size > 0) {
@@ -178,4 +262,10 @@ function getPrometheusText(dbStats) {
   return lines.join("\n") + "\n";
 }
 
-module.exports = { metricsMiddleware, getPrometheusText };
+module.exports = {
+  metricsMiddleware,
+  getPrometheusText,
+  recordSignatureVerification,
+  recordSignatureRejection,
+  getSignatureMetrics
+};

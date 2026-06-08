@@ -512,6 +512,79 @@ describe("GET /metrics", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Signature canonicalization telemetry (issue #65, Phase A)
+//
+// A v1-signed and a v2-signed event ingested against a key WITH an hmac_secret
+// must be classified by effective canonical form in the Prometheus output.
+// Counters are process-wide, so we assert on the before/after DELTA.
+// ---------------------------------------------------------------------------
+
+describe("signature canonicalization metrics", () => {
+  const { canonicalize, canonicalizeV2 } = require("../../src/signature");
+  const SIG_SECRET = "phase-a-hmac-secret";
+  let signKey;
+
+  // Read the aep_signature_verifications_total value for a given form+marked
+  // label pair from the Prometheus scrape (0 when the series is absent yet).
+  function counterFor(text, form, marked) {
+    const re = new RegExp(
+      `aep_signature_verifications_total\\{form="${form}",marked="${marked}"\\}\\s+(\\d+)`
+    );
+    const m = text.match(re);
+    return m ? Number(m[1]) : 0;
+  }
+
+  async function scrape() {
+    const res = await fetch(`${baseUrl}/metrics/prometheus`);
+    assert.equal(res.status, 200);
+    return res.text();
+  }
+
+  function signedEvent(form, canon) {
+    const event = makeEvent({ payload: { task: "signed", nested: { deep: 1 } } });
+    const value = crypto.createHmac("sha256", SIG_SECRET).update(form(event), "utf8").digest("base64");
+    event.signature = { alg: "hmac-sha256", value, canon };
+    return event;
+  }
+
+  before(async () => {
+    const res = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({
+        tenantId: "tenant-sig", label: "signing-key", scopes: ["read", "write"], hmacSecret: SIG_SECRET,
+      }),
+    });
+    signKey = (await res.json()).key;
+  });
+
+  test("v1- and v2-signed ingests are counted by effective form", async () => {
+    const before = await scrape();
+    const v1Before = counterFor(before, "v1", "true");
+    const v2Before = counterFor(before, "v2", "true");
+
+    const v1Res = await ingest(signedEvent(canonicalize, "v1"), signKey);
+    assert.equal(v1Res.status, 202);
+    const v2Res = await ingest(signedEvent(canonicalizeV2, "v2"), signKey);
+    assert.equal(v2Res.status, 202);
+
+    const after = await scrape();
+    assert.equal(counterFor(after, "v1", "true"), v1Before + 1, "v1 counter should increment by 1");
+    assert.equal(counterFor(after, "v2", "true"), v2Before + 1, "v2 counter should increment by 1");
+  });
+
+  test("an invalid signature is rejected and counted as a rejection", async () => {
+    const ev = signedEvent(canonicalize, "v1");
+    ev.signature.value = "AAAA"; // wrong digest
+    const res = await ingest(ev, signKey);
+    assert.equal(res.status, 401);
+
+    const text = await scrape();
+    assert.match(text, /aep_signature_verifications_rejected_total\{marked="true"\}\s+\d+/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Admin: POST /admin/keys, GET /admin/keys, DELETE /admin/keys/:id
 // ---------------------------------------------------------------------------
 

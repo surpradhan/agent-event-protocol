@@ -265,6 +265,20 @@ from issue #59.
 > character edge cases also match. All three SDKs default to the same v2 bytes,
 > locked by a shared server-derived known-answer vector. Tracked in issue #59.
 
+**Observability (issue #65).** So v1 retirement can be data-driven, the server
+classifies every signature verification by its *effective* canonical form and
+exposes it on `GET /metrics/prometheus`:
+
+- `aep_signature_verifications_total{form="v1"|"v2",marked="true"|"false"}` —
+  accepted signatures by effective form (`marked` = a `signature.canon` field was
+  present). The same counts appear under `signatures` in the JSON `GET /metrics`.
+- `aep_signature_verifications_rejected_total{marked="true"|"false"}` — failures.
+
+These labels are deliberately low cardinality (no tenant/source/key). For
+per-tenant attribution, the first legacy-v1 ingest per tenant is logged at `info`
+(with `tenant_id` + `source`); the rest at `debug`. This is observability only —
+it does **not** change what the server accepts.
+
 ---
 
 ## Audit Export (tamper-evident bundles)
