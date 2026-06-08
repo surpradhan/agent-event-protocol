@@ -12,11 +12,13 @@ monorepo — its module path is the repo path plus the `sdks/go` subdirectory:
 go get github.com/surpradhan/agent-event-protocol/sdks/go@latest
 ```
 
-Pin a specific release instead of `@latest` with the subdirectory-tag form
+Pin a specific release instead of `@latest` with a bare semver version query —
+Go maps it to the underlying subdirectory-prefixed Git tag (`sdks/go/v0.3.0`)
+automatically, and `@v0.3.0` is what ends up in your `go.mod` `require` line
 (see [Releasing](#releasing-publishing)):
 
 ```bash
-go get github.com/surpradhan/agent-event-protocol/sdks/go@sdks/go/v0.3.0
+go get github.com/surpradhan/agent-event-protocol/sdks/go@v0.3.0
 ```
 
 Import the package as:
@@ -274,14 +276,17 @@ git push origin sdks/go/v0.3.0
 Consumers then resolve it as:
 
 ```bash
-go get github.com/surpradhan/agent-event-protocol/sdks/go@sdks/go/v0.3.0   # exact version
-go get github.com/surpradhan/agent-event-protocol/sdks/go@latest           # newest tag via the proxy
+go get github.com/surpradhan/agent-event-protocol/sdks/go@v0.3.0   # exact version
+go get github.com/surpradhan/agent-event-protocol/sdks/go@latest   # newest tag via the proxy
 ```
 
-> **Tag convention:** the tag is `sdks/go/vMAJOR.MINOR.PATCH` (e.g.
-> `sdks/go/v0.3.0`), **not** a bare `v0.3.0`. A bare tag would be interpreted as
-> a version of a *root* module and would not resolve for this subdirectory
-> module. `@latest` resolves to the highest `sdks/go/v*` semver tag via the proxy.
+> **Tag convention vs. version query:** the *Git tag* you push is
+> `sdks/go/vMAJOR.MINOR.PATCH` (e.g. `sdks/go/v0.3.0`) — the subdirectory prefix
+> is **required**; a bare `v0.3.0` tag would be read as a version of a *root*
+> module and would not resolve for this subdirectory module. The *version query*
+> consumers type is the **bare** semver `@v0.3.0` (Go maps it to the prefixed tag
+> for you, and that bare form is what appears in their `go.mod`). `@latest`
+> resolves to the highest `sdks/go/v*` semver tag via the proxy.
 
 `v0.3.0` is the **first real tag** for this module — earlier in-tree code was only
 ever consumable via a local `replace` directive (the previous module path,

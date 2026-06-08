@@ -23,8 +23,9 @@
 #     git tag sdks/go/v0.3.0
 #     git push origin sdks/go/v0.3.0
 #
-# Consumers then resolve it via:
-#     go get github.com/surpradhan/agent-event-protocol/sdks/go@sdks/go/v0.3.0
+# Consumers then resolve it via a bare semver query (Go maps it to the prefixed
+# Git tag automatically):
+#     go get github.com/surpradhan/agent-event-protocol/sdks/go@v0.3.0
 #     go get github.com/surpradhan/agent-event-protocol/sdks/go@latest
 
 name: Release Go SDK
