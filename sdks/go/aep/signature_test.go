@@ -83,7 +83,7 @@ func TestVerifySignatureInvalid(t *testing.T) {
 	}
 }
 
-func TestVerifySignatureTamperedPayload(t *testing.T) {
+func TestVerifySignatureTamperedEnvelope(t *testing.T) {
 	event, _ := CreateEvent(
 		"agent://test",
 		EventTypeTaskCreated,
@@ -96,8 +96,8 @@ func TestVerifySignatureTamperedPayload(t *testing.T) {
 	secret := "test_secret"
 	signedEvent, _ := SignEvent(event, secret)
 
-	// Tamper with payload
-	signedEvent.Payload = map[string]interface{}{"task": "tampered"}
+	// Tamper with an ENVELOPE field — covered by both v1 and v2.
+	signedEvent.Source = "agent://attacker"
 
 	valid, err := VerifySignature(signedEvent, secret)
 
@@ -106,7 +106,36 @@ func TestVerifySignatureTamperedPayload(t *testing.T) {
 	}
 
 	if valid {
-		t.Error("Expected signature to be invalid after payload tampering")
+		t.Error("Expected signature to be invalid after envelope tampering")
+	}
+}
+
+// The default (v1) canonical form is envelope-only: it intentionally does NOT
+// cover nested payload contents (cross-SDK parity, issue #59). Tampering the
+// payload of a v1-signed event is therefore NOT detected — use v2 for payload
+// coverage (see TestVerifySignatureV2DetectsPayloadTampering).
+func TestVerifySignatureV1IgnoresPayloadTampering(t *testing.T) {
+	event, _ := CreateEvent(
+		"agent://test",
+		EventTypeTaskCreated,
+		"ses_001",
+		"trc_001",
+		map[string]interface{}{"task": "original"},
+		nil,
+	)
+
+	secret := "test_secret"
+	signedEvent, _ := SignEvent(event, secret)
+
+	// Tamper with payload — NOT covered by v1.
+	signedEvent.Payload = map[string]interface{}{"task": "tampered"}
+
+	valid, err := VerifySignature(signedEvent, secret)
+	if err != nil {
+		t.Fatalf("VerifySignature failed: %v", err)
+	}
+	if !valid {
+		t.Error("v1 is envelope-only; payload tampering should NOT affect a v1 signature")
 	}
 }
 

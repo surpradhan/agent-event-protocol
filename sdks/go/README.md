@@ -87,12 +87,14 @@ for _, result := range results {
 
 ```go
 secret := "my_shared_secret"
+
+// Default (v1): envelope-only signature, base64-encoded.
 signedEvent, err := aep.SignEvent(event, secret)
 if err != nil {
 	log.Fatal(err)
 }
 
-// Verify the signature
+// Verify the signature (version-aware; honours signature.canon).
 valid, err := aep.VerifySignature(signedEvent, secret)
 if err != nil {
 	log.Fatal(err)
@@ -101,6 +103,47 @@ if valid {
 	log.Println("Signature verified")
 }
 ```
+
+#### Canonicalization versions (`signature.canon`, issue #59)
+
+The signed *canonical form* of an event comes in two versions:
+
+- **v1** (`SignEvent`, the default) — **envelope-only**: the `signature` field is
+  dropped, top-level keys are sorted, and nested object contents are omitted (a
+  `payload` serializes as `{}`). Covers the envelope but **not** nested payloads.
+- **v2** (`SignEventV2`) — **deep**: the whole event including nested payloads is
+  recursively key-sorted, so the signature **covers payload contents**. v2
+  signatures carry a `signature.canon: "v2"` marker.
+
+```go
+// Opt into v2 so the signature covers nested payload contents.
+signedEvent, err := aep.SignEventV2(event, secret)
+// or, equivalently:
+signedEvent, err = aep.SignEventWithCanon(event, secret, "v2")
+```
+
+`VerifySignature` is version-aware and backward-compatible: a `"v2"` marker is
+verified against the deep form only, `"v1"` against the shallow form only, and an
+**absent** marker is accepted if it matches *either* form (transition mode). The
+digest is **base64**-encoded in both versions, byte-identical to the server, Node,
+and Python SDKs (locked by a cross-language known-answer test).
+
+> **Behaviour change (issue #59):** earlier Go SDK releases signed a *deep*
+> canonical form and **hex**-encoded the value — a combination that matched
+> neither the shared v1 (shallow) nor v2 form and whose hex value never verified
+> on the server (everyone else uses base64), so it was non-interoperable in
+> practice. This release aligns v1 to the shared **shallow + base64** form (so Go
+> finally interoperates) and adds opt-in v2. Existing Go signers will produce
+> different `signature.value` bytes; events signed by older Go releases were not
+> verifiable cross-language anyway.
+>
+> **Cross-runtime byte parity:** the canonical form is built with a custom
+> serializer (not `encoding/json`) so the bytes match ECMAScript `JSON.stringify`
+> / Python `json.dumps(ensure_ascii=False)` exactly — including ECMAScript
+> `Number` formatting (`ecmaFormatFloat`) and string escaping (`ecmaQuote`, which
+> emits `<`, `>`, `&`, U+2028 and U+2029 raw, unlike `encoding/json` which escapes
+> them). Verified by `TestECMANumberFormatting`, `TestEcmaQuote`, and
+> server-derived known-answer vectors covering special characters.
 
 ## Features
 

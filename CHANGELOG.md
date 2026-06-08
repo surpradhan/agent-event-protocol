@@ -4,6 +4,61 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Go SDK: opt-in v2 (deep) signature canonicalization + v1 interop fix (issue #59), 2026-06-08
+
+**SDK feature + interop fix** — the third (and final SDK) emitter migration toward
+the unified deep canonical form (after the Node and Python SDKs). The server
+already verifies v2.
+
+- **`sdks/go/aep/signature.go`:**
+  - New `canonicalFormV2` — deep canonical form (recursive key sort covering
+    nested payloads). **Byte-identical to the server, Node, and Python SDKs** for
+    JSON values shared across runtimes (locked by the *same* server-derived
+    known-answer vector as the Node/Python tests).
+  - New ECMAScript `Number`-to-string formatter (`ecmaFormatFloat`) so v2 float
+    bytes match `JSON.stringify` (Node/server) across exponent ranges — replacing
+    the previous `%.0f`/`FormatFloat 'f'` rendering that diverged for non-integer
+    floats. Documented and locked by `TestECMANumberFormatting`.
+  - New custom string serializer (`ecmaQuote`) for canonical string values AND
+    object keys, replacing `encoding/json` which HTML-escapes `<`, `>`, `&` by
+    default and escapes U+2028/U+2029 even with `SetEscapeHTML(false)`. `ecmaQuote`
+    emits those raw (matching `JSON.stringify` / Python `json.dumps(ensure_ascii=
+    False)`), so canonical bytes — and thus signatures — agree cross-runtime for
+    events whose envelope or payload contains those characters (common: URLs with
+    `&`, `&&`/`<`/`>` in code, HTML). Locked by `TestEcmaQuote` and server-derived
+    special-character known-answer vectors (v1 envelope + v2 payload).
+  - `SignEvent(event, secret)` — still the default, now signs the shared **v1**
+    (shallow, envelope-only) form. New `SignEventV2` / `SignEventWithCanon` opt
+    into v2 (deep) and add a `signature.canon: "v2"` marker.
+  - `VerifySignature` is now **version-aware**: honours `signature.canon`
+    (`"v2"`→deep, `"v1"`→shallow, absent→transition mode accepting either),
+    rejects unknown markers via `ErrValidation`, and never panics (bad base64 →
+    plain mismatch) — mirroring the server.
+  - **Two interop fixes (BEHAVIOUR CHANGE for existing Go signers):**
+    1. **Encoding** — `signature.value` is now **base64** (was hex). Hex never
+       verified on the server/Node/Python (everyone else uses base64).
+    2. **Canonical form** — v1 is now the shared **shallow** form (was a bespoke
+       *deep* form). Combined with the hex encoding, the old Go output matched
+       neither v1 nor v2 and was non-interoperable in practice, so no
+       cross-language consumer relied on it.
+  - `Signature` gains an optional `Canon` field (`json:"canon,omitempty"`).
+- **Tests (`sdks/go/aep/signature_v2_test.go`):** lock Go **v1** and **v2** to the
+  shared cross-language known-answer vectors (`zPZD…` / `M3OG…`); prove v2 detects
+  nested-payload tampering, v1 is envelope-only, version honouring (v2 digest
+  declared `v1` → reject), transition mode (unmarked deep/v1 → accept), unknown
+  canon → reject (sign + verify), and bad-base64 → mismatch (no panic). Added
+  **special-character** known-answer vectors (`<`, `>`, `&`, U+2028/U+2029,
+  control chars, astral emoji — v1 envelope + v2 payload) and a `TestEcmaQuote`
+  unit test, both locked to server-derived values.
+- **Cross-verified end-to-end:** a Go-signed v2 event verifies on the server, its
+  nested-payload tamper is detected, an unmarked deep sig is accepted (transition
+  mode), a mislabelled-`v1` deep sig is rejected; a Go-signed v1 event also
+  verifies on the server.
+- **Docs:** `sdks/go/README.md` documents v1 vs v2, `SignEventV2`, and the interop
+  behaviour change.
+- **No default change for the protocol** (v1 stays the SDK default). Flipping the
+  default to v2 and retiring v1 remains tracked in issue #59. No module/tag bump.
+
 ## Python SDK: opt-in v2 (deep) signature canonicalization (issue #59), 2026-06-07
 
 **SDK feature, additive, non-breaking** — the second emitter migration toward the
