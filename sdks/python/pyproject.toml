@@ -3,16 +3,55 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aep"
-version = "0.2.0"
-description = "Python SDK for the Agent Event Protocol"
+# Distribution name (PyPI) ≠ import name. The import package stays `aep`
+# (`import aep`), but the PyPI distribution is `surpradhan-aep` because the bare
+# `aep` name is already taken on PyPI. Mirrors the npm scope `@surpradhan/aep`.
+# Install with `pip install surpradhan-aep`; import with `import aep`.
+name = "surpradhan-aep"
+version = "0.3.0"
+description = "Python SDK for the Agent Event Protocol (AEP) — structured observability for multi-agent AI systems"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
+authors = [
+    { name = "Surabhi Pradhan", email = "surabhi7pradhan@gmail.com" },
+]
+keywords = [
+    "agent",
+    "observability",
+    "telemetry",
+    "tracing",
+    "llm",
+    "multi-agent",
+    "opentelemetry",
+    "langgraph",
+    "crewai",
+    "autogen",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Monitoring",
+    "Typing :: Typed",
+]
 dependencies = [
     "httpx>=0.27,<1.0",
     "jsonschema>=4.20,<5.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/surpradhan/agent-event-protocol"
+Repository = "https://github.com/surpradhan/agent-event-protocol"
+Issues = "https://github.com/surpradhan/agent-event-protocol/issues"
+Changelog = "https://github.com/surpradhan/agent-event-protocol/blob/main/CHANGELOG.md"
+"Source (Python SDK)" = "https://github.com/surpradhan/agent-event-protocol/tree/main/sdks/python"
 
 [project.optional-dependencies]
 dev = [
