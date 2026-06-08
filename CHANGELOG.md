@@ -4,6 +4,31 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Python SDK `surpradhan-aep` 0.3.0 — first PyPI release (v2-default signatures), 2026-06-08
+
+The **first actual PyPI release** of the Python SDK, bumping `0.2.0` → `0.3.0`.
+The SDK has been usable from source (`pip install -e`) all along but was never
+published; this packages the issue #59 v2-default signature work for PyPI.
+
+- **Distribution name is `surpradhan-aep`** (mirrors the npm scope
+  `@surpradhan/aep`). The bare `aep` name was already taken on PyPI, so the
+  distribution is renamed while the **import name stays `aep`** — users
+  `pip install surpradhan-aep` then `import aep`. This is a one-way door once
+  published.
+- **v2 (deep) signature canonicalization is the default** (carried in from #66 /
+  issue #59): `sign_event(event, secret)` produces a deep, payload-covering
+  signature with a `signature.canon: "v2"` marker, and the auto-signing
+  `AEPClient` / `AsyncAEPClient` emit v2 automatically. Pass `canon="v1"` for the
+  legacy envelope-only form. **Compatibility:** a v2-default emitter requires a
+  v2-aware AEP server (server PR #60+); the server still accepts v1 during the
+  transition.
+- **Packaging:** complete PyPI metadata (authors, project URLs, keywords,
+  classifiers for Python 3.10–3.12 + MIT) and a tag-triggered
+  `release-python-sdk.yml` release workflow — `python-sdk-v*` tag → `verify`
+  (ancestry + build + `pytest`) → required-reviewer `pypi-publish` environment →
+  Trusted Publishing (OIDC, no API token). No version bump of the protocol or
+  other SDKs.
+
 ## Go SDK — monorepo module path + first release (`sdks/go/v0.3.0`), 2026-06-08
 
 Makes the **Go SDK** actually `go get`-able for the first time. It shipped the

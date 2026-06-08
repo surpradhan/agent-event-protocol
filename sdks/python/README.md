@@ -2,11 +2,21 @@
 
 Python client library for the [Agent Event Protocol](../../README.md) — an observability framework for agent workflows.
 
-**Version:** 0.2.0 · **Python:** ≥ 3.10 · **Schema:** AEP v0.2.0
+**Version:** 0.3.0 · **Python:** ≥ 3.10 · **Schema:** AEP v0.2.0
 
 ---
 
 ## Installation
+
+From PyPI:
+
+```bash
+pip install surpradhan-aep
+```
+
+> The PyPI **distribution** name is `surpradhan-aep` (the bare `aep` name was
+> already taken on PyPI), but the **import** name is unchanged — you still write
+> `import aep`.
 
 From the repo root (development):
 
@@ -483,4 +493,49 @@ pytest tests/unit/
 
 # Integration tests (requires running server)
 AEP_INGEST_URL=http://localhost:8787 pytest tests/integration/
+```
+
+---
+
+## Publishing / Releases
+
+The SDK is published to PyPI as **`surpradhan-aep`** (import name stays `aep`) by
+the [`Release Python SDK`](../../.github/workflows/release-python-sdk.yml)
+workflow, which is triggered **only** by pushing a `python-sdk-v*` tag — never on
+a branch push or PR. Publishing uses **PyPI Trusted Publishing (OIDC)**, so there
+is no API token to store or leak.
+
+Like tags in general, `python-sdk-v*` tags are **not** branch-protected, so the
+release is gated twice and independently:
+
+1. **`verify`** — fails fast unless the tagged commit is an ancestor of
+   `origin/main` (i.e. it landed via the PR-protected merge path), then builds the
+   sdist + wheel and runs `pytest`. The approver sees a green pre-flight.
+2. **`publish`** — runs in the `pypi-publish` GitHub Environment, which has
+   **required reviewers**. The upload to PyPI only happens after a human approves
+   the deployment, and it ships the exact artifacts `verify` built and tested.
+
+### Maintainer setup (one-time)
+
+Before the first release, configure the publisher side (cannot be done from code):
+
+- **PyPI Trusted Publisher** — on PyPI, add a GitHub Actions trusted publisher
+  (use the *pending publisher* flow for the first-ever release, since the project
+  doesn't exist on PyPI yet) with exactly:
+  - Project name: `surpradhan-aep`
+  - Owner: `surpradhan` · Repository: `agent-event-protocol`
+  - Workflow: `release-python-sdk.yml` · Environment: `pypi-publish`
+- **GitHub Environment** — create an Environment named `pypi-publish` under
+  Settings → Environments and add the release owners as **Required reviewers**.
+  No secrets are stored (OIDC replaces the API token).
+
+### Cutting a release
+
+```bash
+# 1. Bump sdks/python/pyproject.toml `version` AND aep/__init__.py `__version__`
+#    (keep them in sync) on a PR; squash-merge to main.
+# 2. From main, tag the release commit and push the tag:
+git tag python-sdk-v0.3.0
+git push origin python-sdk-v0.3.0
+# 3. Approve the `pypi-publish` deployment in the Actions UI once `verify` is green.
 ```
