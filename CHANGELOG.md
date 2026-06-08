@@ -4,6 +4,24 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Node SDK `@surpradhan/aep` 0.4.0 — v2-default signatures (release), 2026-06-08
+
+Release of the issue #59 signature work for the Node SDK (npm `@surpradhan/aep`),
+bumping `0.3.0` → `0.4.0`. Cut by pushing a `node-sdk-v0.4.0` tag (verify →
+required-reviewer approval → `npm publish --provenance`).
+
+Since 0.3.0:
+- **v2 (deep) signature canonicalization is now the DEFAULT** (#66). `signEvent`
+  produces a deep, payload-covering signature with a `signature.canon: "v2"`
+  marker, so payload tamper-evidence is on without opt-in.
+- v2 signing was first added as opt-in in #61; `verifySignature` is version-aware
+  (honours `canon`; absent → transition mode accepting either form).
+- **Behaviour change:** the default signature bytes differ from 0.3.x (v1,
+  envelope-only) and now carry a `canon` marker. v1 remains available via
+  `signEvent(event, secret, { canon: "v1" })`. **Compatibility:** a v2-default
+  emitter requires a v2-aware AEP server (one including server PR #60+); the
+  server still accepts v1 during the transition.
+
 ## All SDKs: v2 (deep) signature canonicalization is now the DEFAULT (issue #59), 2026-06-08
 
 **Behaviour change** — the final functional step of issue #59. With all three SDK
