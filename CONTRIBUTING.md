@@ -119,6 +119,7 @@ Then open a PR on GitHub with a clear title and description.
   - `Python SDK tests (3.10)`
   - `Python SDK tests (3.11)`
   - `Python SDK tests (3.12)`
+  - `Python SDK tests (3.13)`
   - `Node SDK tests (20.x)`
   - `Node SDK tests (22.x)`
   - `test (20.x)`
