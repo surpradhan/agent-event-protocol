@@ -301,6 +301,11 @@ const hexDigits = "0123456789abcdef"
 // object keys: Go's encoder HTML-escapes `<`, `>`, `&` by default AND escapes
 // U+2028/U+2029 even with `SetEscapeHTML(false)`, both of which break
 // cross-runtime canonical byte parity with the server/Node/Python (issue #59).
+//
+// Edge case: lone surrogates / invalid UTF-8 are emitted as raw U+FFFD (Go's
+// `for range` substitution) rather than `\udXXX` escapes like JS — unreachable in
+// practice, since events reaching the verifier have round-tripped through JSON
+// parsing and so cannot carry a lone surrogate.
 func ecmaQuote(s string) string {
 	var b strings.Builder
 	b.Grow(len(s) + 2)
