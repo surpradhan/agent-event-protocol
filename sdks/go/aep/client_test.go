@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -54,15 +55,18 @@ func TestClientEmit(t *testing.T) {
 }
 
 func TestClientEmitBatch(t *testing.T) {
-	count := 0
+	// count is read from the test goroutine after the client returns, while it is
+	// written from httptest's per-request handler goroutines. Use an atomic so the
+	// counter is race-free regardless of how requests are dispatched.
+	var count atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		count++
+		n := count.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"accepted":  true,
 			"duplicate": false,
-			"id":        "evt_" + string(rune(count)),
+			"id":        "evt_" + string(rune(n)),
 		})
 	}))
 	defer server.Close()
@@ -84,8 +88,8 @@ func TestClientEmitBatch(t *testing.T) {
 		t.Errorf("Expected 3 responses, got %d", len(responses))
 	}
 
-	if count != 3 {
-		t.Errorf("Expected 3 requests, got %d", count)
+	if got := count.Load(); got != 3 {
+		t.Errorf("Expected 3 requests, got %d", got)
 	}
 }
 
@@ -228,9 +232,13 @@ func TestClientTimeout(t *testing.T) {
 }
 
 func TestAsyncClientEmitBatch(t *testing.T) {
-	count := 0
+	// EmitBatch fans out one goroutine per event, so httptest invokes this handler
+	// from multiple goroutines concurrently. Use an atomic counter: a plain int++
+	// is a data race here (concurrent writes, plus an unsynchronized read after
+	// wg.Wait) and made the request-count assertion intermittently flaky.
+	var count atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		count++
+		count.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -258,7 +266,7 @@ func TestAsyncClientEmitBatch(t *testing.T) {
 		t.Errorf("Expected 3 responses, got %d", len(responses))
 	}
 
-	if count != 3 {
-		t.Errorf("Expected 3 requests, got %d", count)
+	if got := count.Load(); got != 3 {
+		t.Errorf("Expected 3 requests, got %d", got)
 	}
 }
