@@ -187,6 +187,93 @@ func TestBadBase64NeverPanics(t *testing.T) {
 	}
 }
 
+// specialCharFixture builds an event whose envelope (subject) and payload contain
+// the characters that diverge between Go's encoding/json and ECMAScript
+// JSON.stringify / Python json.dumps(ensure_ascii=False): the HTML-significant
+// <, >, & (Go escapes by default), U+2028/U+2029 line/paragraph separators (Go
+// escapes even with SetEscapeHTML(false)), the named control escapes, a generic
+// control char, and an astral (surrogate-pair) emoji. All special chars use Go
+// escape sequences so the bytes exactly match the JS fixture the vectors below
+// were derived from.
+func specialCharFixture() *Event {
+	subj := "a<b>&c d e"
+	return &Event{
+		SpecVersion: "0.2.0",
+		ID:          "evt_special01",
+		Time:        "2026-06-05T12:00:00.000Z",
+		Source:      "agent://x",
+		Type:        EventTypeTaskCreated,
+		SessionID:   "ses_s",
+		TraceID:     "trc_s",
+		Subject:     &subj,
+		Payload: map[string]any{
+			"html": "1<2 && 3>2",
+			"k&v":  "x",
+			"sep":  "p q r",
+			"ctrl": "tab\tnl\nx\b\fy",
+			"uni":  "λ→\U0001f600", // λ → 😀
+		},
+	}
+}
+
+const (
+	// Server-derived cross-language vectors for specialCharFixture (secret above).
+	// v1 covers the envelope (incl. the special-char subject); v2 also covers the
+	// special-char payload. These pin byte parity with the server/Node/Python for
+	// <, >, &, U+2028/U+2029, control chars, and astral codepoints.
+	specialKnownAnswerV1 = "L3fdoku4FOb5tR5Hr/3U5Vmmk/7UZlf67mW83999DOI="
+	specialKnownAnswerV2 = "tVtj/rav+ocjUpP6SssCMc9k0phC0FUd62YJZFiSizc="
+)
+
+// TestKnownAnswerSpecialCharsV1 locks Go's v1 signature for an event with
+// HTML-significant and separator characters in the envelope to the server value.
+// Guards against encoding/json HTML-escaping <, >, & (issue #59 review finding).
+func TestKnownAnswerSpecialCharsV1(t *testing.T) {
+	signed, err := SignEvent(specialCharFixture(), paritySecret)
+	if err != nil {
+		t.Fatalf("SignEvent failed: %v", err)
+	}
+	if signed.Signature.Value != specialKnownAnswerV1 {
+		t.Errorf("special-char v1 KAT mismatch:\n got  %q\n want %q", signed.Signature.Value, specialKnownAnswerV1)
+	}
+}
+
+// TestKnownAnswerSpecialCharsV2 locks Go's v2 signature for an event with special
+// characters in BOTH the envelope and the payload to the server value — the full
+// byte-parity guard for the custom ECMAScript string encoder.
+func TestKnownAnswerSpecialCharsV2(t *testing.T) {
+	signed, err := SignEventV2(specialCharFixture(), paritySecret)
+	if err != nil {
+		t.Fatalf("SignEventV2 failed: %v", err)
+	}
+	if signed.Signature.Value != specialKnownAnswerV2 {
+		t.Errorf("special-char v2 KAT mismatch:\n got  %q\n want %q", signed.Signature.Value, specialKnownAnswerV2)
+	}
+}
+
+// TestEcmaQuote checks the custom string encoder against ECMAScript
+// JSON.stringify output for the characters that differ from encoding/json.
+func TestEcmaQuote(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"a<b>&c", `"a<b>&c"`},                             // <, >, & emitted raw (not < etc.)
+		{"1<2 && 3>2", `"1<2 && 3>2"`},                     //
+		{"p q r", "\"p q r\""},                             // U+2028/U+2029 emitted raw
+		{"a\"b\\c", `"a\"b\\c"`},                           // quote + backslash escaped
+		{"tab\tnl\n", `"tab\tnl\n"`},                       // named control escapes
+		{"x\bz\f", `"x\bz\f"`},                             //
+		{string([]rune{0x01, 0x1f}), "\"\\u0001\\u001f\""}, // other control chars -> lowercase \u00xx
+		{"λ→\U0001f600", "\"λ→\U0001f600\""},               // printable/astral raw
+	}
+	for _, c := range cases {
+		if got := ecmaQuote(c.in); got != c.want {
+			t.Errorf("ecmaQuote(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 // TestECMANumberFormatting documents the v2 cross-language number-formatting
 // contract: Go's ecmaFormatFloat must match ECMAScript Number::toString /
 // JSON.stringify for the values exercised here, so deep canonical bytes agree

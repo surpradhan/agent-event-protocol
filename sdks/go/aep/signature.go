@@ -253,8 +253,7 @@ func canonicalValue(v any, keySet map[string]bool) string {
 
 		var parts []string
 		for _, k := range keys {
-			keyJSON, _ := json.Marshal(k)
-			parts = append(parts, string(keyJSON)+":"+canonicalValue(val[k], keySet))
+			parts = append(parts, ecmaQuote(k)+":"+canonicalValue(val[k], keySet))
 		}
 		return "{" + strings.Join(parts, ",") + "}"
 
@@ -266,8 +265,7 @@ func canonicalValue(v any, keySet map[string]bool) string {
 		return "[" + strings.Join(parts, ",") + "]"
 
 	case string:
-		b, _ := json.Marshal(val)
-		return string(b)
+		return ecmaQuote(val)
 
 	case json.Number:
 		return canonicalNumber(string(val))
@@ -288,6 +286,53 @@ func canonicalValue(v any, keySet map[string]bool) string {
 		b, _ := json.Marshal(v)
 		return string(b)
 	}
+}
+
+const hexDigits = "0123456789abcdef"
+
+// ecmaQuote serializes a Go string as a JSON string literal byte-for-byte
+// identical to ECMAScript `JSON.stringify` (and Python `json.dumps` with
+// `ensure_ascii=False`): only `"`, `\`, the named control escapes (`\b \f \n \r
+// \t`), and other control characters (< U+0020, as lowercase `\u00xx`) are
+// escaped. Everything else — including `<`, `>`, `&`, U+2028, U+2029, and all
+// printable/astral Unicode — is emitted raw as UTF-8.
+//
+// This deliberately replaces `encoding/json`'s Marshal for canonical strings and
+// object keys: Go's encoder HTML-escapes `<`, `>`, `&` by default AND escapes
+// U+2028/U+2029 even with `SetEscapeHTML(false)`, both of which break
+// cross-runtime canonical byte parity with the server/Node/Python (issue #59).
+func ecmaQuote(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 2)
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '\b':
+			b.WriteString(`\b`)
+		case '\f':
+			b.WriteString(`\f`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			if r < 0x20 {
+				b.WriteString(`\u00`)
+				b.WriteByte(hexDigits[(r>>4)&0xf])
+				b.WriteByte(hexDigits[r&0xf])
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 // canonicalNumber renders a json.Number using ECMAScript Number-to-string

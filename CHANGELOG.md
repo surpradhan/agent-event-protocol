@@ -19,6 +19,14 @@ already verifies v2.
     bytes match `JSON.stringify` (Node/server) across exponent ranges — replacing
     the previous `%.0f`/`FormatFloat 'f'` rendering that diverged for non-integer
     floats. Documented and locked by `TestECMANumberFormatting`.
+  - New custom string serializer (`ecmaQuote`) for canonical string values AND
+    object keys, replacing `encoding/json` which HTML-escapes `<`, `>`, `&` by
+    default and escapes U+2028/U+2029 even with `SetEscapeHTML(false)`. `ecmaQuote`
+    emits those raw (matching `JSON.stringify` / Python `json.dumps(ensure_ascii=
+    False)`), so canonical bytes — and thus signatures — agree cross-runtime for
+    events whose envelope or payload contains those characters (common: URLs with
+    `&`, `&&`/`<`/`>` in code, HTML). Locked by `TestEcmaQuote` and server-derived
+    special-character known-answer vectors (v1 envelope + v2 payload).
   - `SignEvent(event, secret)` — still the default, now signs the shared **v1**
     (shallow, envelope-only) form. New `SignEventV2` / `SignEventWithCanon` opt
     into v2 (deep) and add a `signature.canon: "v2"` marker.
@@ -38,7 +46,10 @@ already verifies v2.
   shared cross-language known-answer vectors (`zPZD…` / `M3OG…`); prove v2 detects
   nested-payload tampering, v1 is envelope-only, version honouring (v2 digest
   declared `v1` → reject), transition mode (unmarked deep/v1 → accept), unknown
-  canon → reject (sign + verify), and bad-base64 → mismatch (no panic).
+  canon → reject (sign + verify), and bad-base64 → mismatch (no panic). Added
+  **special-character** known-answer vectors (`<`, `>`, `&`, U+2028/U+2029,
+  control chars, astral emoji — v1 envelope + v2 payload) and a `TestEcmaQuote`
+  unit test, both locked to server-derived values.
 - **Cross-verified end-to-end:** a Go-signed v2 event verifies on the server, its
   nested-payload tamper is detected, an unmarked deep sig is accepted (transition
   mode), a mislabelled-`v1` deep sig is rejected; a Go-signed v1 event also

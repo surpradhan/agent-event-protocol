@@ -137,9 +137,13 @@ and Python SDKs (locked by a cross-language known-answer test).
 > different `signature.value` bytes; events signed by older Go releases were not
 > verifiable cross-language anyway.
 >
-> **Float note:** v2 canonical bytes use ECMAScript `Number` formatting so they
-> match Node/Python/server for shared JSON values (strings, integers, booleans,
-> nested objects/arrays). See `ecmaFormatFloat` / `TestECMANumberFormatting`.
+> **Cross-runtime byte parity:** the canonical form is built with a custom
+> serializer (not `encoding/json`) so the bytes match ECMAScript `JSON.stringify`
+> / Python `json.dumps(ensure_ascii=False)` exactly — including ECMAScript
+> `Number` formatting (`ecmaFormatFloat`) and string escaping (`ecmaQuote`, which
+> emits `<`, `>`, `&`, U+2028 and U+2029 raw, unlike `encoding/json` which escapes
+> them). Verified by `TestECMANumberFormatting`, `TestEcmaQuote`, and
+> server-derived known-answer vectors covering special characters.
 
 ## Features
 
