@@ -113,8 +113,8 @@ See [`sdks/python/README.md`](sdks/python/README.md) for the full Python SDK ref
 ### Go SDK
 
 ```bash
-# Add to go.mod (or use github.com/surpradhan/aep-go)
-go get github.com/surpradhan/aep-go
+# The Go SDK is a subdirectory module of this monorepo.
+go get github.com/surpradhan/agent-event-protocol/sdks/go@latest
 
 # Emit an event
 package main
@@ -122,7 +122,7 @@ import (
     "context"
     "log"
     "os"
-    "github.com/surpradhan/aep-go/aep"
+    "github.com/surpradhan/agent-event-protocol/sdks/go/aep"
 )
 
 func main() {

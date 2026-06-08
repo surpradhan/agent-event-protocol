@@ -1,0 +1,84 @@
+# Smoke gate for Go SDK releases (sdks/go/), triggered when a `sdks/go/v*` tag
+# is pushed.
+#
+# Unlike the Node SDK (npm) and Python SDK (PyPI), there is NOTHING to publish
+# here: a Go module is "released" purely by pushing a Git tag. The public Go
+# module proxy (proxy.golang.org) fetches the source from GitHub on demand the
+# first time someone runs `go get` — there is no registry upload, no token, and
+# no credentialed publish step. So this workflow does not publish anything; it is
+# a *verification* gate that fails loudly if a release tag is cut from unreviewed
+# code or from a commit that does not build/test cleanly.
+#
+# Because it is tag-triggered only (never on push-to-branch or pull_request), it
+# is NOT a required PR status check, and the
+# `.github/scripts/check_required_checks.py` drift-guard (which only inspects
+# ci.yml) does not — and must not — list it. PR-time coverage for the Go SDK is
+# already provided by the `Go SDK unit tests` job in ci.yml.
+#
+# ── Cutting a release ───────────────────────────────────────────────────────
+# Subdirectory modules use the path-prefixed tag convention, so the tag is
+# `sdks/go/vMAJOR.MINOR.PATCH` (NOT a bare `vX.Y.Z`):
+#
+#     git checkout main && git pull
+#     git tag sdks/go/v0.3.0
+#     git push origin sdks/go/v0.3.0
+#
+# Consumers then resolve it via:
+#     go get github.com/surpradhan/agent-event-protocol/sdks/go@sdks/go/v0.3.0
+#     go get github.com/surpradhan/agent-event-protocol/sdks/go@latest
+
+name: Release Go SDK
+
+on:
+  push:
+    tags:
+      - 'sdks/go/v*'
+
+# Serialize tag pushes so two releases never run the gate concurrently.
+concurrency:
+  group: release-go-sdk
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify Go SDK release tag (ancestry + build + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/go
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the ancestry check can resolve origin/main; a
+          # shallow checkout would not contain main's commits.
+          fetch-depth: 0
+
+      - name: Verify tag points at a commit merged to main
+        # Tags are not branch-protected, so a `sdks/go/v*` tag could be pushed at
+        # any commit. Releases must be cut from code that landed on main via the
+        # PR-protected merge path — reject anything else before building.
+        working-directory: .
+        run: |
+          git fetch --quiet --no-tags origin main
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "✓ $GITHUB_SHA is an ancestor of origin/main — tag cut from reviewed, merged code."
+          else
+            echo "::error::Tag $GITHUB_REF_NAME ($GITHUB_SHA) is not an ancestor of origin/main."
+            echo "::error::Releases must be cut from commits merged to main via PR. Refusing the release."
+            exit 1
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: sdks/go/go.sum
+
+      - name: Download dependencies
+        run: go mod tidy
+
+      - name: Build and test
+        run: |
+          go build ./...
+          go test ./... -count=1

@@ -72,7 +72,7 @@ jobs:
           cache-dependency-path: otelbridge/go.sum
 
       # Resolves the OTEL Collector deps and the local AEP SDK
-      # (replace github.com/surpradhan/aep-go => ../sdks/go).
+      # (replace github.com/surpradhan/agent-event-protocol/sdks/go => ../sdks/go).
       - name: Download dependencies
         run: go mod tidy
 

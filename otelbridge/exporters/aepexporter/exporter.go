@@ -3,7 +3,7 @@ package aepexporter
 import (
 	"context"
 
-	"github.com/surpradhan/aep-go/aep"
+	"github.com/surpradhan/agent-event-protocol/sdks/go/aep"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.uber.org/zap"
 )

@@ -3,7 +3,7 @@ package aepexporter
 import (
 	"testing"
 
-	"github.com/surpradhan/aep-go/aep"
+	"github.com/surpradhan/agent-event-protocol/sdks/go/aep"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )

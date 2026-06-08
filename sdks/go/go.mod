@@ -1,4 +1,4 @@
-module github.com/surpradhan/aep-go
+module github.com/surpradhan/agent-event-protocol/sdks/go
 
 go 1.21
 
