@@ -4,6 +4,34 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Python SDK: opt-in v2 (deep) signature canonicalization (issue #59), 2026-06-07
+
+**SDK feature, additive, non-breaking** — the second emitter migration toward the
+unified deep canonical form (after the Node SDK). The server already verifies v2.
+
+- **`sdks/python/aep/_signature.py`:**
+  - New `canonicalize_v2(event)` — deep canonical form via
+    `json.dumps(..., sort_keys=True, separators=(",",":"), ensure_ascii=False)`
+    (recursive key sort covering nested payloads). **Byte-identical to the server
+    and Node SDK** for JSON values shared across runtimes (verified by a
+    server-derived known-answer vector — the *same* vector as the Node SDK test).
+  - `sign_event(event, secret, *, canon="v1")` — `canon` defaults to `"v1"`
+    (unchanged, envelope-only); `canon="v2"` signs the deep form and adds a
+    `signature.canon: "v2"` marker so payload tampering is detectable.
+  - `verify_signature` is now **version-aware**: honours `signature.canon`
+    (`"v2"`→deep, `"v1"`→shallow, absent→transition mode accepting either),
+    rejects unknown/non-string markers without raising — mirroring the server.
+  - `canonicalize_v2` exported from `aep`.
+- **Tests:** existing v1 behavior preserved unchanged; new tests lock the Python
+  **v2** form to the shared server-derived known-answer, prove v2 detects nested
+  payload tampering, and cover version honouring / transition mode / unknown +
+  non-string markers. Cross-verified end-to-end: a **Python-signed v2 event
+  verifies on the server** and the server detects its payload tampering.
+- **Docs:** `sdks/python/README.md` documents v1 vs v2 and the `canon` option.
+- **No default change, no breaking change** (v1 stays the default; the auto-signing
+  client still signs v1; the Go emitter still signs v1). Flipping the default to
+  v2 and retiring v1 remains tracked in issue #59. No PyPI version bump/publish.
+
 ## Node SDK: opt-in v2 (deep) signature canonicalization (issue #59), 2026-06-07
 
 **SDK feature, additive, non-breaking** — the first *emitter* migration toward

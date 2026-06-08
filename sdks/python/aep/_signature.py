@@ -4,38 +4,79 @@ import base64
 import hashlib
 import hmac
 import json
-from typing import Any
+from typing import Any, Literal
+
+# Canonicalization versions understood by this module (issue #59).
+#
+# • v1 (legacy, default) — _canonicalize: shallow, envelope-only. The
+#   array-replacer-style rule drops nested object contents (``payload`` → ``{}``).
+#   Identical across the Node, Python, Go SDKs and the server; covers the
+#   envelope but NOT nested payloads.
+# • v2 (deep) — canonicalize_v2: a deep, recursively key-sorted form covering the
+#   whole event including nested payloads, byte-identical to the server's
+#   ``canonicalizeV2`` (src/_canonical.js). v2 signatures carry a
+#   ``signature.canon: "v2"`` marker.
+#
+# ``sign_event`` defaults to v1 (non-breaking); pass ``canon="v2"`` to opt in.
+# ``verify_signature`` honours the marker and treats an absent marker as
+# transition mode (accept either form), matching the server. Flipping the SDK
+# default to v2 across all languages is tracked in issue #59.
+_SUPPORTED_CANON = frozenset({"v1", "v2"})
 
 
-def sign_event(event: dict[str, Any], secret: str) -> dict[str, Any]:
+def sign_event(
+    event: dict[str, Any], secret: str, *, canon: Literal["v1", "v2"] = "v1"
+) -> dict[str, Any]:
     """Add an HMAC-SHA256 signature to *event* in-place and return it.
 
-    Mirrors the canonical-form algorithm in src/signature.js:
-    1. Shallow-copy the event and remove the ``signature`` key.
-    2. Collect all top-level key names and sort them alphabetically.
-    3. Build a JSON string that includes only those keys at every nesting level
-       (matching ``JSON.stringify(copy, sortedKeys)`` in Node.js).
-    4. Compute ``HMAC-SHA256(canonical_string, secret)`` and base64-encode.
-    5. Attach ``event["signature"] = {"alg": "hmac-sha256", "value": <b64>}``.
+    Args:
+        event: the event envelope (mutated in place).
+        secret: the HMAC shared secret.
+        canon: canonicalization version — ``"v1"`` (default, envelope-only) or
+            ``"v2"`` (deep, covers nested payloads). ``"v2"`` also records a
+            ``signature.canon`` marker.
+
+    Raises:
+        ValueError: if *canon* is not ``"v1"`` or ``"v2"``. (Fail loudly on a
+            typo rather than silently signing the wrong/unmarked form — the
+            verifier is strict about the marker, so the emitter is too.)
+
+    The v1 path mirrors the canonical-form algorithm in src/signature.js
+    (shallow-copy, drop ``signature``, sort top-level keys, JSON-encode); the v2
+    path uses :func:`canonicalize_v2`.
     """
-    canonical = _canonicalize(event)
+    if canon not in _SUPPORTED_CANON:
+        raise ValueError(f"Unsupported canon {canon!r} — expected 'v1' or 'v2'")
+    canonical = canonicalize_v2(event) if canon == "v2" else _canonicalize(event)
     digest = hmac.new(
         secret.encode("utf-8"),
         canonical.encode("utf-8"),
         hashlib.sha256,
     ).digest()
-    event["signature"] = {
+    signature: dict[str, str] = {
         "alg": "hmac-sha256",
         "value": base64.b64encode(digest).decode("utf-8"),
     }
+    if canon == "v2":
+        signature["canon"] = "v2"
+    event["signature"] = signature
     return event
 
 
 def verify_signature(event: dict[str, Any], secret: str) -> dict[str, bool | str]:
     """Verify the HMAC-SHA256 signature on an event envelope.
 
-    Mirrors ``verifySignature()`` in src/signature.js. Uses :func:`hmac.compare_digest`
-    for timing-safe comparison to prevent timing-oracle attacks.
+    Version-aware (issue #59): honours ``signature.canon`` — ``"v2"`` verifies
+    against the deep form only, ``"v1"`` against the shallow form only, and an
+    absent marker is transition mode (accepted if it matches *either* form, so
+    legacy shallow emitters and unmarked deep ones both keep working). Mirrors
+    ``verifySignature()`` in src/signature.js. Uses :func:`hmac.compare_digest`
+    for timing-safe comparison.
+
+    Timing note: in transition mode an unmarked event may run a second HMAC +
+    constant-time compare when the first form does not match. Each compare is
+    constant-time; the extra round only reveals "the v1 form didn't match", never
+    key material — so it is not a forgery oracle. A marked sig does one round.
 
     Returns:
         ``{"valid": True}`` on success, or ``{"valid": False, "error": "<reason>"}``
@@ -55,32 +96,46 @@ def verify_signature(event: dict[str, Any], secret: str) -> dict[str, bool | str
     if not isinstance(value, str) or not value:
         return {"valid": False, "error": "signature.value is missing or not a string"}
 
-    canonical = _canonicalize(event)
-    expected_digest = hmac.new(
-        secret.encode("utf-8"),
-        canonical.encode("utf-8"),
-        hashlib.sha256,
-    ).digest()
+    canon = sig.get("canon")
+    if canon is not None and (not isinstance(canon, str) or canon not in _SUPPORTED_CANON):
+        return {
+            "valid": False,
+            "error": f"Unsupported signature canonicalization {canon!r} — expected 'v1' or 'v2'",
+        }
 
     try:
         provided_digest = base64.b64decode(value)
     except Exception:
         return {"valid": False, "error": "Signature mismatch"}
 
-    if not hmac.compare_digest(expected_digest, provided_digest):
-        return {"valid": False, "error": "Signature mismatch"}
+    # Absent marker → transition mode: accept either form.
+    forms: tuple[str, ...] = (
+        ("v2",) if canon == "v2" else ("v1",) if canon == "v1" else ("v1", "v2")
+    )
+    for form in forms:
+        canonical = canonicalize_v2(event) if form == "v2" else _canonicalize(event)
+        expected_digest = hmac.new(
+            secret.encode("utf-8"),
+            canonical.encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        if hmac.compare_digest(expected_digest, provided_digest):
+            return {"valid": True}
 
-    return {"valid": True}
+    return {"valid": False, "error": "Signature mismatch"}
 
 
 def _canonicalize(event: dict[str, Any]) -> str:
-    """Return the canonical JSON string used as the HMAC input.
+    """Return the **v1** canonical JSON string used as the HMAC input.
 
     Mirrors ``canonicalize()`` in src/signature.js exactly:
     * Removes the ``signature`` field.
     * Sorts all top-level keys alphabetically.
     * Recursively filters nested object keys to only those in the top-level
       sorted key set (replicating ``JSON.stringify(copy, sortedKeys)`` behaviour).
+
+    Envelope-only: nested payload contents are dropped. Kept byte-identical for
+    cross-SDK v1 parity.
     """
     copy = {k: v for k, v in event.items() if k != "signature"}
     sorted_keys = sorted(copy.keys())
@@ -95,3 +150,25 @@ def _canonicalize(event: dict[str, Any]) -> str:
 
     filtered = {k: _filter(copy[k]) for k in sorted_keys}
     return json.dumps(filtered, separators=(",", ":"), ensure_ascii=False)
+
+
+def canonicalize_v2(event: dict[str, Any]) -> str:
+    """Return the **v2** (deep) canonical JSON string used as the HMAC input.
+
+    Drops the ``signature`` field, then JSON-encodes the whole event with keys
+    sorted recursively at every level (``sort_keys=True``) and no whitespace.
+    Unlike :func:`_canonicalize`, nested payloads ARE included, so a v2 signature
+    covers payload contents.
+
+    Byte-identical to the server's ``canonicalizeV2`` (src/_canonical.js) and the
+    Node SDK's for JSON values shared across runtimes (strings, integers,
+    booleans, nested objects/arrays). Float edge cases (e.g. ``1.0`` / ``1e-7``)
+    serialize differently across Node/Python/Go and are reconciled as v2 rollout
+    proceeds — see issue #59.
+
+    The whole ``signature`` object is dropped before hashing, so the
+    ``signature.canon`` marker is intentionally outside HMAC coverage (a hint,
+    not an authenticated assertion).
+    """
+    copy = {k: v for k, v in event.items() if k != "signature"}
+    return json.dumps(copy, sort_keys=True, separators=(",", ":"), ensure_ascii=False)

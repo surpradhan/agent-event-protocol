@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from aep._signature import _canonicalize, sign_event, verify_signature
+from aep._signature import _canonicalize, canonicalize_v2, sign_event, verify_signature
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -222,3 +222,101 @@ def test_sign_then_verify_roundtrip():
     sign_event(event, "roundtrip-secret")
     result = verify_signature(event, "roundtrip-secret")
     assert result["valid"] is True
+
+
+# ── v2 (deep) canonicalization — issue #59 ───────────────────────────────────────
+
+# The SAME fixed event + secret used by the Node SDK's v2 parity test, and the
+# v2 known-answer produced by the SERVER reference impl (src/_canonical.js
+# canonicalizeV2 + HMAC). Locks Python's v2 form byte-identically to the server
+# and the Node SDK — true cross-language v2 parity.
+#
+# NB: the field values below (e.g. payload.framework == "node", the source/ids)
+# are deliberately IDENTICAL to the Node SDK fixture — they are part of the
+# signed bytes that produce _V2_REFERENCE_SIGNATURE, so this Python test and the
+# Node test sign the exact same event. Do NOT "fix" the "node" naming: changing
+# any value here would change the canonical bytes and invalidate the shared
+# cross-language known-answer vector.
+_V2_SECRET = "shared-secret-123"
+_V2_FIXED_EVENT = {
+    "specversion": "0.2.0",
+    "id": "evt_fixedtest0001",
+    "time": "2026-06-05T12:00:00.000Z",
+    "source": "agent://node-parity",
+    "type": "task.created",
+    "session_id": "ses_parity01",
+    "trace_id": "trc_parity0001",
+    "payload": {"framework": "node", "nested": {"b": 2, "a": 1}},
+    "agent_role": "orchestrator",
+}
+_V2_REFERENCE_SIGNATURE = "M3OGzpZ4+SX0MStNZ0wJtb+TV+h/xcy9yPIRC0VaoJQ="
+
+
+def test_v1_remains_the_default():
+    event = _minimal_event()
+    sign_event(event, "secret")
+    assert "canon" not in event["signature"]  # no marker on the default path
+
+
+def test_sign_event_rejects_unsupported_canon():
+    # A typo like "V2" must fail loudly instead of silently signing unmarked v1.
+    for bad in ("V2", "v3", "", "deep"):
+        with pytest.raises(ValueError, match="Unsupported canon"):
+            sign_event(_minimal_event(), "secret", canon=bad)  # type: ignore[arg-type]
+
+
+def test_v2_signs_byte_identically_to_server_reference():
+    event = dict(_V2_FIXED_EVENT)
+    sign_event(event, _V2_SECRET, canon="v2")
+    assert event["signature"]["alg"] == "hmac-sha256"
+    assert event["signature"]["canon"] == "v2"
+    assert event["signature"]["value"] == _V2_REFERENCE_SIGNATURE
+
+
+def test_v2_canonical_includes_deep_sorted_payload():
+    canon = canonicalize_v2(dict(_V2_FIXED_EVENT))
+    assert '"payload":{"framework":"node","nested":{"a":1,"b":2}}' in canon
+    assert '"signature"' not in canon
+
+
+def test_v2_detects_nested_payload_tampering():
+    event = dict(_V2_FIXED_EVENT)
+    sign_event(event, _V2_SECRET, canon="v2")
+    assert verify_signature(event, _V2_SECRET)["valid"] is True
+    # mutate a NESTED payload value — v1 would miss this; v2 must catch it.
+    event["payload"] = {"framework": "node", "nested": {"b": 2, "a": 999}}
+    assert verify_signature(event, _V2_SECRET)["valid"] is False
+
+
+def test_v2_signed_with_v1_marker_does_not_verify():
+    event = dict(_V2_FIXED_EVENT)
+    sign_event(event, _V2_SECRET, canon="v2")
+    event["signature"]["canon"] = "v1"  # mislabel → server checks shallow only
+    assert verify_signature(event, _V2_SECRET)["valid"] is False
+
+
+def test_unmarked_deep_signature_verifies_transition_mode():
+    event = dict(_V2_FIXED_EVENT)
+    sign_event(event, _V2_SECRET, canon="v2")
+    del event["signature"]["canon"]  # simulate an unmarked deep emitter (Go-style)
+    assert verify_signature(event, _V2_SECRET)["valid"] is True
+
+
+def test_unknown_canon_rejected():
+    event = dict(_V2_FIXED_EVENT)
+    sign_event(event, _V2_SECRET, canon="v2")
+    event["signature"]["canon"] = "v9"
+    result = verify_signature(event, _V2_SECRET)
+    assert result["valid"] is False
+    assert "canonicalization" in result["error"].lower()
+
+
+def test_non_string_canon_rejected_never_raises():
+    # A non-string / unsupported marker must be rejected cleanly (no raise). Note
+    # ``None`` is NOT here: absent/None means "no marker" → transition mode.
+    for bad in (123, [], {}, ""):
+        event = dict(_V2_FIXED_EVENT)
+        sign_event(event, _V2_SECRET, canon="v2")
+        event["signature"]["canon"] = bad
+        result = verify_signature(event, _V2_SECRET)
+        assert result["valid"] is False, f"canon={bad!r} should be invalid"

@@ -17,7 +17,7 @@ Quick start::
 """
 
 from aep._event import create_event
-from aep._signature import sign_event, verify_signature
+from aep._signature import canonicalize_v2, sign_event, verify_signature
 from aep._types import CORE_EVENT_TYPES, AgentRole, EventType
 from aep._validator import validate_event
 from aep.async_client import AsyncAEPClient
@@ -48,6 +48,7 @@ __all__ = [
     "AsyncAEPClient",
     "CORE_EVENT_TYPES",
     "EventType",
+    "canonicalize_v2",
     "create_event",
     "flush",
     "instrument",
