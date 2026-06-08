@@ -83,7 +83,9 @@ describe("canonicalize", () => {
 
 describe("verifySignature (behaviour unchanged after refactor)", () => {
   test("accepts a correctly signed event", () => {
-    assert.deepEqual(verifySignature(signedEvent(), SECRET), { valid: true });
+    // Success now carries the effective canonical form (issue #65). signedEvent()
+    // is shallow + unmarked → effective form "v1". The boolean contract is intact.
+    assert.deepEqual(verifySignature(signedEvent(), SECRET), { valid: true, canon: "v1" });
   });
 
   test("rejects when the secret is wrong", () => {
@@ -181,5 +183,36 @@ describe("verifySignature canonicalization versions (issue #59)", () => {
   test("the wrong secret fails for both v1 and v2", () => {
     assert.equal(verifySignature(makeSigned({ canon: "v1", form: canonicalize }), "nope").valid, false);
     assert.equal(verifySignature(makeSigned({ canon: "v2", form: canonicalizeV2 }), "nope").valid, false);
+  });
+});
+
+describe("verifySignature reports the effective canonical form (issue #65, Phase A)", () => {
+  test("v1 marker → canon 'v1'", () => {
+    const res = verifySignature(makeSigned({ canon: "v1", form: canonicalize }), SECRET);
+    assert.deepEqual(res, { valid: true, canon: "v1" });
+  });
+
+  test("v2 marker → canon 'v2'", () => {
+    const res = verifySignature(makeSigned({ canon: "v2", form: canonicalizeV2 }), SECRET);
+    assert.deepEqual(res, { valid: true, canon: "v2" });
+  });
+
+  test("unmarked shallow signature → effective canon 'v1'", () => {
+    // The thing a strict-v2 server would reject: classified by what matched,
+    // not by a (missing) marker.
+    const res = verifySignature(makeSigned({ canon: null, form: canonicalize }), SECRET);
+    assert.deepEqual(res, { valid: true, canon: "v1" });
+  });
+
+  test("unmarked deep signature (Go-SDK style) → effective canon 'v2'", () => {
+    const res = verifySignature(makeSigned({ canon: null, form: canonicalizeV2 }), SECRET);
+    assert.deepEqual(res, { valid: true, canon: "v2" });
+  });
+
+  test("the boolean/error contract is unchanged: failures carry NO canon", () => {
+    const res = verifySignature(signedEvent(), "wrong-secret");
+    assert.equal(res.valid, false);
+    assert.equal(res.canon, undefined);
+    assert.match(res.error, /Signature mismatch/);
   });
 });

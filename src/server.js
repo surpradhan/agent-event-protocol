@@ -16,7 +16,13 @@ const {
   generateApiKey
 } = require("./auth");
 const logger                   = require("./logger");
-const { metricsMiddleware, getPrometheusText } = require("./metrics");
+const {
+  metricsMiddleware,
+  getPrometheusText,
+  recordSignatureVerification,
+  recordSignatureRejection,
+  getSignatureMetrics
+} = require("./metrics");
 const { ingestRateLimit }      = require("./middleware/rateLimit");
 const { enforceQuota, recordAccepted } = require("./middleware/quota");
 const { TIER_NAMES, DEFAULT_TIER, getTierPolicy, isValidTier } = require("./tiers");
@@ -387,7 +393,10 @@ app.get("/workflows/:traceId", requireReadAccess, validatePathParams, async (req
 
 // GET /metrics — counters + session count + workflow metrics (JSON)
 app.get("/metrics", requireReadAccess, async (req, res) => {
-  res.json(await db.getMetrics(req.tenant_id));
+  const dbStats = await db.getMetrics(req.tenant_id);
+  // Signature-form telemetry (issue #65) is process-wide / server-scoped, not
+  // tenant-filtered — surfaced alongside the DB counters for convenience.
+  res.json({ ...dbStats, signatures: getSignatureMetrics() });
 });
 
 /**
@@ -534,6 +543,14 @@ app.get("/stream", requireReadAccess, (req, res) => {
 // Routes — ingest (write endpoint, requires API key with write scope)
 // ---------------------------------------------------------------------------
 
+// Per-tenant "first-seen" set for legacy-v1 signature acceptance logging
+// (issue #65, Phase A). We log the first v1 ingest per tenant at info level for
+// attribution (tenant_id + source), then drop to debug to avoid log spam. The
+// set is bounded so a flood of distinct tenant ids can't grow it unboundedly —
+// past the cap we simply log at debug.
+const v1SeenTenants = new Set();
+const V1_SEEN_TENANTS_MAX = 10000;
+
 // POST /events — ingest a single event
 // Rate limiting is applied per-key AFTER authentication resolves req.api_key_id.
 app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async (req, res) => {
@@ -546,8 +563,14 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
   // ------------------------------------------------------------------
   const hmacSecret = req.api_key_record && req.api_key_record.hmac_secret;
   if (hmacSecret) {
-    const { valid, error } = verifySignature(event, hmacSecret);
+    // `marked` = the emitter declared a canonicalization version via
+    // signature.canon. Effective form classification (issue #65) is independent
+    // of the marker (transition mode classifies an unmarked sig by what matched).
+    const marked = !!(event && event.signature && typeof event.signature === "object"
+      && event.signature.canon !== undefined);
+    const { valid, canon, error } = verifySignature(event, hmacSecret);
     if (!valid) {
+      recordSignatureRejection({ marked });
       await db.incrementCounter("rejected");
       pushRejection({
         event_id:   event.id,
@@ -567,6 +590,23 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
         error:    "Signature verification failed",
         detail:   sanitizeInput(error)
       });
+    }
+
+    // Accepted: classify by effective canonical form for retirement telemetry.
+    recordSignatureVerification({ form: canon, marked });
+
+    // Per-tenant attribution for who is still on legacy v1, via logs (NOT a
+    // high-cardinality metric label). First v1 ingest per tenant → info; the
+    // rest → debug, so dashboards/log search can surface the at-risk population
+    // without flooding the log stream.
+    if (canon === "v1") {
+      const tenantId = req.tenant_id;
+      const firstForTenant = !v1SeenTenants.has(tenantId) && v1SeenTenants.size < V1_SEEN_TENANTS_MAX;
+      if (firstForTenant) v1SeenTenants.add(tenantId);
+      const logFields = { tenant_id: tenantId, source: sanitizeInput(event.source), marked };
+      const msg = "accepted legacy v1 (envelope-only) signature — emitter should migrate to v2 (issue #65)";
+      if (firstForTenant) logger.info(logFields, msg);
+      else logger.debug(logFields, msg);
     }
   }
 

@@ -92,9 +92,16 @@ const SUPPORTED_CANON = new Set(["v1", "v2"]);
 /**
  * Verify the HMAC-SHA256 signature on an event envelope.
  *
+ * On success the result also carries `canon` — the canonical form that
+ * ACTUALLY verified ("v1" | "v2"). This is the *effective* form, which may
+ * differ from any `signature.canon` marker in transition mode (an unmarked
+ * signature is classified by whichever form matched). Callers that only read
+ * `.valid`/`.error` are unaffected; observability (issue #65) uses `canon` to
+ * see who is still relying on the legacy v1 form.
+ *
  * @param {object} event   Full event envelope including the `signature` field.
  * @param {string} secret  The HMAC secret associated with the API key.
- * @returns {{ valid: boolean, error?: string }}
+ * @returns {{ valid: boolean, canon?: "v1"|"v2", error?: string }}
  */
 function verifySignature(event, secret) {
   const sig = event.signature;
@@ -130,22 +137,28 @@ function verifySignature(event, secret) {
   // itself constant-time; the only thing the extra round can reveal is "the v1
   // form didn't match" — never key material or the secret — so it is not a
   // signature-forgery oracle. A marked sig ("v1"/"v2") only ever does one round.
-  let canonicalForms;
+  let candidateForms;
   if (canon === "v2") {
-    canonicalForms = [canonicalizeV2(event)];
+    candidateForms = [{ version: "v2", form: canonicalizeV2(event) }];
   } else if (canon === "v1") {
-    canonicalForms = [canonicalize(event)];
+    candidateForms = [{ version: "v1", form: canonicalize(event) }];
   } else {
-    canonicalForms = [canonicalize(event), canonicalizeV2(event)];
+    candidateForms = [
+      { version: "v1", form: canonicalize(event) },
+      { version: "v2", form: canonicalizeV2(event) }
+    ];
   }
 
-  for (const form of canonicalForms) {
+  for (const { version, form } of candidateForms) {
     const expected = crypto
       .createHmac("sha256", secret)
       .update(form, "utf8")
       .digest("base64");
     if (timingSafeEqualB64(sig.value, expected)) {
-      return { valid: true };
+      // `canon` reports the EFFECTIVE form (what matched), not the marker. A
+      // signature that only verifies under the shallow form is "v1" regardless
+      // of marker — that is the population a strict-v2 server would reject.
+      return { valid: true, canon: version };
     }
   }
 

@@ -4,6 +4,34 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Signature canonicalization observability — issue #65 Phase A, 2026-06-08
+
+The **first, non-breaking** step toward retiring the legacy v1 (envelope-only)
+signature form. Before the server can stop accepting v1, we must be able to
+*measure* who is still emitting it — this PR adds exactly that telemetry and
+nothing breaking. Transition mode is unchanged: the server still accepts v1, v2,
+and unmarked signatures.
+
+- **`verifySignature` now reports the effective canonical form.** On success it
+  returns `{ valid: true, canon: "v1" | "v2" }` — the form that *actually*
+  verified, independent of any `signature.canon` marker (in transition mode an
+  unmarked signature is classified by whichever form matched). Existing callers
+  reading only `.valid`/`.error` are unaffected.
+- **New Prometheus counters** (`GET /metrics/prometheus`):
+  - `aep_signature_verifications_total{form="v1"|"v2",marked="true"|"false"}` —
+    accepted signatures by effective form; `marked` = whether a `signature.canon`
+    field was present.
+  - `aep_signature_verifications_rejected_total{marked="true"|"false"}` —
+    signature verification failures (effective form unknown on failure).
+  - Labels are intentionally low cardinality — **no** tenant/source/key labels.
+- **Per-tenant attribution via logs, not metric labels.** The first legacy-v1
+  ingest per tenant is logged at `info` with `tenant_id` + `source`; subsequent
+  ones drop to `debug` (bounded first-seen set) to avoid log spam.
+- **JSON `GET /metrics`** now includes a `signatures` block mirroring the counters.
+- **Scope:** Phase A (observability only); non-breaking. Later phases B–E
+  (deprecation headers, opt-in strict mode, default strict, cleanup) are deferred.
+  Tracked in issue #65.
+
 ## Python SDK `agent-event-protocol` 0.3.0 — first PyPI release (v2-default signatures), 2026-06-08
 
 The **first actual PyPI release** of the Python SDK, bumping `0.2.0` → `0.3.0`.
