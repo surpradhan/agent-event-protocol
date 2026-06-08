@@ -3,24 +3,31 @@
  *
  * Two canonicalization versions are supported (issue #59):
  *
- * • **v1 (legacy, default)** — `canonicalize`: shallow-copy the event, drop
- *   `signature`, sort the top-level keys, and `JSON.stringify(copy, sortedKeys)`.
- *   The replacer-array form emits only those keys at every nesting level, so
- *   nested objects are emptied (`payload` → `{}`). It is **identical across the
- *   Node, Python, and Go SDKs and the server** and is locked by a cross-language
- *   known-answer test. It covers the envelope but NOT nested payloads.
- *
- * • **v2 (deep)** — `canonicalizeV2`: drop `signature`, then recursively
+ * • **v2 (deep, default)** — `canonicalizeV2`: drop `signature`, then recursively
  *   key-sort the WHOLE event (envelope AND nested payloads) before HMAC, so the
  *   signature covers payload contents. This is the same deep rule the server
  *   verifier (`src/_canonical.js`) and the Phase 14 audit bundle use. v2
- *   signatures carry a `signature.canon: "v2"` marker.
+ *   signatures carry a `signature.canon: "v2"` marker. **This is now the default**
+ *   so payload tamper-evidence is on without opt-in.
  *
- * `signEvent` defaults to v1 (non-breaking); pass `{ canon: "v2" }` to opt in.
- * `verifySignature` is version-aware and backward-compatible: it honours the
- * `signature.canon` marker, and treats an absent marker as transition mode
- * (accept either form), matching the server. Migrating the SDK *default* to v2
- * across all languages is tracked in issue #59.
+ * • **v1 (legacy)** — `canonicalize`: shallow-copy the event, drop `signature`,
+ *   sort the top-level keys, and `JSON.stringify(copy, sortedKeys)`. The
+ *   replacer-array form emits only those keys at every nesting level, so nested
+ *   objects are emptied (`payload` → `{}`). It is **identical across the Node,
+ *   Python, and Go SDKs and the server** and is locked by a cross-language
+ *   known-answer test. It covers the envelope but NOT nested payloads. Select it
+ *   explicitly with `{ canon: "v1" }`.
+ *
+ * `signEvent` defaults to v2 (issue #59 default flip); pass `{ canon: "v1" }` to
+ * sign the legacy envelope-only form. `verifySignature` is version-aware and
+ * backward-compatible: it honours the `signature.canon` marker, and treats an
+ * absent marker as transition mode (accept either form), matching the server.
+ *
+ * **Compatibility:** a v2-default emitter requires a v2-aware server (one that
+ * includes server PR #60+, i.e. a version-aware verifier). An older server that
+ * predates `signature.canon` support would reject v2 signatures. The server keeps
+ * accepting v1 during the transition, so `{ canon: "v1" }` remains available for
+ * talking to legacy servers.
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -82,18 +89,18 @@ function digestFor(event: AEPEvent, canon: "v1" | "v2", secret: string): string 
 
 /** Options for {@link signEvent}. */
 export interface SignOptions {
-  /** Canonicalization version: "v1" (default, envelope-only) or "v2" (deep). */
+  /** Canonicalization version: "v2" (default, deep, payload-covering) or "v1" (legacy, envelope-only). */
   canon?: "v1" | "v2";
 }
 
 /**
  * Sign `event` in place with HMAC-SHA256 and return it. Attaches
- * `event.signature = { alg: "hmac-sha256", value: <base64> }`. With
- * `{ canon: "v2" }` the signature covers nested payloads and a `canon: "v2"`
- * marker is added; the default (v1) is unchanged for backward compatibility.
+ * `event.signature = { alg: "hmac-sha256", value: <base64> }`. Defaults to v2
+ * (deep): the signature covers nested payloads and a `canon: "v2"` marker is
+ * added. Pass `{ canon: "v1" }` for the legacy envelope-only form (no marker).
  */
 export function signEvent(event: AEPEvent, secret: string, opts: SignOptions = {}): AEPEvent {
-  const canon = opts.canon ?? "v1";
+  const canon = opts.canon ?? "v2";
   const value = digestFor(event, canon, secret);
   event.signature =
     canon === "v2" ? { alg: "hmac-sha256", value, canon: "v2" } : { alg: "hmac-sha256", value };

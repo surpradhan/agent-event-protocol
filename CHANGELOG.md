@@ -4,6 +4,41 @@ All notable changes to AEP are documented here.
 
 ---
 
+## All SDKs: v2 (deep) signature canonicalization is now the DEFAULT (issue #59), 2026-06-08
+
+**Behaviour change** — the final functional step of issue #59. With all three SDK
+emitters (Node, Python, Go) and the server already supporting v2, the signing
+**default** flips from v1 (envelope-only) to **v2** (deep, payload-covering). New
+signatures cover nested payloads and carry a `signature.canon: "v2"` marker
+without opt-in, so payload tamper-evidence is on by default.
+
+- **Node SDK** (`sdks/node/src/signature.ts`): `signEvent(event, secret)` now
+  defaults to `canon: "v2"`. Pass `{ canon: "v1" }` for the legacy envelope-only
+  form.
+- **Python SDK** (`sdks/python/aep/_signature.py`): `sign_event(event, secret)`
+  now defaults to `canon="v2"`. Pass `canon="v1"` for the legacy form. The
+  auto-signing `AEPClient` / `AsyncAEPClient` therefore emit v2 automatically.
+- **Go SDK** (`sdks/go/aep/signature.go`): `SignEvent(event, secret)` now defaults
+  to v2. New `SignEventV1` convenience signs the legacy envelope-only form;
+  `SignEventV2` / `SignEventWithCanon` unchanged.
+- **Cross-language parity preserved:** the shared v2 known-answer vector
+  (`M3OGzpZ4+SX0MStNZ0wJtb+TV+h/xcy9yPIRC0VaoJQ=`) is now produced via the default
+  signing path; the v1 known-answer (`zPZDN4bGfJF4MJlyWu9HQXpkr5SlaqOAD9JUEj3Sev0=`)
+  is now produced via an explicit `canon="v1"` call. Both stay locked by tests.
+- **Verifiers unchanged.** `verifySignature` in every SDK and the server stays
+  version-aware (honours `canon`; absent → transition mode accepting either form).
+
+**Compatibility:** a v2-default emitter requires a v2-aware server (server PR #60+,
+i.e. one with version-aware verification). Older servers predating
+`signature.canon` support would reject v2 — talk to them with the explicit v1 form.
+
+**Out of scope (deferred):** the server still runs **transition mode** and keeps
+accepting v1; it is *not* changed to require v2 here. No SDK version bumps / no
+npm or PyPI publish. Hard-retiring v1 (server requiring `canon: "v2"`) is a
+separate later breaking change tracked in its own issue.
+
+---
+
 ## Go SDK: opt-in v2 (deep) signature canonicalization + v1 interop fix (issue #59), 2026-06-08
 
 **SDK feature + interop fix** — the third (and final SDK) emitter migration toward

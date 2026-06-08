@@ -246,17 +246,24 @@ The server verifier is version-aware **and backward-compatible**:
 
 Transition mode keeps every existing emitter working unchanged (legacy shallow
 emitters, and the Go SDK which already signs the deep form without a marker) with
-no security weakening — both forms are HMAC-keyed by the same secret. New
-emitters should set `canon: "v2"` so payload coverage is guaranteed; a future
-release can then require `v2` and retire `v1`.
+no security weakening — both forms are HMAC-keyed by the same secret.
+
+**v2 is now the default in all three SDKs** (Node, Python, Go — issue #59 default
+flip), so newly-signed events carry `canon: "v2"` and payload coverage without
+opt-in. v1 is **legacy** but still accepted by the server during the transition,
+and remains selectable via `canon: "v1"` (e.g. to talk to a server that predates
+version-aware verification). The server keeps **transition mode** — it does *not*
+yet require v2. Hard-retiring v1 (the server requiring `canon: "v2"`) is a separate,
+later, breaking change that needs a deprecation window; it is tracked separately
+from issue #59.
 
 > **Cross-language note:** byte-exact v2 across the Node/Python/Go SDKs requires
 > a shared number-serialization rule (this server uses ECMAScript
 > `JSON.stringify` semantics). Typical payloads (strings, integers, booleans,
-> nested objects/arrays) already agree across runtimes; float edge cases
-> (`1.0`, `1e-7`) differ and are reconciled as each SDK emitter adopts v2. The
-> SDK emitters still sign **v1** today — only the server's *verifier* understands
-> v2 so far. Tracked in issue #59.
+> nested objects/arrays) agree across runtimes; the Go SDK additionally implements
+> ECMAScript `Number`-to-string and string-escaping rules so float and special-
+> character edge cases also match. All three SDKs default to the same v2 bytes,
+> locked by a shared server-derived known-answer vector. Tracked in issue #59.
 
 ---
 

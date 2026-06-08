@@ -274,3 +274,6 @@ async def test_hmac_signing_applied():
 
     assert "signature" in captured["body"]
     assert captured["body"]["signature"]["alg"] == "hmac-sha256"
+    # Issue #59 default flip: the auto-signing client now emits v2 (deep,
+    # payload-covering) signatures by default.
+    assert captured["body"]["signature"]["canon"] == "v2"
