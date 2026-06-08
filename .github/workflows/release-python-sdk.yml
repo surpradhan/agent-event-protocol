@@ -1,5 +1,5 @@
-# Publishes the Python SDK (distribution `surpradhan-aep`, import package `aep`,
-# in sdks/python/) to PyPI when a `python-sdk-v*` tag is pushed.
+# Publishes the Python SDK (distribution `agent-event-protocol`, import package
+# `aep`, in sdks/python/) to PyPI when a `python-sdk-v*` tag is pushed.
 #
 # This is a *release* workflow only — it never runs on push to a branch and
 # never runs on pull requests. It is NOT a required PR status check, so the
@@ -8,9 +8,9 @@
 # already provided by the Python jobs in ci.yml.
 #
 # ── Distribution vs import name ──────────────────────────────────────────────
-# The PyPI *distribution* name is `surpradhan-aep` (the bare `aep` name was
+# The PyPI *distribution* name is `agent-event-protocol` (the bare `aep` name was
 # already taken on PyPI); the *import* name stays `aep` (`import aep`). Users
-# `pip install surpradhan-aep` then `import aep`. See sdks/python/pyproject.toml.
+# `pip install agent-event-protocol` then `import aep`. See sdks/python/pyproject.toml.
 #
 # ── Why two jobs ────────────────────────────────────────────────────────────
 # `main` is PR-protected (review + green CI before merge), but *tags* are not —
@@ -32,7 +32,7 @@
 # 1. Configure a PyPI Trusted Publisher for this project (no API token needed).
 #    On PyPI → Account → Publishing (or the project's "Publishing" settings for
 #    an existing project), add a GitHub Actions trusted publisher with EXACTLY:
-#        PyPI Project Name:  surpradhan-aep
+#        PyPI Project Name:  agent-event-protocol
 #        Owner:              surpradhan
 #        Repository:         agent-event-protocol
 #        Workflow filename:  release-python-sdk.yml
@@ -149,7 +149,7 @@ jobs:
   # approves the deployment to the `pypi-publish` environment. Uploads via PyPI
   # Trusted Publishing (OIDC) — there is no API token to store.
   publish:
-    name: Publish surpradhan-aep to PyPI
+    name: Publish agent-event-protocol to PyPI
     needs: verify
     runs-on: ubuntu-latest
     environment: pypi-publish

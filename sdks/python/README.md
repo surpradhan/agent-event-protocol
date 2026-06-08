@@ -11,12 +11,12 @@ Python client library for the [Agent Event Protocol](../../README.md) — an obs
 From PyPI:
 
 ```bash
-pip install surpradhan-aep
+pip install agent-event-protocol
 ```
 
-> The PyPI **distribution** name is `surpradhan-aep` (the bare `aep` name was
-> already taken on PyPI), but the **import** name is unchanged — you still write
-> `import aep`.
+> The PyPI **distribution** name is `agent-event-protocol` (the bare `aep` name
+> was already taken on PyPI), but the **import** name is unchanged — you still
+> write `import aep`.
 
 From the repo root (development):
 
@@ -499,7 +499,7 @@ AEP_INGEST_URL=http://localhost:8787 pytest tests/integration/
 
 ## Publishing / Releases
 
-The SDK is published to PyPI as **`surpradhan-aep`** (import name stays `aep`) by
+The SDK is published to PyPI as **`agent-event-protocol`** (import name stays `aep`) by
 the [`Release Python SDK`](../../.github/workflows/release-python-sdk.yml)
 workflow, which is triggered **only** by pushing a `python-sdk-v*` tag — never on
 a branch push or PR. Publishing uses **PyPI Trusted Publishing (OIDC)**, so there
@@ -522,7 +522,7 @@ Before the first release, configure the publisher side (cannot be done from code
 - **PyPI Trusted Publisher** — on PyPI, add a GitHub Actions trusted publisher
   (use the *pending publisher* flow for the first-ever release, since the project
   doesn't exist on PyPI yet) with exactly:
-  - Project name: `surpradhan-aep`
+  - Project name: `agent-event-protocol`
   - Owner: `surpradhan` · Repository: `agent-event-protocol`
   - Workflow: `release-python-sdk.yml` · Environment: `pypi-publish`
 - **GitHub Environment** — create an Environment named `pypi-publish` under
