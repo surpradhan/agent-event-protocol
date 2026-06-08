@@ -4,10 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 # Distribution name (PyPI) ≠ import name. The import package stays `aep`
-# (`import aep`), but the PyPI distribution is `surpradhan-aep` because the bare
-# `aep` name is already taken on PyPI. Mirrors the npm scope `@surpradhan/aep`.
-# Install with `pip install surpradhan-aep`; import with `import aep`.
-name = "surpradhan-aep"
+# (`import aep`), but the PyPI distribution is `agent-event-protocol` because the
+# bare `aep` name is already taken on PyPI. The distribution name matches the
+# project's full name and GitHub repo (single, consistent identity everywhere).
+# Install with `pip install agent-event-protocol`; import with `import aep`.
+name = "agent-event-protocol"
 version = "0.3.0"
 description = "Python SDK for the Agent Event Protocol (AEP) — structured observability for multi-agent AI systems"
 readme = "README.md"

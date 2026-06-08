@@ -4,17 +4,17 @@ All notable changes to AEP are documented here.
 
 ---
 
-## Python SDK `surpradhan-aep` 0.3.0 — first PyPI release (v2-default signatures), 2026-06-08
+## Python SDK `agent-event-protocol` 0.3.0 — first PyPI release (v2-default signatures), 2026-06-08
 
 The **first actual PyPI release** of the Python SDK, bumping `0.2.0` → `0.3.0`.
 The SDK has been usable from source (`pip install -e`) all along but was never
 published; this packages the issue #59 v2-default signature work for PyPI.
 
-- **Distribution name is `surpradhan-aep`** (mirrors the npm scope
-  `@surpradhan/aep`). The bare `aep` name was already taken on PyPI, so the
-  distribution is renamed while the **import name stays `aep`** — users
-  `pip install surpradhan-aep` then `import aep`. This is a one-way door once
-  published.
+- **Distribution name is `agent-event-protocol`** (matches the project's full
+  name and GitHub repo). The bare `aep` name was already taken on PyPI, so the
+  distribution name spells the project out while the **import name stays `aep`** —
+  users `pip install agent-event-protocol` then `import aep`. This is a one-way
+  door once published.
 - **v2 (deep) signature canonicalization is the default** (carried in from #66 /
   issue #59): `sign_event(event, secret)` produces a deep, payload-covering
   signature with a `signature.canon: "v2"` marker, and the auto-signing
