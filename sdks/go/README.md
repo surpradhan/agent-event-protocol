@@ -88,7 +88,7 @@ for _, result := range results {
 ```go
 secret := "my_shared_secret"
 
-// Default (v1): envelope-only signature, base64-encoded.
+// Default (v2): deep, payload-covering signature, base64-encoded, marked canon="v2".
 signedEvent, err := aep.SignEvent(event, secret)
 if err != nil {
 	log.Fatal(err)
@@ -108,18 +108,19 @@ if valid {
 
 The signed *canonical form* of an event comes in two versions:
 
-- **v1** (`SignEvent`, the default) — **envelope-only**: the `signature` field is
+- **v2** (`SignEvent`, the default, also `SignEventV2`) — **deep**: the whole event
+  including nested payloads is recursively key-sorted, so the signature **covers
+  payload contents**. v2 signatures carry a `signature.canon: "v2"` marker. This
+  is now the default so payload tamper-evidence is on without opt-in.
+- **v1** (`SignEventV1`) — legacy **envelope-only**: the `signature` field is
   dropped, top-level keys are sorted, and nested object contents are omitted (a
   `payload` serializes as `{}`). Covers the envelope but **not** nested payloads.
-- **v2** (`SignEventV2`) — **deep**: the whole event including nested payloads is
-  recursively key-sorted, so the signature **covers payload contents**. v2
-  signatures carry a `signature.canon: "v2"` marker.
 
 ```go
-// Opt into v2 so the signature covers nested payload contents.
-signedEvent, err := aep.SignEventV2(event, secret)
+// Legacy envelope-only form (e.g. to talk to a server predating v2 verification).
+signedEvent, err := aep.SignEventV1(event, secret)
 // or, equivalently:
-signedEvent, err = aep.SignEventWithCanon(event, secret, "v2")
+signedEvent, err = aep.SignEventWithCanon(event, secret, "v1")
 ```
 
 `VerifySignature` is version-aware and backward-compatible: a `"v2"` marker is
@@ -127,6 +128,13 @@ verified against the deep form only, `"v1"` against the shallow form only, and a
 **absent** marker is accepted if it matches *either* form (transition mode). The
 digest is **base64**-encoded in both versions, byte-identical to the server, Node,
 and Python SDKs (locked by a cross-language known-answer test).
+
+> **Default flip (issue #59):** `SignEvent` now defaults to **v2** (was v1), so new
+> signatures cover nested payloads by default. Use `SignEventV1` for the legacy
+> envelope-only form. A v2-default emitter requires a v2-aware server (server
+> PR #60+); the server still accepts v1 during the transition, so `SignEventV1`
+> remains available for legacy servers. Hard-retiring v1 (server requiring v2) is a
+> separate future change tracked in issue #59.
 
 > **Behaviour change (issue #59):** earlier Go SDK releases signed a *deep*
 > canonical form and **hex**-encoded the value — a combination that matched

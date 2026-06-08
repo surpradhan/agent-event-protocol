@@ -125,7 +125,7 @@ func TestVerifySignatureV1IgnoresPayloadTampering(t *testing.T) {
 	)
 
 	secret := "test_secret"
-	signedEvent, _ := SignEvent(event, secret)
+	signedEvent, _ := SignEventV1(event, secret) // explicit v1 — default is now v2
 
 	// Tamper with payload — NOT covered by v1.
 	signedEvent.Payload = map[string]interface{}{"task": "tampered"}

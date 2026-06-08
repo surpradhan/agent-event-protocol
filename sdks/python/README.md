@@ -391,32 +391,41 @@ from aep import create_event, sign_event
 
 event = create_event(source="agent://test", type="task.created",
                      session_id="ses_1", trace_id="trc_1", payload={})
-sign_event(event, secret="my-hmac-secret")
-# event["signature"] == {"alg": "hmac-sha256", "value": "<base64>"}
+sign_event(event, secret="my-hmac-secret")  # v2 (deep) by default
+# event["signature"] == {"alg": "hmac-sha256", "value": "<base64>", "canon": "v2"}
 
 # Or let the client sign automatically:
 from aep import AEPClient
 with AEPClient(hmac_secret="my-hmac-secret") as client:
-    client.emit(event)  # signs before sending
+    client.emit(event)  # signs (v2) before sending
 ```
 
 ### Canonicalization versions (`canon`) — issue #59
 
-The default canonical form (**v1**) sorts only top-level keys and drops nested
-object contents, so a v1 signature covers the envelope but **not nested
-payloads**. Pass `canon="v2"` for a deep canonical form that covers nested
-payloads (and adds a `signature.canon: "v2"` marker):
+The default canonical form is now **v2** (deep): it recursively key-sorts the
+whole event including nested payloads, so the signature covers payload contents
+and carries a `signature.canon: "v2"` marker — payload tamper-evidence is on
+without opt-in. `canonicalize_v2(event)` exposes the deep form directly. It is
+**byte-identical to the server and the Node and Go SDKs** for JSON values shared
+across runtimes (locked by a server-derived known-answer test).
+
+**v1 is now legacy** but still supported — pass `canon="v1"` for the
+envelope-only form, which sorts only top-level keys and drops nested object
+contents (covers the envelope but **not nested payloads**):
 
 ```python
-sign_event(event, secret="my-hmac-secret", canon="v2")  # deep; covers payloads
+sign_event(event, secret="my-hmac-secret", canon="v1")  # legacy envelope-only
 ```
 
-`canonicalize_v2(event)` exposes the deep form directly. It is **byte-identical
-to the server and the Node SDK** for JSON values shared across runtimes (locked
-by a server-derived known-answer test). `verify_signature` is version-aware
-(honours `canon`; an absent marker accepts either form). **v1 remains the
-default**; flipping the default to v2 and retiring v1 across all SDKs is tracked
-in [issue #59](https://github.com/surpradhan/agent-event-protocol/issues/59).
+`verify_signature` is version-aware (honours `canon`; an absent marker accepts
+either form).
+
+> **Compatibility:** a v2-default emitter requires a v2-aware server (server
+> PR #60+). An older server predating `signature.canon` support would reject v2;
+> the server still accepts v1 during the transition, so `canon="v1"` remains
+> available for legacy servers. Hard-retiring v1 (server requiring v2) is a
+> separate future change tracked in
+> [issue #59](https://github.com/surpradhan/agent-event-protocol/issues/59).
 
 ---
 

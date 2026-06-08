@@ -22,10 +22,13 @@ const FIXED_EVENT: AEPEvent = {
 const PYTHON_SIGNATURE = "zPZDN4bGfJF4MJlyWu9HQXpkr5SlaqOAD9JUEj3Sev0=";
 
 describe("signature", () => {
-  it("cross-language parity: Node signs byte-identically to Python", () => {
-    const signed = signEvent({ ...FIXED_EVENT }, SECRET);
+  it("cross-language parity: Node signs v1 byte-identically to Python", () => {
+    // v1 is now opt-in (the default is v2 — see the v2 describe block below), so
+    // the cross-language v1 known-answer is produced via an explicit canon:"v1".
+    const signed = signEvent({ ...FIXED_EVENT }, SECRET, { canon: "v1" });
     expect(signed.signature?.alg).toBe("hmac-sha256");
     expect(signed.signature?.value).toBe(PYTHON_SIGNATURE);
+    expect(signed.signature?.canon).toBeUndefined();
   });
 
   it("canonical form drops the signature field and sorts top-level keys", () => {
@@ -88,10 +91,20 @@ describe("signature", () => {
 const V2_REFERENCE_SIGNATURE = "M3OGzpZ4+SX0MStNZ0wJtb+TV+h/xcy9yPIRC0VaoJQ=";
 
 describe("signature v2 (deep canonicalization — issue #59)", () => {
-  it("v1 remains the default (no canon marker, envelope-only)", () => {
+  it("v2 is now the DEFAULT (deep, canon marker, server-reference byte-form)", () => {
     const signed = signEvent({ ...FIXED_EVENT }, SECRET);
-    expect(signed.signature?.value).toBe(PYTHON_SIGNATURE);
-    expect(signed.signature?.canon).toBeUndefined();
+    expect(signed.signature?.alg).toBe("hmac-sha256");
+    expect(signed.signature?.canon).toBe("v2");
+    expect(signed.signature?.value).toBe(V2_REFERENCE_SIGNATURE);
+  });
+
+  it("a default-signed event verifies AND detects nested-payload tampering", () => {
+    const signed = signEvent({ ...FIXED_EVENT }, SECRET); // default path → v2
+    expect(verifySignature(signed, SECRET)).toEqual({ valid: true });
+
+    // Mutate a NESTED payload value — v1 would miss this; the v2 default catches it.
+    const tampered = { ...signed, payload: { framework: "node", nested: { b: 2, a: 999 } } };
+    expect(verifySignature(tampered, SECRET).valid).toBe(false);
   });
 
   it("signs v2 byte-identically to the server reference and marks canon", () => {

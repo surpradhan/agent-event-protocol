@@ -104,15 +104,18 @@ def test_sign_event_value_is_base64():
     assert len(decoded) == 32  # SHA-256 produces 32 bytes
 
 
-def test_sign_event_correct_hmac():
+def test_sign_event_v1_correct_hmac():
+    # Explicit v1 (envelope-only) correctness — the default is now v2 (see the
+    # v2 section below), so this pins the legacy v1 HMAC over the shallow form.
     event = _minimal_event()
     secret = "my-signing-secret"
     # Compute expected: sign a fresh copy without signature
     expected_canon = _canonicalize(event)
     expected_value = _expected_hmac(expected_canon, secret)
 
-    sign_event(event, secret)
+    sign_event(event, secret, canon="v1")
     assert event["signature"]["value"] == expected_value
+    assert "canon" not in event["signature"]  # v1 carries no marker
 
 
 def test_different_secrets_produce_different_signatures():
@@ -252,10 +255,22 @@ _V2_FIXED_EVENT = {
 _V2_REFERENCE_SIGNATURE = "M3OGzpZ4+SX0MStNZ0wJtb+TV+h/xcy9yPIRC0VaoJQ="
 
 
-def test_v1_remains_the_default():
-    event = _minimal_event()
-    sign_event(event, "secret")
-    assert "canon" not in event["signature"]  # no marker on the default path
+def test_v2_is_the_default():
+    # Issue #59 default flip: the default path now produces a v2 (deep) signature
+    # with a canon marker, so payload tamper-evidence is on without opt-in.
+    event = dict(_V2_FIXED_EVENT)
+    sign_event(event, _V2_SECRET)
+    assert event["signature"]["canon"] == "v2"
+    assert event["signature"]["value"] == _V2_REFERENCE_SIGNATURE
+
+
+def test_default_signed_verifies_and_detects_nested_tampering():
+    event = dict(_V2_FIXED_EVENT)
+    sign_event(event, _V2_SECRET)  # default path → v2
+    assert verify_signature(event, _V2_SECRET)["valid"] is True
+    # Mutate a NESTED payload value — v1 would miss this; the v2 default catches it.
+    event["payload"] = {"framework": "node", "nested": {"b": 2, "a": 999}}
+    assert verify_signature(event, _V2_SECRET)["valid"] is False
 
 
 def test_sign_event_rejects_unsupported_canon():

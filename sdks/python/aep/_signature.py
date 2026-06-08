@@ -8,42 +8,48 @@ from typing import Any, Literal
 
 # Canonicalization versions understood by this module (issue #59).
 #
-# • v1 (legacy, default) — _canonicalize: shallow, envelope-only. The
-#   array-replacer-style rule drops nested object contents (``payload`` → ``{}``).
-#   Identical across the Node, Python, Go SDKs and the server; covers the
-#   envelope but NOT nested payloads.
-# • v2 (deep) — canonicalize_v2: a deep, recursively key-sorted form covering the
-#   whole event including nested payloads, byte-identical to the server's
-#   ``canonicalizeV2`` (src/_canonical.js). v2 signatures carry a
-#   ``signature.canon: "v2"`` marker.
+# • v2 (deep, default) — canonicalize_v2: a deep, recursively key-sorted form
+#   covering the whole event including nested payloads, byte-identical to the
+#   server's ``canonicalizeV2`` (src/_canonical.js). v2 signatures carry a
+#   ``signature.canon: "v2"`` marker. This is now the DEFAULT so payload
+#   tamper-evidence is on without opt-in.
+# • v1 (legacy) — _canonicalize: shallow, envelope-only. The array-replacer-style
+#   rule drops nested object contents (``payload`` → ``{}``). Identical across the
+#   Node, Python, Go SDKs and the server; covers the envelope but NOT nested
+#   payloads. Select it explicitly with ``canon="v1"``.
 #
-# ``sign_event`` defaults to v1 (non-breaking); pass ``canon="v2"`` to opt in.
-# ``verify_signature`` honours the marker and treats an absent marker as
-# transition mode (accept either form), matching the server. Flipping the SDK
-# default to v2 across all languages is tracked in issue #59.
+# ``sign_event`` defaults to v2 (issue #59 default flip); pass ``canon="v1"`` for
+# the legacy envelope-only form. ``verify_signature`` honours the marker and
+# treats an absent marker as transition mode (accept either form), matching the
+# server.
+#
+# Compatibility: a v2-default emitter requires a v2-aware server (server PR #60+);
+# an older server that predates ``signature.canon`` support would reject v2. The
+# server keeps accepting v1 during the transition, so ``canon="v1"`` remains
+# available for talking to legacy servers.
 _SUPPORTED_CANON = frozenset({"v1", "v2"})
 
 
 def sign_event(
-    event: dict[str, Any], secret: str, *, canon: Literal["v1", "v2"] = "v1"
+    event: dict[str, Any], secret: str, *, canon: Literal["v1", "v2"] = "v2"
 ) -> dict[str, Any]:
     """Add an HMAC-SHA256 signature to *event* in-place and return it.
 
     Args:
         event: the event envelope (mutated in place).
         secret: the HMAC shared secret.
-        canon: canonicalization version — ``"v1"`` (default, envelope-only) or
-            ``"v2"`` (deep, covers nested payloads). ``"v2"`` also records a
-            ``signature.canon`` marker.
+        canon: canonicalization version — ``"v2"`` (default, deep, covers nested
+            payloads, records a ``signature.canon`` marker) or ``"v1"`` (legacy,
+            envelope-only, no marker).
 
     Raises:
         ValueError: if *canon* is not ``"v1"`` or ``"v2"``. (Fail loudly on a
             typo rather than silently signing the wrong/unmarked form — the
             verifier is strict about the marker, so the emitter is too.)
 
-    The v1 path mirrors the canonical-form algorithm in src/signature.js
-    (shallow-copy, drop ``signature``, sort top-level keys, JSON-encode); the v2
-    path uses :func:`canonicalize_v2`.
+    The v2 path uses :func:`canonicalize_v2`; the v1 path mirrors the
+    canonical-form algorithm in src/signature.js (shallow-copy, drop
+    ``signature``, sort top-level keys, JSON-encode).
     """
     if canon not in _SUPPORTED_CANON:
         raise ValueError(f"Unsupported canon {canon!r} — expected 'v1' or 'v2'")

@@ -34,11 +34,12 @@ const (
 )
 
 // TestKnownAnswerV1 locks the Go v1 (shallow, envelope-only, base64) signature to
-// the value produced by the server, Node, and Python SDKs.
+// the value produced by the server, Node, and Python SDKs. v1 is now opt-in (the
+// default is v2), so this is produced via the explicit SignEventV1.
 func TestKnownAnswerV1(t *testing.T) {
-	signed, err := SignEvent(parityFixture(), paritySecret)
+	signed, err := SignEventV1(parityFixture(), paritySecret)
 	if err != nil {
-		t.Fatalf("SignEvent failed: %v", err)
+		t.Fatalf("SignEventV1 failed: %v", err)
 	}
 	if signed.Signature.Canon != "" {
 		t.Errorf("v1 must not set a canon marker, got %q", signed.Signature.Canon)
@@ -61,6 +62,45 @@ func TestKnownAnswerV2(t *testing.T) {
 	}
 	if signed.Signature.Value != knownAnswerV2 {
 		t.Errorf("v2 KAT mismatch:\n got  %q\n want %q", signed.Signature.Value, knownAnswerV2)
+	}
+}
+
+// TestSignEventDefaultsToV2 pins the issue #59 default flip: the plain SignEvent
+// now produces a v2 (deep, payload-covering) signature with a canon marker,
+// byte-identical to the shared cross-language v2 known-answer.
+func TestSignEventDefaultsToV2(t *testing.T) {
+	signed, err := SignEvent(parityFixture(), paritySecret)
+	if err != nil {
+		t.Fatalf("SignEvent failed: %v", err)
+	}
+	if signed.Signature.Canon != "v2" {
+		t.Errorf("default SignEvent must set canon=\"v2\", got %q", signed.Signature.Canon)
+	}
+	if signed.Signature.Value != knownAnswerV2 {
+		t.Errorf("default v2 KAT mismatch:\n got  %q\n want %q", signed.Signature.Value, knownAnswerV2)
+	}
+}
+
+// TestDefaultSignedDetectsPayloadTampering confirms the default (v2) signature
+// covers nested payloads: a verified event fails verification once its payload is
+// mutated.
+func TestDefaultSignedDetectsPayloadTampering(t *testing.T) {
+	signed, _ := SignEvent(parityFixture(), paritySecret) // default → v2
+	valid, err := VerifySignature(signed, paritySecret)
+	if err != nil {
+		t.Fatalf("VerifySignature failed: %v", err)
+	}
+	if !valid {
+		t.Error("expected default-signed event to verify")
+	}
+
+	signed.Payload = map[string]any{"framework": "node", "nested": map[string]any{"b": 2, "a": 999}}
+	valid, err = VerifySignature(signed, paritySecret)
+	if err != nil {
+		t.Fatalf("VerifySignature failed: %v", err)
+	}
+	if valid {
+		t.Error("expected default (v2) signature to be invalid after nested-payload tampering")
 	}
 }
 
@@ -133,7 +173,7 @@ func TestTransitionModeAcceptsUnmarkedDeep(t *testing.T) {
 // TestTransitionModeAcceptsV1: an unmarked shallow (v1) signature also verifies
 // under transition mode.
 func TestTransitionModeAcceptsV1(t *testing.T) {
-	signed, _ := SignEvent(parityFixture(), paritySecret) // v1, no marker
+	signed, _ := SignEventV1(parityFixture(), paritySecret) // v1, no marker
 	valid, err := VerifySignature(signed, paritySecret)
 	if err != nil {
 		t.Fatalf("VerifySignature failed: %v", err)
@@ -229,9 +269,9 @@ const (
 // HTML-significant and separator characters in the envelope to the server value.
 // Guards against encoding/json HTML-escaping <, >, & (issue #59 review finding).
 func TestKnownAnswerSpecialCharsV1(t *testing.T) {
-	signed, err := SignEvent(specialCharFixture(), paritySecret)
+	signed, err := SignEventV1(specialCharFixture(), paritySecret)
 	if err != nil {
-		t.Fatalf("SignEvent failed: %v", err)
+		t.Fatalf("SignEventV1 failed: %v", err)
 	}
 	if signed.Signature.Value != specialKnownAnswerV1 {
 		t.Errorf("special-char v1 KAT mismatch:\n got  %q\n want %q", signed.Signature.Value, specialKnownAnswerV1)

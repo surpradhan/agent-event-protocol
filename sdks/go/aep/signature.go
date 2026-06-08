@@ -15,19 +15,21 @@ import (
 //
 // Two canonicalization versions are supported (issue #59):
 //
-//   - v1 (default) — canonicalForm: shallow, envelope-only. Drop the
+//   - v2 (deep, default) — canonicalFormV2: drop `signature`, then recursively
+//     key-sort the WHOLE event (envelope AND nested payloads) before HMAC, so the
+//     signature covers payload contents. This is the same deep rule the server
+//     verifier (src/_canonical.js) and the Phase 14 audit bundle use. v2
+//     signatures carry a `signature.canon: "v2"` marker. This is now the default
+//     (issue #59 default flip) so payload tamper-evidence is on without opt-in.
+//
+//   - v1 (legacy) — canonicalForm: shallow, envelope-only. Drop the
 //     `signature` field, sort the top-level keys, and serialize keeping ONLY the
 //     top-level key names at every nesting level (replicating ECMAScript's
 //     `JSON.stringify(copy, sortedKeys)` array-replacer behaviour). Nested
 //     objects are therefore emptied (a `payload` serializes as `{}`). It covers
 //     the envelope but NOT nested payloads. Byte-identical to the server, Node,
 //     and Python SDK v1 forms — locked by a cross-language known-answer test.
-//
-//   - v2 (deep) — canonicalFormV2: drop `signature`, then recursively key-sort
-//     the WHOLE event (envelope AND nested payloads) before HMAC, so the
-//     signature covers payload contents. This is the same deep rule the server
-//     verifier (src/_canonical.js) and the Phase 14 audit bundle use. v2
-//     signatures carry a `signature.canon: "v2"` marker.
+//     Select it explicitly with SignEventV1.
 //
 // In BOTH versions the digest is base64-encoded (matching the server/Node/Python
 // SDKs).
@@ -36,36 +38,52 @@ import (
 // *deep* canonical form and HEX-encoded the value — a form that matched neither
 // the shared v1 (shallow) nor v2, and whose hex value never verified on the
 // server (everyone else uses base64). That output was therefore non-interoperable
-// in practice. This release aligns Go's v1 to the shared shallow+base64 form so
-// Go finally interoperates on v1, and adds an opt-in v2. See the PR / issue #59.
+// in practice. A prior release aligned Go's v1 to the shared shallow+base64 form
+// so Go finally interoperates on v1, and added an opt-in v2.
 //
-// SignEvent defaults to v1 (interoperable, non-breaking relative to the spec);
-// use SignEventV2 / SignEventWithCanon to opt into v2. VerifySignature is
-// version-aware and backward-compatible: it honours the `signature.canon` marker
-// and treats an absent marker as transition mode (accept either form), matching
-// the server.
+// Default flip (issue #59): SignEvent now defaults to v2 (deep, payload-covering,
+// base64) so payload tamper-evidence is on without opt-in. Use SignEventV1 to
+// sign the legacy envelope-only form (e.g. to talk to a server that predates
+// version-aware verification). VerifySignature is version-aware and
+// backward-compatible: it honours the `signature.canon` marker and treats an
+// absent marker as transition mode (accept either form), matching the server.
+//
+// Compatibility: a v2-default emitter requires a v2-aware server (server PR #60+).
+// An older server that predates `signature.canon` support would reject v2; the
+// server keeps accepting v1 during the transition, so SignEventV1 remains
+// available for legacy servers.
 
 // supportedCanon is the set of canonicalization version markers this SDK accepts.
 var supportedCanon = map[string]bool{"v1": true, "v2": true}
 
 // SignEvent signs an event with HMAC-SHA256 using the provided secret and the
-// default (v1, envelope-only, base64) canonical form. Returns the event with the
-// Signature field populated.
+// default (v2, deep, payload-covering, base64) canonical form. It records a
+// `signature.canon: "v2"` marker. Returns the event with the Signature field
+// populated.
 //
-// For payload-covering signatures, use SignEventV2.
+// For the legacy envelope-only form, use SignEventV1.
 func SignEvent(event *Event, secret string) (*Event, error) {
+	return SignEventWithCanon(event, secret, "v2")
+}
+
+// SignEventV1 signs an event with the legacy v1 (shallow, envelope-only, base64)
+// canonical form. It does NOT cover nested payload contents and carries no canon
+// marker. Prefer SignEvent (v2) unless you must interoperate with a server that
+// predates version-aware verification.
+func SignEventV1(event *Event, secret string) (*Event, error) {
 	return SignEventWithCanon(event, secret, "v1")
 }
 
 // SignEventV2 signs an event with the v2 (deep) canonical form, so the signature
 // covers nested payload contents. It records a `signature.canon: "v2"` marker.
+// Equivalent to the default SignEvent; kept as an explicit alias.
 func SignEventV2(event *Event, secret string) (*Event, error) {
 	return SignEventWithCanon(event, secret, "v2")
 }
 
 // SignEventWithCanon signs an event using the named canonicalization version
 // ("v1" or "v2") and HMAC-SHA256, base64-encoding the digest. The "v2" form adds
-// a `signature.canon` marker; "v1" does not (it is the default/legacy form).
+// a `signature.canon` marker; "v1" (the legacy form) does not.
 //
 // Returns an ErrValidation if the event is nil, the secret is empty, or canon is
 // not "v1"/"v2".
