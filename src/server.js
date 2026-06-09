@@ -571,6 +571,34 @@ const SIGNATURE_V1_SUNSET = (() => {
   return raw;
 })();
 
+// Issue #65, Phase C — opt-in strict mode. When REQUIRE_CANON_V2 is enabled the
+// signature verifier rejects legacy v1 (and unmarked) signatures, requiring an
+// explicit canon:"v2" marker that verifies against the deep, payload-covering
+// form (see verifySignature). Default OFF → unchanged transition behaviour
+// (v1 AND v2 accepted). Parsed robustly: "true"/"1" (case-insensitive) → on;
+// anything else/unset → off.
+//
+// Read per-request (not cached at startup) so an operator can turn enforcement
+// on/off without restarting the server — useful for a security control. This is
+// an EXPLICIT operator decision, INDEPENDENT of SIGNATURE_V1_SUNSET: passing the
+// sunset date does NOT auto-enable strict (the global default flip is a later
+// phase of #65).
+function requireCanonV2Enabled() {
+  const raw = (process.env.REQUIRE_CANON_V2 || "").trim().toLowerCase();
+  return raw === "true" || raw === "1";
+}
+
+// Log once at startup so operators can confirm strict mode was picked up.
+// Unlike SIGNATURE_V1_SUNSET (parsed once at startup via an IIFE), this flag
+// is read per-request — changes take effect without a restart. The startup log
+// reflects the value at boot; a runtime toggle will silently take effect.
+if (requireCanonV2Enabled()) {
+  logger.info(
+    { flag: "REQUIRE_CANON_V2" },
+    "strict signature mode enabled: per-event signatures must be canon:\"v2\" (REQUIRE_CANON_V2=true)"
+  );
+}
+
 // POST /events — ingest a single event
 // Rate limiting is applied per-key AFTER authentication resolves req.api_key_id.
 app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async (req, res) => {
@@ -592,7 +620,13 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
     // of the marker (transition mode classifies an unmarked sig by what matched).
     const marked = !!(event && event.signature && typeof event.signature === "object"
       && event.signature.canon !== undefined);
-    const { valid, canon, error } = verifySignature(event, hmacSecret);
+    // Strict mode (issue #65 Phase C): when on, only an explicit canon:"v2"
+    // signature that verifies deep is accepted; v1/unmarked → 401 below. A v1
+    // event rejected here NEVER reaches the deprecation-header path (that is for
+    // ACCEPTED v1), so a strict 401 carries no Deprecation/Sunset headers.
+    const { valid, canon, error } = verifySignature(event, hmacSecret, {
+      requireCanonV2: requireCanonV2Enabled()
+    });
     if (!valid) {
       recordSignatureRejection({ marked });
       await db.incrementCounter("rejected");

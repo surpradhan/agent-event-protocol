@@ -249,3 +249,102 @@ describe("buildDeprecationHeaders (issue #65, Phase B)", () => {
     assert.equal(h.Sunset, undefined);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Opt-in strict mode — REQUIRE_CANON_V2 (issue #65, Phase C)
+// ---------------------------------------------------------------------------
+//
+// verifySignature(event, secret, { requireCanonV2: true }) accepts a signature
+// IFF it carries an explicit canon:"v2" marker AND verifies against the deep
+// form. v1-marked, unmarked (even deep-valid), and non-"v2" markers are all
+// rejected. With the flag false/omitted, transition behaviour is unchanged.
+
+describe("verifySignature strict mode (REQUIRE_CANON_V2, issue #65 Phase C)", () => {
+  const STRICT = { requireCanonV2: true };
+
+  test("v2-marked deep signature → accepted", () => {
+    const ev = makeSigned({ canon: "v2", form: canonicalizeV2 });
+    assert.deepEqual(verifySignature(ev, SECRET, STRICT), { valid: true, canon: "v2" });
+  });
+
+  test("v1-marked signature → rejected with the v1 migration hint", () => {
+    const ev = makeSigned({ canon: "v1", form: canonicalize });
+    const res = verifySignature(ev, SECRET, STRICT);
+    assert.equal(res.valid, false);
+    assert.equal(res.canon, undefined);
+    // Message must fit in 99 chars (sanitizeInput truncates at 100) and mention
+    // the upgrade path — not an "unsupported" claim.
+    assert.ok(res.error.length <= 99, `error too long (${res.error.length}): ${res.error}`);
+    assert.match(res.error, /Strict mode requires canon:"v2"/);
+    assert.match(res.error, /AEP SDK >= v0\.3\.0/);
+  });
+
+  test("UNMARKED but deep-valid signature → rejected with the v1 migration hint", () => {
+    const ev = makeSigned({ canon: null, form: canonicalizeV2 });
+    // Sanity: transition mode (flag off) accepts this exact event as effective v2…
+    assert.deepEqual(verifySignature(ev, SECRET), { valid: true, canon: "v2" });
+    // …but strict mode rejects it because there is no explicit canon:"v2" marker.
+    const res = verifySignature(ev, SECRET, STRICT);
+    assert.equal(res.valid, false);
+    assert.ok(res.error.length <= 99, `error too long (${res.error.length}): ${res.error}`);
+    assert.match(res.error, /Strict mode requires canon:"v2"/);
+  });
+
+  test("v2-marked but payload-tampered signature → rejected", () => {
+    const ev = makeSigned({
+      canon: "v2", form: canonicalizeV2,
+      mutate: (e) => { e.payload.nested.deep = 999; }
+    });
+    assert.equal(verifySignature(ev, SECRET, STRICT).valid, false);
+  });
+
+  test("an unknown canon value → rejected with an accurate 'unsupported' error (NOT a v1 claim)", () => {
+    const ev = makeSigned({ canon: "v9", form: canonicalizeV2 });
+    const res = verifySignature(ev, SECRET, STRICT);
+    assert.equal(res.valid, false);
+    // Must NOT say "v1 canonicalization" — that would be factually wrong for v9.
+    assert.ok(!res.error.includes("v1 canonicalization"), `error wrongly claims v1: ${res.error}`);
+    assert.match(res.error, /Unsupported canon/);
+    assert.match(res.error, /strict mode only accepts/);
+  });
+
+  test("null canon under strict → 'unsupported' branch (not the migration hint)", () => {
+    // null is not undefined, so it falls into the unsupported branch, not the
+    // v1/absent migration hint. This test pins that behaviour explicitly.
+    const ev = makeSigned({ canon: null, form: canonicalizeV2 });
+    ev.signature.canon = null; // makeSigned skips setting canon for non-strings; force it
+    const res = verifySignature(ev, SECRET, STRICT);
+    assert.equal(res.valid, false);
+    assert.match(res.error, /Unsupported canon/);
+    // Also confirm transition mode rejects null (pre-existing SUPPORTED_CANON check).
+    assert.equal(verifySignature(ev, SECRET).valid, false);
+  });
+
+  test("requireCanonV2 omitted/false → transition behaviour unchanged (regression lock)", () => {
+    // v1 marker accepted
+    assert.deepEqual(
+      verifySignature(makeSigned({ canon: "v1", form: canonicalize }), SECRET),
+      { valid: true, canon: "v1" }
+    );
+    // unmarked shallow accepted
+    assert.deepEqual(
+      verifySignature(makeSigned({ canon: null, form: canonicalize }), SECRET),
+      { valid: true, canon: "v1" }
+    );
+    // unmarked deep accepted
+    assert.deepEqual(
+      verifySignature(makeSigned({ canon: null, form: canonicalizeV2 }), SECRET),
+      { valid: true, canon: "v2" }
+    );
+    // v2 marker accepted
+    assert.deepEqual(
+      verifySignature(makeSigned({ canon: "v2", form: canonicalizeV2 }), SECRET),
+      { valid: true, canon: "v2" }
+    );
+    // explicit requireCanonV2:false still accepts v1
+    assert.deepEqual(
+      verifySignature(makeSigned({ canon: "v1", form: canonicalize }), SECRET, { requireCanonV2: false }),
+      { valid: true, canon: "v1" }
+    );
+  });
+});

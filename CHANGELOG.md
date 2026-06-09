@@ -4,6 +4,36 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Opt-in strict signature mode — issue #65 Phase C, 2026-06-09
+
+The **third** step toward retiring the legacy v1 (envelope-only) signature form,
+and the first that can *reject* it — but only when an operator opts in. Default
+behaviour is **unchanged** (transition mode; v1 and v2 both accepted).
+
+- **New env var `REQUIRE_CANON_V2`** (`true`/`1` → on; anything else/unset →
+  off). When **on**, the server accepts a per-event signature **iff** it carries
+  an explicit `canon:"v2"` marker **and** verifies against the deep,
+  payload-covering form. Legacy `canon:"v1"`, **unmarked** signatures (even ones
+  that would verify deep, e.g. a pre-v0.3.0 Go emitter), and any non-`v2` marker
+  are rejected with `401` and an actionable error. Off by default → no behaviour
+  change.
+- **No deprecation headers on a strict reject.** A strict `401` is a hard
+  rejection (not an *accepted* v1 ingest), so it carries no RFC 8594
+  `Deprecation`/`Sunset` headers. Strict rejections increment the existing
+  `aep_signature_verifications_rejected_total` counter (Phase A).
+- **Independent of `SIGNATURE_V1_SUNSET`.** Reaching the sunset date does **not**
+  auto-enable strict mode; enabling it is an explicit operator decision.
+- **Verifier change:** `verifySignature(event, secret, { requireCanonV2 })` — the
+  policy lives in one unit-testable place; the only caller that opts in is the
+  server (via the env). Other callers are unaffected.
+- **Docs:** `AUTH.md` (env table, verification-errors table, strict-mode section
+  with the accept/reject matrix), `SECURITY.md`, `.env.example`.
+- **Scope:** Phase C (opt-in strict); non-breaking by default. The global
+  **default** flip to strict (breaking) is Phase D, and v1 cleanup is Phase E —
+  both deferred. Tracked in issue #65.
+
+---
+
 ## Signature v1 deprecation signaling — issue #65 Phase B, 2026-06-09
 
 The **second, non-breaking** step toward retiring the legacy v1 (envelope-only)

@@ -44,7 +44,10 @@ AEP provides the following security properties:
   envelope-only and does **not** cover nested payloads; it is **deprecated** in
   favour of **v2** (deep, payload-covering — now the SDK default). The server
   emits RFC 8594 `Deprecation`/`Sunset` headers on accepted v1 ingest; v1 hard
-  rejection is planned. See [issue #65](https://github.com/surpradhan/agent-event-protocol/issues/65) and [AUTH.md](AUTH.md).
+  rejection is planned. Security-sensitive deployments can **enforce
+  payload-covering v2 signatures today** by setting `REQUIRE_CANON_V2=true`,
+  which rejects legacy v1 (and unmarked) signatures with `401` (opt-in, off by
+  default). See [issue #65](https://github.com/surpradhan/agent-event-protocol/issues/65) and [AUTH.md](AUTH.md).
 - **Deduplication**: Duplicate events detected by UUID + timestamp
 - **Tamper-evident audit bundles** (Phase 14): `aep audit export` packages a
   session's events into a JSON bundle with a SHA-256 `content_digest` over the

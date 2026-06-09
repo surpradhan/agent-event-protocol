@@ -437,6 +437,11 @@ projects / tiers / quotas (PR-C), retention / pruning (PR-D), and these ops docs
       same DB; validated with `--dry-run`; the prune job has the same `TIER_*`
       retention env as the server; success/failure is alerted on.
 - [ ] **Observability:** `/metrics/prometheus` scraped; prune job logs collected.
+- [ ] **Signature enforcement:** consider setting `REQUIRE_CANON_V2=true` to
+      reject legacy v1 (envelope-only) signatures and require payload-covering
+      v2 signatures from all emitters. Off by default (non-breaking). See
+      [AUTH.md](./AUTH.md) for the accept/reject matrix and the relationship to
+      `SIGNATURE_V1_SUNSET`.
 
 ---
 
