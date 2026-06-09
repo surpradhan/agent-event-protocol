@@ -198,7 +198,10 @@ const crypto = require('crypto');
 function canonicalizeV2(value) {
   if (Array.isArray(value)) return value.map(canonicalizeV2);
   if (value && typeof value === 'object') {
-    const out = {};
+    // Null-prototype accumulator so a payload key literally named "__proto__"
+    // round-trips as an own key instead of mutating the prototype (which would
+    // silently drop it and diverge from the server's digest).
+    const out = Object.create(null);
     for (const k of Object.keys(value).sort()) out[k] = canonicalizeV2(value[k]);
     return out;
   }
