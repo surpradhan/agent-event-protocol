@@ -165,6 +165,52 @@ function verifySignature(event, secret) {
   return { valid: false, error: "Signature mismatch" };
 }
 
+// ---------------------------------------------------------------------------
+// v1 deprecation signaling (issue #65, Phase B)
+// ---------------------------------------------------------------------------
+//
+// The legacy v1 (envelope-only) canonical form is deprecated in favour of v2
+// (payload-covering); v2 is now the default in all published SDKs. Phase B is
+// SIGNALING ONLY and non-breaking — v1 signatures are still accepted on ingest.
+// When an effective-v1 signature is accepted, the server attaches RFC 8594
+// deprecation headers to the success response so emitters know to migrate. Hard
+// rejection of v1 is a later phase of #65.
+
+// Points at the deprecation rationale (RFC 8594 `Link; rel="deprecation"`).
+const V1_DEPRECATION_LINK =
+  "https://github.com/surpradhan/agent-event-protocol/issues/65";
+
+/**
+ * Build the RFC 8594 deprecation response headers for an accepted effective-v1
+ * (legacy envelope-only) signature. Pure and HTTP-free so it can be unit-tested
+ * without spinning a server.
+ *
+ *   • `Deprecation: true` — always present (deprecation is a present fact). RFC
+ *     8594 also permits an HTTP-date value; the boolean-ish "true" is the widely
+ *     deployed convention, kept here for simplicity.
+ *   • `Link: <…#65>; rel="deprecation"` — points at the deprecation rationale.
+ *   • `Sunset: <IMF-fixdate>` — emitted ONLY when a parseable sunset date is
+ *     given (the future date after which v1 will be rejected, Phase D). Formatted
+ *     as an RFC 7231 IMF-fixdate via Date#toUTCString(). Omitted when the date is
+ *     absent or unparseable (no committed date yet → no malformed header).
+ *
+ * @param {{ sunsetIso?: string|null }} [opts]
+ * @returns {Object<string,string>} header name → value
+ */
+function buildDeprecationHeaders({ sunsetIso } = {}) {
+  const headers = {
+    Deprecation: "true",
+    Link: `<${V1_DEPRECATION_LINK}>; rel="deprecation"`
+  };
+  if (sunsetIso) {
+    const d = new Date(sunsetIso);
+    if (!Number.isNaN(d.getTime())) {
+      headers.Sunset = d.toUTCString(); // RFC 7231 IMF-fixdate
+    }
+  }
+  return headers;
+}
+
 /**
  * Timing-safe comparison of two base64 strings. Returns false (never throws) on
  * length mismatch or undecodable input.
@@ -188,4 +234,11 @@ function timingSafeEqualB64(providedB64, expectedB64) {
 // Exports
 // ---------------------------------------------------------------------------
 
-module.exports = { verifySignature, canonicalize, canonicalizeV2, SUPPORTED_CANON };
+module.exports = {
+  verifySignature,
+  canonicalize,
+  canonicalizeV2,
+  SUPPORTED_CANON,
+  buildDeprecationHeaders,
+  V1_DEPRECATION_LINK
+};

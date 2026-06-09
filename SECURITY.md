@@ -40,6 +40,11 @@ AEP provides the following security properties:
 ### ✅ Data Integrity
 - **HMAC-SHA256 Signing**: Optional event signature verification
 - **Timing-Safe Comparison**: Prevents timing attacks on signatures
+- **Payload-covering signatures (v2)**: The legacy **v1** canonical form is
+  envelope-only and does **not** cover nested payloads; it is **deprecated** in
+  favour of **v2** (deep, payload-covering — now the SDK default). The server
+  emits RFC 8594 `Deprecation`/`Sunset` headers on accepted v1 ingest; v1 hard
+  rejection is planned. See [issue #65](https://github.com/surpradhan/agent-event-protocol/issues/65) and [AUTH.md](AUTH.md).
 - **Deduplication**: Duplicate events detected by UUID + timestamp
 - **Tamper-evident audit bundles** (Phase 14): `aep audit export` packages a
   session's events into a JSON bundle with a SHA-256 `content_digest` over the
