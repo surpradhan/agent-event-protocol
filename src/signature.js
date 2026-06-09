@@ -107,15 +107,13 @@ function verifySignature(event, secret) {
   // absent, or any non-"v2" value here — INCLUDING an unmarked signature that
   // would once have verified deep (the legacy v1/transition path is gone, #65 E).
   //
-  // Two-branch message: v1/absent emitters get the migration hint; truly unknown
-  // canon values get an accurate "unsupported" message rather than a misleading
-  // "v1" claim. Both fit in 99 chars so sanitizeInput (100-char limit) never
-  // truncates the actionable text (there is a unit assertion on this). The hint
-  // is SDK-agnostic on purpose: the v2-default release differs per SDK (npm >=
-  // 0.4.0, PyPI/Go >= 0.3.0), so naming a single version would mislead.
+  // Two-branch message: v1/absent emitters get the migration hint (explicit fix +
+  // SDK upgrade); unknown canon gets an "unsupported" message rather than a
+  // misleading "v1" claim. Both fit in 99 chars so sanitizeInput never truncates
+  // the actionable text (there is a unit assertion on this).
   if (canon !== "v2") {
     const error = (canon === "v1" || canon === undefined)
-      ? 'Signature must use canon:"v2" (payload-covering). Upgrade to a v2-default AEP SDK.'
+      ? 'Signature must use canon:"v2" (payload-covering). Set canon:"v2" or upgrade your AEP SDK.'
       : `Unsupported canon '${String(canon).slice(0, 20)}' — only canon:"v2" is accepted.`;
     return { valid: false, error };
   }

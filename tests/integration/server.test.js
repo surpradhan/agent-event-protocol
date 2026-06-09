@@ -610,17 +610,6 @@ describe("per-event signature acceptance — v2 only (issue #65 Phase E)", () =>
     return event;
   }
 
-  // A shallow, envelope-only ("v1-style") canonical form, reconstructed locally
-  // so a v1-marked signature is internally consistent — proving the server
-  // rejects it on the marker, not on a coincidental digest mismatch. (The server
-  // no longer ships a v1 canonicalizer.)
-  function canonicalizeV1(event) {
-    const copy = Object.assign({}, event);
-    delete copy.signature;
-    const sortedKeys = Object.keys(copy).sort();
-    return JSON.stringify(copy, sortedKeys);
-  }
-
   before(async () => {
     const res = await fetch(`${baseUrl}/admin/keys`, {
       method: "POST",
@@ -641,7 +630,7 @@ describe("per-event signature acceptance — v2 only (issue #65 Phase E)", () =>
   });
 
   test("a v1-signed event is REJECTED (401) with an actionable error and NO deprecation headers", async () => {
-    const res = await ingest(signedEvent(canonicalizeV1, "v1"), signKey);
+    const res = await ingest(signedEvent(canonicalizeV2, "v1"), signKey);
     assert.equal(res.status, 401);
     const body = await res.json();
     assert.equal(body.accepted, false);
@@ -664,7 +653,7 @@ describe("per-event signature acceptance — v2 only (issue #65 Phase E)", () =>
     // The env was removed in Phase E; setting it must not re-accept v1.
     process.env.REQUIRE_CANON_V2 = "false";
     try {
-      const res = await ingest(signedEvent(canonicalizeV1, "v1"), signKey);
+      const res = await ingest(signedEvent(canonicalizeV2, "v1"), signKey);
       assert.equal(res.status, 401);
     } finally {
       delete process.env.REQUIRE_CANON_V2;
