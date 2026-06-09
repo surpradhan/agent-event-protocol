@@ -30,8 +30,8 @@ If `DASHBOARD_TOKEN` is not set, the dashboard and all read endpoints are **open
 | `LOG_PRETTY` | No (default: `false`) | Set to `true` for human-readable logs (requires `pino-pretty`; dev only) |
 | `RATE_LIMIT_RPM` | No (default: `300`) | Max `POST /events` requests per API key per 60-second window. `0` disables. |
 | `AUDIT_SIGNING_SECRET` | For audit export/verify | Server-side HMAC secret that signs/verifies tamper-evident audit bundles (`aep audit`). Distinct from per-API-key HMAC secrets. When unset, audit export/verify fail with a clear error. |
-| `SIGNATURE_V1_SUNSET` | No (default: unset) | ISO-8601 date (e.g. `2026-09-06`) after which the legacy v1 signature form will be rejected. When set, drives the RFC 8594 `Sunset` header on accepted v1-signed ingest (issue #65, Phase B). Unset → no `Sunset` header. v1 is **still accepted** regardless. |
-| `REQUIRE_CANON_V2` | No (default: `false`) | Opt-in strict mode (issue #65, Phase C). `true`/`1` → the server **rejects** per-event signatures that are not an explicit `canon:"v2"` deep signature (v1, unmarked, and any non-`v2` marker → `401`). Default off → transition mode (v1 **and** v2 accepted). **Independent of `SIGNATURE_V1_SUNSET`** — passing the sunset date does not auto-enable this; turning it on is an explicit operator decision. The global default flip to strict is a later phase of #65. |
+| `SIGNATURE_V1_SUNSET` | No (default: unset) | ISO-8601 date (e.g. `2026-09-06`) advertised via the RFC 8594 `Sunset` header on accepted v1-signed ingest (issue #65, Phase B). As of Phase D the server **rejects v1 by default**, so this header is only emitted when an operator has re-enabled v1 via `REQUIRE_CANON_V2=false`. |
+| `REQUIRE_CANON_V2` | No (default: **on/strict**) | Strict signature mode (issue #65; default flipped to strict in Phase D). When on (the default), the server **rejects** per-event signatures that are not an explicit `canon:"v2"` deep signature (v1, unmarked, and any non-`v2` marker → `401`). Set to `false` (also `0`/`no`/`off`, case-insensitive) to restore transition mode (v1 **and** v2 accepted) while you migrate legacy emitters. **Independent of `SIGNATURE_V1_SUNSET`.** Re-read per request. The v1 code path + this escape hatch are removed in a later phase (E). |
 
 See `.env.example` for the full annotated template.
 
@@ -218,7 +218,7 @@ await fetch('http://localhost:8787/events', {
 | 401 | Signature algorithm not `hmac-sha256` |
 | 401 | Signature value is missing or wrong |
 | 401 | Unsupported `signature.canon` (must be `v1` or `v2`) |
-| 401 | Legacy v1 (or unmarked) signature rejected because `REQUIRE_CANON_V2` strict mode is enabled (issue #65, Phase C) |
+| 401 | Legacy v1 (or unmarked) signature rejected — strict mode is the **default** as of issue #65 Phase D. Set `REQUIRE_CANON_V2=false` to temporarily accept v1. |
 | 400 | Event fails schema validation (separate from signature) |
 
 ### Canonicalization versions (`signature.canon`) — issue #59
@@ -239,26 +239,30 @@ Events MAY declare their form with an optional `signature.canon` field:
 "signature": { "alg": "hmac-sha256", "value": "<base64>", "canon": "v2" }
 ```
 
-The server verifier is version-aware **and backward-compatible**:
+The server verifier is version-aware. **As of issue #65 Phase D the default is
+strict — v1 is rejected.** The table below shows both modes; the escape-hatch
+column applies only when `REQUIRE_CANON_V2=false`:
 
-| `signature.canon` | Verified against |
-|---|---|
-| `"v2"` | deep form only |
-| `"v1"` | shallow (envelope-only) form only |
-| *absent* | **transition mode** — accepted if it matches *either* form |
+| `signature.canon` | Default (strict) | `REQUIRE_CANON_V2=false` (transition) |
+|---|---|---|
+| `"v2"` | deep form — **accepted** | deep form — accepted |
+| `"v1"` | **rejected (401)** | shallow (envelope-only) form |
+| *absent* | **rejected (401)** | accepted if it matches *either* form |
 
-Transition mode keeps every existing emitter working unchanged (legacy shallow
-emitters, and the Go SDK which already signs the deep form without a marker) with
-no security weakening — both forms are HMAC-keyed by the same secret.
+Transition mode (the pre-Phase-D behaviour, now opt-in via `REQUIRE_CANON_V2=false`)
+keeps legacy emitters working — including the pre-v0.3.0 Go SDK which signed the
+deep form without a marker — with no security weakening, since both forms are
+HMAC-keyed by the same secret.
 
-**v2 is now the default in all three SDKs** (Node, Python, Go — issue #59 default
-flip), so newly-signed events carry `canon: "v2"` and payload coverage without
-opt-in. v1 is **legacy** but still accepted by the server during the transition,
-and remains selectable via `canon: "v1"` (e.g. to talk to a server that predates
-version-aware verification). The server keeps **transition mode** — it does *not*
-yet require v2. Hard-retiring v1 (the server requiring `canon: "v2"`) is a separate,
-later, breaking change that needs a deprecation window; it is tracked separately
-from issue #59.
+**v2 is the default in all three SDKs** (Node, Python, Go — issue #59 default
+flip) and they are published, so newly-signed events carry `canon: "v2"` and
+payload coverage without opt-in. As of **issue #65 Phase D the server rejects v1
+by default** (the deprecation window is closed: v2-default SDKs are out and there
+were no real v1 users). v1 remains **selectable** via `canon: "v1"` in the SDK
+signers and **verifiable** in code (for reading historical events / audit
+bundles); it is simply no longer accepted on ingest unless an operator sets
+`REQUIRE_CANON_V2=false`. Removing the v1 code path entirely (and the escape
+hatch) is a later, minor phase (E) of issue #65.
 
 > **Cross-language note:** byte-exact v2 across the Node/Python/Go SDKs requires
 > a shared number-serialization rule (this server uses ECMAScript
@@ -300,17 +304,18 @@ emitted (no committed date yet); a set-but-unparseable value is ignored with a
 startup warning. v2-signed, unsigned, and rejected requests get **no** deprecation
 headers.
 
-**Opt-in strict mode (issue #65, Phase C).** Security-sensitive deployments can
-enforce payload-covering (v2) signatures *today* by setting `REQUIRE_CANON_V2`
-(`true`/`1`, case-insensitive). It is **off by default** and non-breaking until
-an operator turns it on. When **on**, the verifier accepts a signature **iff**:
+**Strict mode is the default (issue #65, Phase D — breaking).** The server
+enforces payload-covering (v2) signatures **out of the box**. `REQUIRE_CANON_V2`
+defaults to **on**; set it to `false` (also `0`/`no`/`off`, case-insensitive) to
+restore the legacy transition mode (introduced opt-in in Phase C). When strict
+(the default), the verifier accepts a signature **iff**:
 
 - `signature.canon === "v2"` is present, **and**
 - the signature verifies against the deep (v2) form.
 
 Everything else is rejected with `401`:
 
-| Signature | Strict mode (`REQUIRE_CANON_V2=true`) |
+| Signature | Strict mode (default) |
 |---|---|
 | `canon: "v2"`, deep-valid | **accepted** (`202`) |
 | `canon: "v1"` | **rejected** (`401`) |
@@ -335,16 +340,16 @@ this is safe: strict mode **also** requires the deep HMAC to verify, which an
 attacker cannot forge without the secret, so adding/stripping the marker can't
 manufacture a valid signature.
 
-`REQUIRE_CANON_V2` is **independent of `SIGNATURE_V1_SUNSET`** — reaching the
-sunset date does **not** auto-enable strict mode (that surprising auto-flip is
-deliberately out of scope). Flipping the *global default* to strict (so the
-server rejects v1 out of the box) is a separate, later, breaking phase of
-issue #65.
+`REQUIRE_CANON_V2` is **independent of `SIGNATURE_V1_SUNSET`** — the flag, not
+the sunset date, governs enforcement. With strict mode now the **default**, the
+advertised sunset is effectively reached: v1 is rejected unless an operator opts
+back into transition mode.
 
-By default (when `REQUIRE_CANON_V2` is not set) this is **signaling only — v1
-events are still accepted**. Hard rejection of v1 as the *global default*
-(Phase D, breaking) is a later phase of issue #65. Opt-in strict enforcement
-is available today via `REQUIRE_CANON_V2` (Phase C, described above).
+**Reverting:** a deployment that still needs to accept legacy v1 during its own
+migration sets `REQUIRE_CANON_V2=false` (also `0`/`no`/`off`). That restores the
+exact pre-Phase-D transition behaviour — v1 **and** v2 accepted, with the Phase B
+`Deprecation`/`Sunset` headers on accepted v1 ingest. The escape hatch (and the
+v1 code path) remain until Phase E removes them.
 
 ---
 
