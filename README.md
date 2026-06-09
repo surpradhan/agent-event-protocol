@@ -1,4 +1,4 @@
-# 🤖 Agent Event Protocol (AEP)
+# Agent Event Protocol (AEP)
 
 > Structured observability for AI agent systems: capture, trace, and debug agent workflows in real time.
 
