@@ -4,6 +4,35 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Signature v1 deprecation signaling — issue #65 Phase B, 2026-06-09
+
+The **second, non-breaking** step toward retiring the legacy v1 (envelope-only)
+signature form. Building on Phase A's observability, the server now *signals* the
+deprecation to emitters via standard HTTP headers. Nothing is rejected — v1
+events are still accepted; transition mode is unchanged.
+
+- **RFC 8594 deprecation headers on accepted v1 ingest.** When an *effective-v1*
+  signature is accepted, the success response (`202`, or `200` for a duplicate)
+  carries:
+  - `Deprecation: true` — always.
+  - `Link: <…/issues/65>; rel="deprecation"` — points at the rationale.
+  - `Sunset: <IMF-fixdate>` (RFC 7231, e.g. `Sun, 06 Sep 2026 00:00:00 GMT`) —
+    **only** when `SIGNATURE_V1_SUNSET` is configured.
+  v2-signed, unsigned, and rejected requests get **no** deprecation headers.
+- **New env var `SIGNATURE_V1_SUNSET`** (ISO-8601 date) — the future date after
+  which v1 will be rejected (Phase D); drives the `Sunset` header. Unset → no
+  `Sunset` header (default, no committed date yet). A set-but-unparseable value
+  logs a startup warning and is treated as unset (no malformed header, no crash).
+- **Pure, unit-tested header builder** (`buildDeprecationHeaders`) so the header
+  values are verifiable without HTTP.
+- **Docs:** `AUTH.md` (deprecation note + env table), `SECURITY.md` (v1→v2
+  pointer), `.env.example`.
+- **Scope:** Phase B (signaling only); non-breaking, **v1 still accepted**. Later
+  phases C–E (opt-in strict mode, default strict, cleanup) are deferred. Tracked
+  in issue #65.
+
+---
+
 ## Signature canonicalization observability — issue #65 Phase A, 2026-06-08
 
 The **first, non-breaking** step toward retiring the legacy v1 (envelope-only)

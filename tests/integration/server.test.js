@@ -32,6 +32,12 @@ if (!USE_POSTGRES) {
   process.env.DATABASE_PATH = TEST_DB;
 }
 
+// Issue #65 Phase B: configure a sunset date BEFORE the server module loads so
+// the v1-deprecation `Sunset` header is emitted (the value is read once at
+// startup). The deprecation signature tests below assert on this exact date.
+const SIG_V1_SUNSET = "2026-09-06";
+process.env.SIGNATURE_V1_SUNSET = SIG_V1_SUNSET;
+
 // Clear require cache entries so a fresh DB singleton is created even if
 // another test file already loaded these modules.
 function clearCache() {
@@ -581,6 +587,32 @@ describe("signature canonicalization metrics", () => {
 
     const text = await scrape();
     assert.match(text, /aep_signature_verifications_rejected_total\{marked="true"\}\s+\d+/);
+  });
+
+  // Issue #65 Phase B — RFC 8594 deprecation signaling on accepted v1 ingest.
+  // SIGNATURE_V1_SUNSET was set in the bootstrap, so Sunset is expected too.
+  test("a v1-signed ingest carries Deprecation + Sunset headers", async () => {
+    const res = await ingest(signedEvent(canonicalize, "v1"), signKey);
+    assert.equal(res.status, 202);
+    assert.equal(res.headers.get("deprecation"), "true");
+    assert.equal(res.headers.get("sunset"), new Date(SIG_V1_SUNSET).toUTCString());
+    assert.match(res.headers.get("link") || "", /rel="deprecation"/);
+  });
+
+  test("a v2-signed ingest carries NO deprecation headers", async () => {
+    const res = await ingest(signedEvent(canonicalizeV2, "v2"), signKey);
+    assert.equal(res.status, 202);
+    assert.equal(res.headers.get("deprecation"), null);
+    assert.equal(res.headers.get("sunset"), null);
+  });
+
+  test("an unsigned ingest (no-secret key) carries NO deprecation headers", async () => {
+    // writeKey has no hmac_secret → signatures are ignored, so an unsigned event
+    // is accepted and must not be flagged as legacy v1.
+    const res = await ingest(makeEvent(), writeKey);
+    assert.equal(res.status, 202);
+    assert.equal(res.headers.get("deprecation"), null);
+    assert.equal(res.headers.get("sunset"), null);
   });
 });
 

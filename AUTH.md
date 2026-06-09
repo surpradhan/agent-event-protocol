@@ -30,6 +30,7 @@ If `DASHBOARD_TOKEN` is not set, the dashboard and all read endpoints are **open
 | `LOG_PRETTY` | No (default: `false`) | Set to `true` for human-readable logs (requires `pino-pretty`; dev only) |
 | `RATE_LIMIT_RPM` | No (default: `300`) | Max `POST /events` requests per API key per 60-second window. `0` disables. |
 | `AUDIT_SIGNING_SECRET` | For audit export/verify | Server-side HMAC secret that signs/verifies tamper-evident audit bundles (`aep audit`). Distinct from per-API-key HMAC secrets. When unset, audit export/verify fail with a clear error. |
+| `SIGNATURE_V1_SUNSET` | No (default: unset) | ISO-8601 date (e.g. `2026-09-06`) after which the legacy v1 signature form will be rejected. When set, drives the RFC 8594 `Sunset` header on accepted v1-signed ingest (issue #65, Phase B). Unset → no `Sunset` header. v1 is **still accepted** regardless. |
 
 See `.env.example` for the full annotated template.
 
@@ -278,6 +279,28 @@ These labels are deliberately low cardinality (no tenant/source/key). For
 per-tenant attribution, the first legacy-v1 ingest per tenant is logged at `info`
 (with `tenant_id` + `source`); the rest at `debug`. This is observability only —
 it does **not** change what the server accepts.
+
+**Deprecation signaling (issue #65, Phase B).** v1 (envelope-only, no payload
+coverage) is **deprecated** in favour of v2 (payload-covering, the SDK default).
+When the server accepts an *effective-v1* signature on ingest, the success
+response (`202`, or `200` for a duplicate) now carries [RFC 8594](https://www.rfc-editor.org/rfc/rfc8594)
+deprecation headers so emitters can detect that they should migrate:
+
+| Header | Value | When |
+|---|---|---|
+| `Deprecation` | `true` | Always, on accepted v1 ingest |
+| `Link` | `<…/issues/65>; rel="deprecation"` | Always, on accepted v1 ingest |
+| `Sunset` | RFC 7231 IMF-fixdate (e.g. `Sun, 06 Sep 2026 00:00:00 GMT`) | Only when `SIGNATURE_V1_SUNSET` is configured |
+
+Set `SIGNATURE_V1_SUNSET` (an ISO-8601 date, e.g. `2026-09-06`) to advertise the
+date after which v1 will be rejected. When unset, only `Deprecation`/`Link` are
+emitted (no committed date yet); a set-but-unparseable value is ignored with a
+startup warning. v2-signed, unsigned, and rejected requests get **no** deprecation
+headers.
+
+This is **signaling only — v1 events are still accepted**. Hard rejection of v1
+(the server requiring `canon: "v2"`) is a later, breaking phase of issue #65 and
+needs a deprecation window first.
 
 ---
 

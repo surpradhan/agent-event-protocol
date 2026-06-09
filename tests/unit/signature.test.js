@@ -13,7 +13,7 @@ const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("crypto");
 
-const { verifySignature, canonicalize, canonicalizeV2 } = require("../../src/signature");
+const { verifySignature, canonicalize, canonicalizeV2, buildDeprecationHeaders } = require("../../src/signature");
 const { canonicalize: canonicalizeShared } = require("../../src/_canonical");
 
 const SECRET = "shared-hmac-secret";
@@ -214,5 +214,38 @@ describe("verifySignature reports the effective canonical form (issue #65, Phase
     assert.equal(res.valid, false);
     assert.equal(res.canon, undefined);
     assert.match(res.error, /Signature mismatch/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RFC 8594 deprecation headers for legacy v1 signatures (issue #65, Phase B)
+// ---------------------------------------------------------------------------
+
+describe("buildDeprecationHeaders (issue #65, Phase B)", () => {
+  test("always emits Deprecation + Link (deprecation is a present fact)", () => {
+    const h = buildDeprecationHeaders();
+    assert.equal(h.Deprecation, "true");
+    assert.match(h.Link, /rel="deprecation"/);
+    assert.match(h.Link, /issues\/65/);
+  });
+
+  test("a valid sunset date → well-formed IMF-fixdate Sunset header", () => {
+    const h = buildDeprecationHeaders({ sunsetIso: "2026-09-06" });
+    assert.equal(h.Deprecation, "true");
+    // RFC 7231 IMF-fixdate, e.g. "Sun, 06 Sep 2026 00:00:00 GMT".
+    assert.equal(h.Sunset, new Date("2026-09-06").toUTCString());
+    assert.match(h.Sunset, /^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/);
+  });
+
+  test("unset sunset date → Deprecation only, no Sunset, no throw", () => {
+    const h = buildDeprecationHeaders({ sunsetIso: null });
+    assert.equal(h.Deprecation, "true");
+    assert.equal(h.Sunset, undefined);
+  });
+
+  test("invalid/unparseable sunset date → no Sunset header, no throw", () => {
+    const h = buildDeprecationHeaders({ sunsetIso: "not-a-date" });
+    assert.equal(h.Deprecation, "true");
+    assert.equal(h.Sunset, undefined);
   });
 });
