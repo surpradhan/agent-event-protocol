@@ -320,7 +320,9 @@ Everything else is rejected with `401`:
 
 The `401` carries an actionable message:
 
-> `Signature uses the deprecated v1 canonicalization; this server requires canon:"v2". Upgrade to a v2-default AEP SDK or sign with { canon: "v2" }.`
+> `Strict mode requires canon:"v2". Upgrade to AEP SDK >= v0.3.0 or set canon:"v2".`
+
+(For unrecognised marker values the error reads: `Unsupported canon '<value>' — strict mode only accepts canon:"v2".`)
 
 A strict rejection is a **hard `401`**, so (unlike an *accepted* v1 ingest under
 Phase B) it carries **no** `Deprecation`/`Sunset` headers. Rejections still

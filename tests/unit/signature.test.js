@@ -276,7 +276,7 @@ describe("verifySignature strict mode (REQUIRE_CANON_V2, issue #65 Phase C)", ()
     // the upgrade path — not an "unsupported" claim.
     assert.ok(res.error.length <= 99, `error too long (${res.error.length}): ${res.error}`);
     assert.match(res.error, /Strict mode requires canon:"v2"/);
-    assert.match(res.error, /v2-default/);
+    assert.match(res.error, /AEP SDK >= v0\.3\.0/);
   });
 
   test("UNMARKED but deep-valid signature → rejected with the v1 migration hint", () => {

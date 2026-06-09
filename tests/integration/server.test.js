@@ -676,7 +676,7 @@ describe("strict mode — REQUIRE_CANON_V2 (issue #65, Phase C)", () => {
     // Sanitized detail: quotes escaped, truncated at 100 chars. The new error
     // message is ≤99 chars so it arrives intact — assert on key phrases.
     assert.match(body.detail, /Strict mode requires canon/);
-    assert.match(body.detail, /v2-default/);
+    assert.match(body.detail, /AEP SDK/);
     // A strict 401 is NOT an accepted-v1 ingest → no RFC 8594 headers.
     assert.equal(res.headers.get("deprecation"), null);
     assert.equal(res.headers.get("sunset"), null);
@@ -692,6 +692,20 @@ describe("strict mode — REQUIRE_CANON_V2 (issue #65, Phase C)", () => {
     process.env.REQUIRE_CANON_V2 = "1";
     const res = await ingest(signedEvent(canonicalize, "v1"), strictKey);
     assert.equal(res.status, 401);
+  });
+
+  test("REQUIRE_CANON_V2=false: treated as off — v1 still accepted (transition intact)", async () => {
+    process.env.REQUIRE_CANON_V2 = "false";
+    const res = await ingest(signedEvent(canonicalize, "v1"), strictKey);
+    assert.equal(res.status, 202);
+  });
+
+  test("REQUIRE_CANON_V2=true: key with NO hmac_secret skips signature check — event accepted regardless", async () => {
+    // Keys without an hmac_secret bypass the entire signature block; strict mode
+    // must not affect them (they have no secret to verify against).
+    process.env.REQUIRE_CANON_V2 = "true";
+    const res = await ingest(makeEvent(), writeKey); // writeKey has no hmac_secret
+    assert.equal(res.status, 202);
   });
 });
 

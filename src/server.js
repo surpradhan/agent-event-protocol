@@ -588,6 +588,17 @@ function requireCanonV2Enabled() {
   return raw === "true" || raw === "1";
 }
 
+// Log once at startup so operators can confirm strict mode was picked up.
+// Unlike SIGNATURE_V1_SUNSET (parsed once at startup via an IIFE), this flag
+// is read per-request — changes take effect without a restart. The startup log
+// reflects the value at boot; a runtime toggle will silently take effect.
+if (requireCanonV2Enabled()) {
+  logger.info(
+    { flag: "REQUIRE_CANON_V2" },
+    "strict signature mode enabled: per-event signatures must be canon:\"v2\" (REQUIRE_CANON_V2=true)"
+  );
+}
+
 // POST /events — ingest a single event
 // Rate limiting is applied per-key AFTER authentication resolves req.api_key_id.
 app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async (req, res) => {

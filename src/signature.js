@@ -149,7 +149,7 @@ function verifySignature(event, secret, { requireCanonV2 = false } = {}) {
     // a misleading "v1 canonicalization" claim. Both fit in 99 chars so
     // sanitizeInput (100-char limit) never truncates the actionable text.
     const error = (canon === "v1" || canon === undefined)
-      ? 'Strict mode requires canon:"v2" deep signature. Upgrade to a v2-default SDK or set canon:"v2".'
+      ? 'Strict mode requires canon:"v2". Upgrade to AEP SDK >= v0.3.0 or set canon:"v2".'
       : `Unsupported canon '${String(canon).slice(0, 20)}' — strict mode only accepts canon:"v2".`;
     return { valid: false, error };
   }
