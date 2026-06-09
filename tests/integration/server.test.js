@@ -673,10 +673,10 @@ describe("strict mode — REQUIRE_CANON_V2 (issue #65, Phase C)", () => {
     assert.equal(res.status, 401);
     const body = await res.json();
     assert.equal(body.accepted, false);
-    // detail is sanitized (quotes escaped, truncated to 100 chars) — assert on
-    // the quote-free, actionable head of the message.
-    assert.match(body.detail, /deprecated v1 canonicalization/);
-    assert.match(body.detail, /this server requires canon/);
+    // Sanitized detail: quotes escaped, truncated at 100 chars. The new error
+    // message is ≤99 chars so it arrives intact — assert on key phrases.
+    assert.match(body.detail, /Strict mode requires canon/);
+    assert.match(body.detail, /v2-default/);
     // A strict 401 is NOT an accepted-v1 ingest → no RFC 8594 headers.
     assert.equal(res.headers.get("deprecation"), null);
     assert.equal(res.headers.get("sunset"), null);
@@ -685,6 +685,12 @@ describe("strict mode — REQUIRE_CANON_V2 (issue #65, Phase C)", () => {
   test("REQUIRE_CANON_V2=true: an unmarked deep signature is rejected (401)", async () => {
     process.env.REQUIRE_CANON_V2 = "true";
     const res = await ingest(signedEvent(canonicalizeV2, undefined), strictKey);
+    assert.equal(res.status, 401);
+  });
+
+  test("REQUIRE_CANON_V2=1: v1-signed event is rejected (401) — '1' alias works", async () => {
+    process.env.REQUIRE_CANON_V2 = "1";
+    const res = await ingest(signedEvent(canonicalize, "v1"), strictKey);
     assert.equal(res.status, 401);
   });
 });

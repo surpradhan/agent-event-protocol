@@ -339,9 +339,10 @@ deliberately out of scope). Flipping the *global default* to strict (so the
 server rejects v1 out of the box) is a separate, later, breaking phase of
 issue #65.
 
-This is **signaling only — v1 events are still accepted**. Hard rejection of v1
-(the server requiring `canon: "v2"`) is a later, breaking phase of issue #65 and
-needs a deprecation window first.
+By default (when `REQUIRE_CANON_V2` is not set) this is **signaling only — v1
+events are still accepted**. Hard rejection of v1 as the *global default*
+(Phase D, breaking) is a later phase of issue #65. Opt-in strict enforcement
+is available today via `REQUIRE_CANON_V2` (Phase C, described above).
 
 ---
 

@@ -144,12 +144,14 @@ function verifySignature(event, secret, { requireCanonV2 = false } = {}) {
   // here, BEFORE trying any shallow form — including an unmarked signature that
   // would otherwise verify deep (the transition affordance is off under strict).
   if (requireCanonV2 && canon !== "v2") {
-    return {
-      valid: false,
-      error:
-        'Signature uses the deprecated v1 canonicalization; this server requires ' +
-        'canon:"v2". Upgrade to a v2-default AEP SDK or sign with { canon: "v2" }.'
-    };
+    // Two-branch message: v1/absent emitters get the migration hint; truly
+    // unknown canon values get an accurate "unsupported" message rather than
+    // a misleading "v1 canonicalization" claim. Both fit in 99 chars so
+    // sanitizeInput (100-char limit) never truncates the actionable text.
+    const error = (canon === "v1" || canon === undefined)
+      ? 'Strict mode requires canon:"v2" deep signature. Upgrade to a v2-default SDK or set canon:"v2".'
+      : `Unsupported canon '${String(canon).slice(0, 20)}' — strict mode only accepts canon:"v2".`;
+    return { valid: false, error };
   }
 
   if (canon !== undefined && !SUPPORTED_CANON.has(canon)) {

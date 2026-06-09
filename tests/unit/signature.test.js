@@ -267,22 +267,27 @@ describe("verifySignature strict mode (REQUIRE_CANON_V2, issue #65 Phase C)", ()
     assert.deepEqual(verifySignature(ev, SECRET, STRICT), { valid: true, canon: "v2" });
   });
 
-  test("v1-marked signature → rejected with an actionable error (no canon)", () => {
+  test("v1-marked signature → rejected with the v1 migration hint", () => {
     const ev = makeSigned({ canon: "v1", form: canonicalize });
     const res = verifySignature(ev, SECRET, STRICT);
     assert.equal(res.valid, false);
     assert.equal(res.canon, undefined);
-    assert.match(res.error, /requires canon:"v2"/);
+    // Message must fit in 99 chars (sanitizeInput truncates at 100) and mention
+    // the upgrade path — not an "unsupported" claim.
+    assert.ok(res.error.length <= 99, `error too long (${res.error.length}): ${res.error}`);
+    assert.match(res.error, /Strict mode requires canon:"v2"/);
+    assert.match(res.error, /v2-default/);
   });
 
-  test("UNMARKED but deep-valid signature → rejected (explicit marker required)", () => {
+  test("UNMARKED but deep-valid signature → rejected with the v1 migration hint", () => {
     const ev = makeSigned({ canon: null, form: canonicalizeV2 });
     // Sanity: transition mode (flag off) accepts this exact event as effective v2…
     assert.deepEqual(verifySignature(ev, SECRET), { valid: true, canon: "v2" });
     // …but strict mode rejects it because there is no explicit canon:"v2" marker.
     const res = verifySignature(ev, SECRET, STRICT);
     assert.equal(res.valid, false);
-    assert.match(res.error, /requires canon:"v2"/);
+    assert.ok(res.error.length <= 99, `error too long (${res.error.length}): ${res.error}`);
+    assert.match(res.error, /Strict mode requires canon:"v2"/);
   });
 
   test("v2-marked but payload-tampered signature → rejected", () => {
@@ -293,9 +298,14 @@ describe("verifySignature strict mode (REQUIRE_CANON_V2, issue #65 Phase C)", ()
     assert.equal(verifySignature(ev, SECRET, STRICT).valid, false);
   });
 
-  test("an unknown canon value → rejected under strict (still 401-worthy)", () => {
+  test("an unknown canon value → rejected with an accurate 'unsupported' error (NOT a v1 claim)", () => {
     const ev = makeSigned({ canon: "v9", form: canonicalizeV2 });
-    assert.equal(verifySignature(ev, SECRET, STRICT).valid, false);
+    const res = verifySignature(ev, SECRET, STRICT);
+    assert.equal(res.valid, false);
+    // Must NOT say "v1 canonicalization" — that would be factually wrong for v9.
+    assert.ok(!res.error.includes("v1 canonicalization"), `error wrongly claims v1: ${res.error}`);
+    assert.match(res.error, /Unsupported canon/);
+    assert.match(res.error, /strict mode only accepts/);
   });
 
   test("requireCanonV2 omitted/false → transition behaviour unchanged (regression lock)", () => {
