@@ -13,7 +13,7 @@
  * -------
  *   metricsMiddleware            — Express middleware; must be registered early
  *   getPrometheusText(dbStats)   — Returns the full Prometheus text payload
- *   recordSignatureVerification  — Count an accepted signature by effective form
+ *   recordSignatureVerification  — Count an accepted signature by canonical form
  *   recordSignatureRejection     — Count a signature verification failure
  *   getSignatureMetrics()        — Snapshot of signature counters (for JSON /metrics)
  */
@@ -45,8 +45,8 @@ const sigVerifications = new Map();
 const sigRejections = new Map();
 
 /**
- * Record an accepted HMAC signature, classified by the effective canonical
- * form and whether a `signature.canon` marker was present.
+ * Record an accepted HMAC signature, classified by canonical form and whether
+ * a `signature.canon` marker was present.
  *
  * @param {{ form: "v2", marked: boolean }} info
  */
