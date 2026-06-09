@@ -246,9 +246,8 @@ go test ./aep -cover -v
 
 ## Documentation
 
-- [AEP PRD](../../AEP_PRD.md)
-- [API Specification](../../README.md)
-- [Schema Reference](../../schemas/)
+- [Overview & API reference](https://github.com/surpradhan/agent-event-protocol#readme)
+- [Schema reference](https://github.com/surpradhan/agent-event-protocol/tree/main/schemas)
 
 ## Releasing (publishing)
 

@@ -1,6 +1,6 @@
 # AEP Python SDK
 
-Python client library for the [Agent Event Protocol](../../README.md) — an observability framework for agent workflows.
+Python client library for the [Agent Event Protocol](https://github.com/surpradhan/agent-event-protocol#readme) — an observability framework for agent workflows.
 
 **Version:** 0.4.0 · **Python:** ≥ 3.10 · **Schema:** AEP v0.2.0
 
@@ -470,7 +470,7 @@ result = validate_event(event)
 
 ## Demo
 
-A complete multi-agent research demo is in [`demos/subagent_research.py`](demos/subagent_research.py).
+A complete multi-agent research demo is in [`demos/subagent_research.py`](https://github.com/surpradhan/agent-event-protocol/blob/main/sdks/python/demos/subagent_research.py).
 It mirrors the JS demo and exercises the session tree and workflow APIs.
 
 ```bash
@@ -502,7 +502,7 @@ AEP_INGEST_URL=http://localhost:8787 pytest tests/integration/
 ## Publishing / Releases
 
 The SDK is published to PyPI as **`agent-event-protocol`** (import name stays `aep`) by
-the [`Release Python SDK`](../../.github/workflows/release-python-sdk.yml)
+the [`Release Python SDK`](https://github.com/surpradhan/agent-event-protocol/blob/main/.github/workflows/release-python-sdk.yml)
 workflow, which is triggered **only** by pushing a `python-sdk-v*` tag — never on
 a branch push or PR. Publishing uses **PyPI Trusted Publishing (OIDC)**, so there
 is no API token to store or leak.

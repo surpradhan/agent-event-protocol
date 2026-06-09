@@ -1,8 +1,8 @@
 # `@surpradhan/aep` — AEP Node.js / TypeScript SDK
 
-The Node.js/TypeScript SDK for the [Agent Event Protocol](../../README.md) (AEP) —
+The Node.js/TypeScript SDK for the [Agent Event Protocol](https://github.com/surpradhan/agent-event-protocol#readme) (AEP) —
 a framework-neutral observability protocol for multi-agent AI systems. Mirrors the
-[Python](../python/) and [Go](../go/) SDKs: same event envelope, same canonical
+[Python](https://github.com/surpradhan/agent-event-protocol/tree/main/sdks/python) and [Go](https://github.com/surpradhan/agent-event-protocol/tree/main/sdks/go) SDKs: same event envelope, same canonical
 HMAC signing contract, same client surface.
 
 > Ships the SDK core (event factory, validation, HMAC signing, ingest/query
@@ -156,7 +156,7 @@ Tested against Node 20.x and 22.x.
 ## Publishing / Releases
 
 Releases are cut from `main` by pushing a `node-sdk-vX.Y.Z` tag — the
-[`Release Node SDK`](../../.github/workflows/release-node-sdk.yml) workflow
+[`Release Node SDK`](https://github.com/surpradhan/agent-event-protocol/blob/main/.github/workflows/release-node-sdk.yml) workflow
 then verifies the tag, builds and tests, and — only after a required-reviewer
 approval — runs `npm publish --provenance --access public` for this package.
 To cut a release:
