@@ -40,7 +40,7 @@ const latencyData = new Map();
 // labels (those would explode Prometheus series; per-tenant attribution is done
 // via a sampled structured log instead, see src/server.js).
 
-// Map: "form|marked" → count   (accepted/verified signatures; form ∈ {v1,v2}, marked ∈ {true,false})
+// Map: "form|marked" → count   (accepted/verified signatures; form ∈ {v2}, marked ∈ {true,false})
 const sigVerifications = new Map();
 
 // Map: "marked" → count        (verification failures; effective form is unknown on failure)
@@ -50,7 +50,7 @@ const sigRejections = new Map();
  * Record an accepted HMAC signature, classified by the effective canonical
  * form and whether a `signature.canon` marker was present.
  *
- * @param {{ form: "v1"|"v2", marked: boolean }} info
+ * @param {{ form: "v2", marked: boolean }} info
  */
 function recordSignatureVerification({ form, marked }) {
   const key = `${form}|${marked ? "true" : "false"}`;
@@ -200,7 +200,7 @@ function getPrometheusText(dbStats) {
   // ---- Signature canonicalization (issue #65) ------------------------------
 
   if (sigVerifications.size > 0) {
-    lines.push("# HELP aep_signature_verifications_total Accepted HMAC signatures by effective canonical form (v1=legacy envelope-only, v2=deep). marked=whether a signature.canon marker was present.");
+    lines.push("# HELP aep_signature_verifications_total Accepted HMAC signatures by canonical form (v2=deep). marked=whether a signature.canon marker was present.");
     lines.push("# TYPE aep_signature_verifications_total counter");
     for (const [key, count] of sigVerifications) {
       const [form, marked] = key.split("|");
