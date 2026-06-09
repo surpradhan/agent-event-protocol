@@ -437,13 +437,12 @@ projects / tiers / quotas (PR-C), retention / pruning (PR-D), and these ops docs
       same DB; validated with `--dry-run`; the prune job has the same `TIER_*`
       retention env as the server; success/failure is alerted on.
 - [ ] **Observability:** `/metrics/prometheus` scraped; prune job logs collected.
-- [ ] **Signature enforcement:** strict mode is the **default** as of issue #65
-      Phase D — the server rejects legacy v1 (envelope-only) signatures and
-      requires payload-covering `canon:"v2"` from all emitters. Confirm your
-      emitters sign v2 (the published SDK default). Only if you must temporarily
-      accept legacy v1 during a migration, set `REQUIRE_CANON_V2=false`. See
-      [AUTH.md](./AUTH.md) for the accept/reject matrix and the relationship to
-      `SIGNATURE_V1_SUNSET`.
+- [ ] **Signature enforcement:** the server accepts **only** payload-covering
+      `canon:"v2"` per-event signatures — legacy v1 (envelope-only) signatures are
+      rejected with `401`, and (as of issue #65 Phase E) there is **no**
+      `REQUIRE_CANON_V2` escape hatch to re-accept them. Confirm your emitters sign
+      v2 (the published SDK default). See [AUTH.md](./AUTH.md) for the
+      accept/reject matrix.
 
 ---
 

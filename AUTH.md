@@ -30,10 +30,13 @@ If `DASHBOARD_TOKEN` is not set, the dashboard and all read endpoints are **open
 | `LOG_PRETTY` | No (default: `false`) | Set to `true` for human-readable logs (requires `pino-pretty`; dev only) |
 | `RATE_LIMIT_RPM` | No (default: `300`) | Max `POST /events` requests per API key per 60-second window. `0` disables. |
 | `AUDIT_SIGNING_SECRET` | For audit export/verify | Server-side HMAC secret that signs/verifies tamper-evident audit bundles (`aep audit`). Distinct from per-API-key HMAC secrets. When unset, audit export/verify fail with a clear error. |
-| `SIGNATURE_V1_SUNSET` | No (default: unset) | ISO-8601 date (e.g. `2026-09-06`) advertised via the RFC 8594 `Sunset` header on accepted v1-signed ingest (issue #65, Phase B). As of Phase D the server **rejects v1 by default**, so this header is only emitted when an operator has re-enabled v1 via `REQUIRE_CANON_V2=false`. |
-| `REQUIRE_CANON_V2` | No (default: **on/strict**) | Strict signature mode (issue #65; default flipped to strict in Phase D). When on (the default), the server **rejects** per-event signatures that are not an explicit `canon:"v2"` deep signature (v1, unmarked, and any non-`v2` marker → `401`). Set to `false` (also `0`/`no`/`off`, case-insensitive) to restore transition mode (v1 **and** v2 accepted) while you migrate legacy emitters. **Independent of `SIGNATURE_V1_SUNSET`.** Re-read per request. The v1 code path + this escape hatch are removed in a later phase (E). |
 
 See `.env.example` for the full annotated template.
+
+> **Note (issue #65 Phase E):** the server now accepts **only** payload-covering
+> `canon:"v2"` per-event signatures. The legacy v1 form, the transition mode, the
+> `REQUIRE_CANON_V2` strict-mode flag (and its `=false` escape hatch), and the
+> `SIGNATURE_V1_SUNSET` / RFC 8594 deprecation headers have all been removed.
 
 ---
 
@@ -158,7 +161,9 @@ curl -s -X POST http://localhost:8787/admin/keys \
 
 ### Signature protocol
 
-The signature is a top-level field in the event envelope:
+The signature is a top-level field in the event envelope and MUST carry the
+`canon: "v2"` marker (the only form the server accepts — see
+[Canonicalization](#canonicalization-signaturecanon-v2)):
 
 ```json
 {
@@ -166,36 +171,49 @@ The signature is a top-level field in the event envelope:
   "id": "…",
   "signature": {
     "alg":   "hmac-sha256",
-    "value": "<base64-encoded HMAC digest>"
+    "value": "<base64-encoded HMAC digest>",
+    "canon": "v2"
   },
   "…": "…"
 }
 ```
 
-**Canonical form algorithm** (emitters must implement identically):
+**Canonical form algorithm** (the v2, payload-covering rule — emitters must
+implement identically):
 
 1. Build the event object (all fields populated, **without** the `signature` key).
-2. Collect all top-level key names and sort them **alphabetically**.
-3. `JSON.stringify(event, sortedKeys)` — this emits only the listed keys in sorted order, no extra whitespace.
+2. Recursively sort **every** object's keys **alphabetically**, at every nesting
+   level (arrays keep their order). This covers nested payloads too.
+3. `JSON.stringify` the result with no extra whitespace.
 4. Compute `HMAC-SHA256(canonical_string, secret)` over the UTF-8 bytes of the canonical string.
 5. Base64-encode the raw 32-byte digest.
-6. Add `signature: { alg: "hmac-sha256", value: "<base64>" }` to the event object.
+6. Add `signature: { alg: "hmac-sha256", value: "<base64>", canon: "v2" }` to the event object.
 
 ### Node.js emitter example
 
 ```js
 const crypto = require('crypto');
 
+// Deep, payload-covering canonical form (v2): recursively key-sort the object.
+function canonicalizeV2(value) {
+  if (Array.isArray(value)) return value.map(canonicalizeV2);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const k of Object.keys(value).sort()) out[k] = canonicalizeV2(value[k]);
+    return out;
+  }
+  return value;
+}
+
 function signEvent(event, secret) {
   const copy = Object.assign({}, event);
   delete copy.signature; // must not sign itself
-  const sortedKeys = Object.keys(copy).sort();
-  const canonical  = JSON.stringify(copy, sortedKeys);
+  const canonical  = JSON.stringify(canonicalizeV2(copy));
   const hmac       = crypto
     .createHmac('sha256', secret)
     .update(canonical, 'utf8')
     .digest('base64');
-  return Object.assign({}, event, { signature: { alg: 'hmac-sha256', value: hmac } });
+  return Object.assign({}, event, { signature: { alg: 'hmac-sha256', value: hmac, canon: 'v2' } });
 }
 
 // Usage
@@ -217,52 +235,63 @@ await fetch('http://localhost:8787/events', {
 | 401 | Signature missing (key requires signing) |
 | 401 | Signature algorithm not `hmac-sha256` |
 | 401 | Signature value is missing or wrong |
-| 401 | Unsupported `signature.canon` (must be `v1` or `v2`) |
-| 401 | Legacy v1 (or unmarked) signature rejected — strict mode is the **default** as of issue #65 Phase D. Set `REQUIRE_CANON_V2=false` to temporarily accept v1. |
+| 401 | `signature.canon` is not `"v2"` (absent, `"v1"`, or any other value) |
+| 401 | Signature value does not match the v2 (deep) HMAC — e.g. a tampered payload |
 | 400 | Event fails schema validation (separate from signature) |
 
-### Canonicalization versions (`signature.canon`) — issue #59
+### Canonicalization (`signature.canon: "v2"`)
 
-The canonical form above (steps 1–6) is **v1**: it sorts only the *top-level*
-keys and passes them as `JSON.stringify`'s array replacer, which — as a side
-effect — drops nested object contents (a `payload` serializes as `{}`). So a v1
-signature covers the **envelope but not nested payloads**.
+The server accepts **one** per-event signature form: the payload-covering **v2**
+canonical form. The signer drops `signature`, then recursively key-sorts the
+**whole** event (envelope *and* nested payloads) before HMAC, so a v2 signature
+detects payload tampering — it is the same deep rule the Phase 14 audit bundle
+uses for its `content_digest`.
 
-**v2** is a deep canonical form: drop `signature`, then recursively key-sort the
-**whole** event (envelope *and* nested payloads) before HMAC. A v2 signature
-therefore detects payload tampering — and it is the same deep rule the Phase 14
-audit bundle uses for its `content_digest`.
-
-Events MAY declare their form with an optional `signature.canon` field:
+A signed event MUST carry the explicit marker:
 
 ```json
 "signature": { "alg": "hmac-sha256", "value": "<base64>", "canon": "v2" }
 ```
 
-The server verifier is version-aware. **As of issue #65 Phase D the default is
-strict — v1 is rejected.** The table below shows both modes; the escape-hatch
-column applies only when `REQUIRE_CANON_V2=false`:
+The verifier accepts a signature **iff**:
 
-| `signature.canon` | Default (strict) | `REQUIRE_CANON_V2=false` (transition) |
-|---|---|---|
-| `"v2"` | deep form — **accepted** | deep form — accepted |
-| `"v1"` | **rejected (401)** | shallow (envelope-only) form |
-| *absent* | **rejected (401)** | accepted if it matches *either* form |
+- `signature.canon === "v2"` is present, **and**
+- the value verifies against the deep (v2) form.
 
-Transition mode (the pre-Phase-D behaviour, now opt-in via `REQUIRE_CANON_V2=false`)
-keeps legacy emitters working — including the pre-v0.3.0 Go SDK which signed the
-deep form without a marker — with no security weakening, since both forms are
-HMAC-keyed by the same secret.
+Everything else is rejected with `401`:
 
-**v2 is the default in all three SDKs** (Node, Python, Go — issue #59 default
-flip) and they are published, so newly-signed events carry `canon: "v2"` and
-payload coverage without opt-in. As of **issue #65 Phase D the server rejects v1
-by default** (the deprecation window is closed: v2-default SDKs are out and there
-were no real v1 users). v1 remains **selectable** via `canon: "v1"` in the SDK
-signers and **verifiable** in code (for reading historical events / audit
-bundles); it is simply no longer accepted on ingest unless an operator sets
-`REQUIRE_CANON_V2=false`. Removing the v1 code path entirely (and the escape
-hatch) is a later, minor phase (E) of issue #65.
+| Signature | Result |
+|---|---|
+| `canon: "v2"`, deep-valid | **accepted** (`202`) |
+| `canon: "v2"` but payload-tampered (deep HMAC fails) | **rejected** (`401`) |
+| `canon: "v1"` | **rejected** (`401`) |
+| *absent* marker — **even if it would verify deep** | **rejected** (`401`) |
+| any non-`v2` / unknown marker | **rejected** (`401`) |
+
+The `401` carries an actionable message:
+
+> `Signature must use canon:"v2" (payload-covering). Upgrade to a v2-default AEP SDK.`
+
+(For unrecognised marker values the error reads: `Unsupported canon '<value>' — only canon:"v2" is accepted.`)
+
+Why require the *explicit* marker (and reject unmarked-but-deep)? The published
+v2-default SDKs all set `canon:"v2"`, so requiring it doesn't break them — only
+legacy emitters are turned away. The marker is outside HMAC coverage, but this is
+safe: acceptance **also** requires the deep HMAC to verify, which an attacker
+cannot forge without the secret, so adding/stripping the marker can't manufacture
+a valid signature.
+
+**v2 is the default in all three SDKs** (Node, Python, Go) and they are published
+(npm `@surpradhan/aep` >= 0.4.0, PyPI `agent-event-protocol` >= 0.3.0, Go
+`sdks/go` >= v0.3.0), so newly-signed events carry `canon: "v2"` and payload
+coverage out of the box. An SDK's explicit `canon: "v1"` option still exists but
+the server rejects what it emits.
+
+> **History (issue #65):** the server previously also accepted a legacy v1
+> (envelope-only) form and an unmarked "transition" mode, gated by a
+> `REQUIRE_CANON_V2` flag and signalled via RFC 8594 `Deprecation`/`Sunset`
+> headers (`SIGNATURE_V1_SUNSET`). Those were retired in stages and **removed
+> entirely in Phase E** — only the v2 form remains.
 
 > **Cross-language note:** byte-exact v2 across the Node/Python/Go SDKs requires
 > a shared number-serialization rule (this server uses ECMAScript
@@ -272,88 +301,16 @@ hatch) is a later, minor phase (E) of issue #65.
 > character edge cases also match. All three SDKs default to the same v2 bytes,
 > locked by a shared server-derived known-answer vector. Tracked in issue #59.
 
-**Observability (issue #65).** So v1 retirement can be data-driven, the server
-classifies every signature verification by its *effective* canonical form and
-exposes it on `GET /metrics/prometheus`:
+**Observability (issue #65).** The server classifies every signature verification
+by its canonical form and exposes it on `GET /metrics/prometheus`:
 
-- `aep_signature_verifications_total{form="v1"|"v2",marked="true"|"false"}` —
-  accepted signatures by effective form (`marked` = a `signature.canon` field was
-  present). The same counts appear under `signatures` in the JSON `GET /metrics`.
+- `aep_signature_verifications_total{form="v2",marked="true"|"false"}` — accepted
+  signatures (`marked` = a `signature.canon` field was present; accepted events
+  are always `form="v2"`). The same counts appear under `signatures` in the JSON
+  `GET /metrics`.
 - `aep_signature_verifications_rejected_total{marked="true"|"false"}` — failures.
 
-These labels are deliberately low cardinality (no tenant/source/key). For
-per-tenant attribution, the first legacy-v1 ingest per tenant is logged at `info`
-(with `tenant_id` + `source`); the rest at `debug`. This is observability only —
-it does **not** change what the server accepts.
-
-**Deprecation signaling (issue #65, Phase B).** v1 (envelope-only, no payload
-coverage) is **deprecated** in favour of v2 (payload-covering, the SDK default).
-When the server accepts an *effective-v1* signature on ingest, the success
-response (`202`, or `200` for a duplicate) now carries [RFC 8594](https://www.rfc-editor.org/rfc/rfc8594)
-deprecation headers so emitters can detect that they should migrate:
-
-| Header | Value | When |
-|---|---|---|
-| `Deprecation` | `true` | Always, on accepted v1 ingest |
-| `Link` | `<…/issues/65>; rel="deprecation"` | Always, on accepted v1 ingest |
-| `Sunset` | RFC 7231 IMF-fixdate (e.g. `Sun, 06 Sep 2026 00:00:00 GMT`) | Only when `SIGNATURE_V1_SUNSET` is configured |
-
-Set `SIGNATURE_V1_SUNSET` (an ISO-8601 date, e.g. `2026-09-06`) to advertise the
-date after which v1 will be rejected. When unset, only `Deprecation`/`Link` are
-emitted (no committed date yet); a set-but-unparseable value is ignored with a
-startup warning. v2-signed, unsigned, and rejected requests get **no** deprecation
-headers.
-
-**Strict mode is the default (issue #65, Phase D — breaking).** The server
-enforces payload-covering (v2) signatures **out of the box**. `REQUIRE_CANON_V2`
-defaults to **on**; set it to `false` (also `0`/`no`/`off`, case-insensitive) to
-restore the legacy transition mode (introduced opt-in in Phase C). When strict
-(the default), the verifier accepts a signature **iff**:
-
-- `signature.canon === "v2"` is present, **and**
-- the signature verifies against the deep (v2) form.
-
-Everything else is rejected with `401`:
-
-| Signature | Strict mode (default) |
-|---|---|
-| `canon: "v2"`, deep-valid | **accepted** (`202`) |
-| `canon: "v1"` | **rejected** (`401`) |
-| *absent* marker — **even if it would verify deep** (e.g. a pre-v0.3.0 Go emitter) | **rejected** (`401`) |
-| any non-`v2` / unknown marker | **rejected** (`401`) |
-| `canon: "v2"` but payload-tampered (deep HMAC fails) | **rejected** (`401`) |
-
-The `401` carries an actionable message:
-
-> `Strict mode requires canon:"v2". Upgrade to a v2-default AEP SDK or set canon:"v2".`
-
-(The hint is SDK-agnostic on purpose — the v2-default release differs per SDK:
-**npm `@surpradhan/aep` >= 0.4.0**, **PyPI `agent-event-protocol` >= 0.3.0**,
-**Go `sdks/go` >= v0.3.0**. Note npm `0.3.0` still defaults to v1.)
-
-(For unrecognised marker values the error reads: `Unsupported canon '<value>' — strict mode only accepts canon:"v2".`)
-
-A strict rejection is a **hard `401`**, so (unlike an *accepted* v1 ingest under
-Phase B) it carries **no** `Deprecation`/`Sunset` headers. Rejections still
-increment `aep_signature_verifications_rejected_total`.
-
-Why require the *explicit* marker (and reject unmarked-but-deep)? The current
-v2-default SDKs all set `canon:"v2"`, so requiring it doesn't break them — only
-true legacy/v1 emitters are turned away. The marker is outside HMAC coverage, but
-this is safe: strict mode **also** requires the deep HMAC to verify, which an
-attacker cannot forge without the secret, so adding/stripping the marker can't
-manufacture a valid signature.
-
-`REQUIRE_CANON_V2` is **independent of `SIGNATURE_V1_SUNSET`** — the flag, not
-the sunset date, governs enforcement. With strict mode now the **default**, the
-advertised sunset is effectively reached: v1 is rejected unless an operator opts
-back into transition mode.
-
-**Reverting:** a deployment that still needs to accept legacy v1 during its own
-migration sets `REQUIRE_CANON_V2=false` (also `0`/`no`/`off`). That restores the
-exact pre-Phase-D transition behaviour — v1 **and** v2 accepted, with the Phase B
-`Deprecation`/`Sunset` headers on accepted v1 ingest. The escape hatch (and the
-v1 code path) remain until Phase E removes them.
+These labels are deliberately low cardinality (no tenant/source/key).
 
 ---
 

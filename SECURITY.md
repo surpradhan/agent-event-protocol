@@ -40,14 +40,14 @@ AEP provides the following security properties:
 ### ✅ Data Integrity
 - **HMAC-SHA256 Signing**: Optional event signature verification
 - **Timing-Safe Comparison**: Prevents timing attacks on signatures
-- **Payload-covering signatures (v2) enforced by default**: The legacy **v1**
-  canonical form is envelope-only and does **not** cover nested payloads. As of
-  issue #65 **Phase D (breaking)** the server **rejects v1 by default** and
-  requires **v2** (deep, payload-covering — the published SDK default): legacy
-  v1, unmarked, and any non-`v2` signature get a `401`. A deployment still
-  migrating legacy emitters can temporarily re-accept v1 by setting
-  `REQUIRE_CANON_V2=false` (which restores transition mode plus the RFC 8594
-  `Deprecation`/`Sunset` headers on accepted v1 ingest). See [issue #65](https://github.com/surpradhan/agent-event-protocol/issues/65) and [AUTH.md](AUTH.md).
+- **Payload-covering signatures (v2) are the only accepted form**: A per-event
+  signature is accepted **iff** it carries `signature.canon: "v2"` and verifies
+  against the deep, payload-covering canonical form (the published SDK default).
+  Any other case — a legacy envelope-only **v1** signature, an unmarked
+  signature, any non-`v2` marker, or a tampered payload — gets a `401`. As of
+  issue #65 **Phase E (breaking)** the legacy v1 code path, the transition mode,
+  and the `REQUIRE_CANON_V2` escape hatch were **removed** — there is no way to
+  re-accept v1. See [issue #65](https://github.com/surpradhan/agent-event-protocol/issues/65) and [AUTH.md](AUTH.md).
 - **Deduplication**: Duplicate events detected by UUID + timestamp
 - **Tamper-evident audit bundles** (Phase 14): `aep audit export` packages a
   session's events into a JSON bundle with a SHA-256 `content_digest` over the

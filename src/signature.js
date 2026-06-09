@@ -11,79 +11,48 @@
  *   {
  *     "signature": {
  *       "alg":   "hmac-sha256",
- *       "value": "<base64-encoded HMAC digest>"
+ *       "value": "<base64-encoded HMAC digest>",
+ *       "canon": "v2"
  *     },
  *     ...rest of envelope...
  *   }
  *
- * The digest is computed over the *canonical form* of the event: the envelope
- * JSON with the `signature` field removed and all top-level keys sorted
- * alphabetically before serialisation.  This makes the digest independent of
- * key insertion order across different emitter libraries.
+ * The digest is computed over the **v2 canonical form** of the event: the whole
+ * envelope (including nested payloads) with the `signature` field removed and
+ * every object key — at every nesting level — sorted alphabetically before
+ * serialisation. This makes the digest independent of key insertion order across
+ * emitter libraries AND covers the payload, so any post-hoc tampering with a
+ * signed event is detectable.
  *
- * Canonical form algorithm (emitters must implement the same):
+ * Canonical form algorithm (emitters must implement the same — `canonicalizeV2`
+ * in src/_canonical.js is the reference):
  *   1. Build the event object.
  *   2. Remove the `signature` key (it cannot sign itself).
- *   3. Collect all top-level key names and sort them alphabetically.
- *   4. JSON.stringify(event, sortedKeys) — this emits only the listed keys in
- *      the given order, with no extra whitespace.
+ *   3. Recursively sort every object's keys alphabetically (arrays keep order).
+ *   4. JSON.stringify with no extra whitespace.
  *   5. Compute HMAC-SHA256(canonical_string, secret).
  *   6. Base64-encode the raw digest bytes.
- *   7. Set signature.value to the result and signature.alg to "hmac-sha256".
- *
- * Example (Node.js emitter):
- *   const crypto = require('crypto');
- *   const event  = { specversion: '0.2.0', id: '…', … }; // no signature yet
- *   const keys   = Object.keys(event).filter(k => k !== 'signature').sort();
- *   const canon  = JSON.stringify(event, keys);
- *   const hmac   = crypto.createHmac('sha256', secret).update(canon, 'utf8').digest('base64');
- *   event.signature = { alg: 'hmac-sha256', value: hmac };
+ *   7. Set signature.value to the result, signature.alg to "hmac-sha256", and
+ *      signature.canon to "v2".
  *
  * Server behaviour
  * ----------------
  * • If the API key has no hmac_secret configured:
  *     → Signatures are IGNORED (accepted with or without).
  * • If the API key has an hmac_secret:
- *     → The event MUST include a valid signature field.
- *     → Missing or invalid signatures are rejected with HTTP 401.
+ *     → The event MUST include a valid signature field carrying `canon:"v2"`.
+ *     → Missing, non-"v2", or invalid signatures are rejected with HTTP 401.
  *
- * NOTE: the algorithm above describes the **v1** (envelope-only) canonical form.
- * A deeper **v2** form that also covers nested payloads is now supported and
- * selected via the optional `signature.canon` marker — see the
- * "Canonicalization versions (issue #59)" block below and AUTH.md.
+ * History (issue #65): the server previously also accepted a legacy **v1**
+ * (envelope-only) canonical form and an unmarked "transition" mode that tried
+ * both. Those were retired in stages and removed entirely in Phase E — only the
+ * payload-covering v2 form is accepted now. The published SDKs have defaulted to
+ * v2 since `@surpradhan/aep@0.4.0` / PyPI `agent-event-protocol 0.3.0` / Go
+ * `sdks/go/v0.3.0`.
  */
 
 const crypto = require("crypto");
-const { canonicalize, canonicalizeV2 } = require("./_canonical");
-
-// ---------------------------------------------------------------------------
-// Canonicalization versions (issue #59)
-// ---------------------------------------------------------------------------
-//
-// • v1 (legacy)  — `canonicalize`: envelope-only (array-replacer drops nested
-//                  payloads). What today's server/Python/Node-SDK emitters use.
-// • v2 (deep)    — `canonicalizeV2`: recursive key-sort over the WHOLE event,
-//                  so the signature covers nested payloads too.
-//
-// Events MAY carry `signature.canon` to declare their form ("v1" | "v2"). The
-// verifier below is version-aware AND backward-compatible:
-//   - canon "v2" → verified against the deep form only
-//   - canon "v1" → verified against the shallow form only
-//   - canon absent → TRANSITION mode: accepted if it matches EITHER form. This
-//     keeps every existing emitter working unchanged — legacy shallow emitters
-//     (no marker) AND the current Go SDK, which already signs the deep form
-//     without a marker (the latent interop bug from #59 now verifies). Both
-//     forms are HMAC-keyed by the same secret, so accepting either is not a
-//     security weakening; it only widens which canonical encoding is accepted.
-//
-// Migration: once emitters set `canon:"v2"`, the server can require it (reject
-// v1/absent) to guarantee payload coverage. Tracked in issue #59.
-//
-// `canonicalize`/`canonicalizeV2` live in ./_canonical so the audit bundle path
-// (src/audit.js) hashes events with the EXACT same v2 rule. Both are re-exported
-// below for convenience.
-
-const SUPPORTED_CANON = new Set(["v1", "v2"]);
+const { canonicalizeV2 } = require("./_canonical");
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -92,33 +61,28 @@ const SUPPORTED_CANON = new Set(["v1", "v2"]);
 /**
  * Verify the HMAC-SHA256 signature on an event envelope.
  *
- * On success the result also carries `canon` — the canonical form that
- * ACTUALLY verified ("v1" | "v2"). This is the *effective* form, which may
- * differ from any `signature.canon` marker in transition mode (an unmarked
- * signature is classified by whichever form matched). Callers that only read
- * `.valid`/`.error` are unaffected; observability (issue #65) uses `canon` to
- * see who is still relying on the legacy v1 form.
+ * A signature is accepted IFF it carries an explicit `signature.canon === "v2"`
+ * marker AND its value verifies against the deep, payload-covering v2 canonical
+ * form (`canonicalizeV2`). Every other case is rejected:
+ *   - missing/non-object `signature`         → invalid
+ *   - `alg` other than "hmac-sha256"          → invalid
+ *   - missing/non-string `signature.value`    → invalid
+ *   - `canon` absent, "v1", or any non-"v2"   → invalid (with a migration hint)
+ *   - deep HMAC mismatch (incl. payload edit) → invalid
  *
- * Strict mode (issue #65, Phase C) — opt-in via `requireCanonV2`. When enabled,
- * a signature is accepted IFF `signature.canon === "v2"` AND it verifies against
- * the deep (v2) form. A "v1" marker, an ABSENT marker, or any non-"v2" value is
- * rejected up front — INCLUDING an unmarked signature that would otherwise
- * verify deep (the transition affordance is disabled under strict; an explicit
- * marker is required). Default `false` → unchanged transition behaviour, so the
- * only caller that opts in is the server (via the REQUIRE_CANON_V2 env); every
- * other caller is untouched.
+ * On success the result carries `canon: "v2"` (the effective form). Callers read
+ * `.valid` / `.canon` / `.error`.
  *
  * Security note: the `canon` marker is outside HMAC coverage (a routing hint),
- * but requiring it is NOT a downgrade hole — strict mode STILL requires the deep
+ * but requiring it is NOT a downgrade hole — acceptance STILL requires the deep
  * HMAC to verify, which an attacker cannot forge without the secret. Adding or
  * stripping a marker can't manufacture a valid deep signature.
  *
  * @param {object} event   Full event envelope including the `signature` field.
  * @param {string} secret  The HMAC secret associated with the API key.
- * @param {{ requireCanonV2?: boolean }} [opts]  Strict-mode policy (issue #65 C).
- * @returns {{ valid: boolean, canon?: "v1"|"v2", error?: string }}
+ * @returns {{ valid: boolean, canon?: "v2", error?: string }}
  */
-function verifySignature(event, secret, { requireCanonV2 = false } = {}) {
+function verifySignature(event, secret) {
   const sig = event.signature;
 
   if (!sig || typeof sig !== "object") {
@@ -138,112 +102,34 @@ function verifySignature(event, secret, { requireCanonV2 = false } = {}) {
 
   const canon = sig.canon;
 
-  // Issue #65, Phase C — opt-in strict mode. The server requires payload-
-  // covering v2 signatures: accept ONLY an explicit canon:"v2" marker (verified
-  // against the deep form below). Reject "v1", absent, or any non-"v2" value
-  // here, BEFORE trying any shallow form — including an unmarked signature that
-  // would otherwise verify deep (the transition affordance is off under strict).
-  if (requireCanonV2 && canon !== "v2") {
-    // Two-branch message: v1/absent emitters get the migration hint; truly
-    // unknown canon values get an accurate "unsupported" message rather than
-    // a misleading "v1 canonicalization" claim. Both fit in 99 chars so
-    // sanitizeInput (100-char limit) never truncates the actionable text.
-    // The hint is SDK-agnostic on purpose: the v2-default release differs per
-    // SDK (npm >= 0.4.0, PyPI/Go >= 0.3.0), so naming a single version would
-    // mislead — e.g. a Node emitter on npm 0.3.0 (still v1-default).
+  // The server requires payload-covering v2 signatures: accept ONLY an explicit
+  // canon:"v2" marker (verified against the deep form below). Reject "v1",
+  // absent, or any non-"v2" value here — INCLUDING an unmarked signature that
+  // would once have verified deep (the legacy v1/transition path is gone, #65 E).
+  //
+  // Two-branch message: v1/absent emitters get the migration hint; truly unknown
+  // canon values get an accurate "unsupported" message rather than a misleading
+  // "v1" claim. Both fit in 99 chars so sanitizeInput (100-char limit) never
+  // truncates the actionable text (there is a unit assertion on this). The hint
+  // is SDK-agnostic on purpose: the v2-default release differs per SDK (npm >=
+  // 0.4.0, PyPI/Go >= 0.3.0), so naming a single version would mislead.
+  if (canon !== "v2") {
     const error = (canon === "v1" || canon === undefined)
-      ? 'Strict mode requires canon:"v2". Upgrade to a v2-default AEP SDK or set canon:"v2".'
-      : `Unsupported canon '${String(canon).slice(0, 20)}' — strict mode only accepts canon:"v2".`;
+      ? 'Signature must use canon:"v2" (payload-covering). Upgrade to a v2-default AEP SDK.'
+      : `Unsupported canon '${String(canon).slice(0, 20)}' — only canon:"v2" is accepted.`;
     return { valid: false, error };
   }
 
-  if (canon !== undefined && !SUPPORTED_CANON.has(canon)) {
-    return {
-      valid: false,
-      error: `Unsupported signature canonicalization '${canon}' — expected 'v1' or 'v2'`
-    };
-  }
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(canonicalizeV2(event), "utf8")
+    .digest("base64");
 
-  // Choose which canonical form(s) to check based on the declared version.
-  // Absent marker → try both (transition mode; see the header note).
-  //
-  // Timing note: in transition mode an unmarked event may run a second HMAC +
-  // constant-time compare when the first form doesn't match. Each compare is
-  // itself constant-time; the only thing the extra round can reveal is "the v1
-  // form didn't match" — never key material or the secret — so it is not a
-  // signature-forgery oracle. A marked sig ("v1"/"v2") only ever does one round.
-  let candidateForms;
-  if (canon === "v2") {
-    candidateForms = [{ version: "v2", form: canonicalizeV2(event) }];
-  } else if (canon === "v1") {
-    candidateForms = [{ version: "v1", form: canonicalize(event) }];
-  } else {
-    candidateForms = [
-      { version: "v1", form: canonicalize(event) },
-      { version: "v2", form: canonicalizeV2(event) }
-    ];
-  }
-
-  for (const { version, form } of candidateForms) {
-    const expected = crypto
-      .createHmac("sha256", secret)
-      .update(form, "utf8")
-      .digest("base64");
-    if (timingSafeEqualB64(sig.value, expected)) {
-      // `canon` reports the EFFECTIVE form (what matched), not the marker. A
-      // signature that only verifies under the shallow form is "v1" regardless
-      // of marker — that is the population a strict-v2 server would reject.
-      return { valid: true, canon: version };
-    }
+  if (timingSafeEqualB64(sig.value, expected)) {
+    return { valid: true, canon: "v2" };
   }
 
   return { valid: false, error: "Signature mismatch" };
-}
-
-// ---------------------------------------------------------------------------
-// v1 deprecation signaling (issue #65, Phase B)
-// ---------------------------------------------------------------------------
-//
-// The legacy v1 (envelope-only) canonical form is deprecated in favour of v2
-// (payload-covering); v2 is now the default in all published SDKs. Phase B is
-// SIGNALING ONLY and non-breaking — v1 signatures are still accepted on ingest.
-// When an effective-v1 signature is accepted, the server attaches RFC 8594
-// deprecation headers to the success response so emitters know to migrate. Hard
-// rejection of v1 is a later phase of #65.
-
-// Points at the deprecation rationale (RFC 8594 `Link; rel="deprecation"`).
-const V1_DEPRECATION_LINK =
-  "https://github.com/surpradhan/agent-event-protocol/issues/65";
-
-/**
- * Build the RFC 8594 deprecation response headers for an accepted effective-v1
- * (legacy envelope-only) signature. Pure and HTTP-free so it can be unit-tested
- * without spinning a server.
- *
- *   • `Deprecation: true` — always present (deprecation is a present fact). RFC
- *     8594 also permits an HTTP-date value; the boolean-ish "true" is the widely
- *     deployed convention, kept here for simplicity.
- *   • `Link: <…#65>; rel="deprecation"` — points at the deprecation rationale.
- *   • `Sunset: <IMF-fixdate>` — emitted ONLY when a parseable sunset date is
- *     given (the future date after which v1 will be rejected, Phase D). Formatted
- *     as an RFC 7231 IMF-fixdate via Date#toUTCString(). Omitted when the date is
- *     absent or unparseable (no committed date yet → no malformed header).
- *
- * @param {{ sunsetIso?: string|null }} [opts]
- * @returns {Object<string,string>} header name → value
- */
-function buildDeprecationHeaders({ sunsetIso } = {}) {
-  const headers = {
-    Deprecation: "true",
-    Link: `<${V1_DEPRECATION_LINK}>; rel="deprecation"`
-  };
-  if (sunsetIso) {
-    const d = new Date(sunsetIso);
-    if (!Number.isNaN(d.getTime())) {
-      headers.Sunset = d.toUTCString(); // RFC 7231 IMF-fixdate
-    }
-  }
-  return headers;
 }
 
 /**
@@ -271,9 +157,5 @@ function timingSafeEqualB64(providedB64, expectedB64) {
 
 module.exports = {
   verifySignature,
-  canonicalize,
-  canonicalizeV2,
-  SUPPORTED_CANON,
-  buildDeprecationHeaders,
-  V1_DEPRECATION_LINK
+  canonicalizeV2
 };
