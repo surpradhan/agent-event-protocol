@@ -302,7 +302,7 @@ the server rejects what it emits.
 > nested objects/arrays) agree across runtimes; the Go SDK additionally implements
 > ECMAScript `Number`-to-string and string-escaping rules so float and special-
 > character edge cases also match. All three SDKs default to the same v2 bytes,
-> locked by a shared server-derived known-answer vector. Tracked in issue #59.
+> locked by a shared server-derived known-answer vector. Delivered in issue #59.
 
 **Observability (issue #65).** The server classifies every signature verification
 by its canonical form and exposes it on `GET /metrics/prometheus`:

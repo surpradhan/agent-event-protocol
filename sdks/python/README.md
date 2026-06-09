@@ -430,12 +430,14 @@ sign_event(event, secret="my-hmac-secret", canon="v1")  # legacy envelope-only
 `verify_signature` is version-aware (honours `canon`; an absent marker accepts
 either form).
 
-> **Compatibility:** a v2-default emitter requires a v2-aware server (server
-> PR #60+). An older server predating `signature.canon` support would reject v2;
-> the server still accepts v1 during the transition, so `canon="v1"` remains
-> available for legacy servers. Hard-retiring v1 (server requiring v2) is a
-> separate future change tracked in
-> [issue #59](https://github.com/surpradhan/agent-event-protocol/issues/59).
+> **Compatibility:** the v2 default requires a v2-aware server (one that includes
+> server PR #60+). The current AEP server **requires v2 and rejects legacy v1**
+> with `401` — the v1 retirement is complete
+> ([issue #65](https://github.com/surpradhan/agent-event-protocol/issues/65),
+> the successor to the [#59](https://github.com/surpradhan/agent-event-protocol/issues/59)
+> unification). `canon="v1"` is retained only for talking to an **older
+> self-hosted server** that predates `signature.canon` support; a current server
+> rejects it.
 
 ---
 

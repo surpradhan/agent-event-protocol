@@ -150,10 +150,11 @@ and Python SDKs (locked by a cross-language known-answer test).
 
 > **Default flip (issue #59):** `SignEvent` now defaults to **v2** (was v1), so new
 > signatures cover nested payloads by default. Use `SignEventV1` for the legacy
-> envelope-only form. A v2-default emitter requires a v2-aware server (server
-> PR #60+); the server still accepts v1 during the transition, so `SignEventV1`
-> remains available for legacy servers. Hard-retiring v1 (server requiring v2) is a
-> separate future change tracked in issue #59.
+> envelope-only form. The v2 default requires a v2-aware server (one that includes
+> server PR #60+). The current AEP server **requires v2 and rejects legacy v1**
+> with `401` — the v1 retirement is complete (issue #65, the successor to the #59
+> unification). `SignEventV1` is retained only for talking to an older self-hosted
+> server that predates `signature.canon` support; a current server rejects it.
 
 > **Behaviour change (issue #59):** earlier Go SDK releases signed a *deep*
 > canonical form and **hex**-encoded the value — a combination that matched
