@@ -7,7 +7,7 @@ const { version: SERVER_VERSION } = require("../package.json");
 
 const { validateEvent, sanitizeInput }        = require("./validator");
 const db                       = require("./db");
-const { verifySignature }      = require("./signature");
+const { verifySignature, buildDeprecationHeaders } = require("./signature");
 const {
   requireApiKey,
   requireReadAccess,
@@ -551,6 +551,26 @@ app.get("/stream", requireReadAccess, (req, res) => {
 const v1SeenTenants = new Set();
 const V1_SEEN_TENANTS_MAX = 10000;
 
+// Issue #65, Phase B — legacy-v1 signature deprecation signaling. When an
+// effective-v1 signature is accepted on ingest the server returns RFC 8594
+// `Deprecation`/`Sunset` headers. SIGNATURE_V1_SUNSET (ISO-8601 date) is the
+// future date after which v1 will be rejected (Phase D); when set it drives the
+// `Sunset` header. Unset → only `Deprecation` is emitted (no committed date
+// yet). Validated once at startup: a set-but-unparseable value logs a warning
+// and is treated as unset, so we never emit a malformed header (and never crash).
+const SIGNATURE_V1_SUNSET = (() => {
+  const raw = process.env.SIGNATURE_V1_SUNSET;
+  if (!raw) return null;
+  if (Number.isNaN(new Date(raw).getTime())) {
+    logger.warn(
+      { value: raw },
+      "SIGNATURE_V1_SUNSET is set but not a valid ISO-8601 date — ignoring (no Sunset header will be emitted)"
+    );
+    return null;
+  }
+  return raw;
+})();
+
 // POST /events — ingest a single event
 // Rate limiting is applied per-key AFTER authentication resolves req.api_key_id.
 app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async (req, res) => {
@@ -562,6 +582,10 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
   // Signature verification
   // ------------------------------------------------------------------
   const hmacSecret = req.api_key_record && req.api_key_record.hmac_secret;
+  // Set when an effective-v1 (legacy envelope-only) signature is accepted, so we
+  // can attach RFC 8594 deprecation headers to the success response (issue #65,
+  // Phase B). Only the success paths (202 / 200-duplicate) below read this.
+  let v1Accepted = false;
   if (hmacSecret) {
     // `marked` = the emitter declared a canonicalization version via
     // signature.canon. Effective form classification (issue #65) is independent
@@ -600,6 +624,7 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
     // rest → debug, so dashboards/log search can surface the at-risk population
     // without flooding the log stream.
     if (canon === "v1") {
+      v1Accepted = true;
       const tenantId = req.tenant_id;
       const firstForTenant = !v1SeenTenants.has(tenantId) && v1SeenTenants.size < V1_SEEN_TENANTS_MAX;
       if (firstForTenant) v1SeenTenants.add(tenantId);
@@ -630,6 +655,15 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
       "event rejected: schema validation failed"
     );
     return res.status(400).json({ accepted: false, errors });
+  }
+
+  // Issue #65, Phase B: signal deprecation of the legacy v1 signature form on
+  // accepted ingest. Set here — past every rejection branch (401 sig / 400
+  // schema) and ahead of both success responses (200 duplicate, 202 accepted) —
+  // so the headers ride only on acceptances. Non-breaking: the event is still
+  // accepted; the headers just nudge the emitter toward v2.
+  if (v1Accepted) {
+    res.set(buildDeprecationHeaders({ sunsetIso: SIGNATURE_V1_SUNSET }));
   }
 
   // ------------------------------------------------------------------
