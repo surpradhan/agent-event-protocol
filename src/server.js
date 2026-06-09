@@ -586,7 +586,11 @@ const SIGNATURE_V1_SUNSET = (() => {
 // Read per-request (not cached at startup) so an operator can turn enforcement
 // on/off without restarting the server. This is an EXPLICIT operator decision,
 // INDEPENDENT of SIGNATURE_V1_SUNSET: the sunset date does not drive this flag.
+// Opt-out (transition) vs enable (strict) token sets are case-insensitive. The
+// enable set is only used to detect a typo'd value at startup; the actual
+// decision is "anything not an explicit opt-out → strict" (fail closed).
 const REQUIRE_CANON_V2_OPT_OUT = new Set(["false", "0", "no", "off"]);
+const REQUIRE_CANON_V2_ENABLE = new Set(["true", "1", "yes", "on"]);
 function requireCanonV2Enabled() {
   const raw = (process.env.REQUIRE_CANON_V2 || "").trim().toLowerCase();
   return !REQUIRE_CANON_V2_OPT_OUT.has(raw);
@@ -596,17 +600,29 @@ function requireCanonV2Enabled() {
 // SIGNATURE_V1_SUNSET (parsed once at startup via an IIFE), this flag is read
 // per-request — changes take effect without a restart, so the startup log only
 // reflects the value at boot; a runtime toggle will silently take effect.
-if (requireCanonV2Enabled()) {
-  logger.info(
-    { flag: "REQUIRE_CANON_V2" },
-    "strict signature mode active (default): per-event signatures must be canon:\"v2\"; set REQUIRE_CANON_V2=false to accept legacy v1"
-  );
-} else {
-  logger.warn(
-    { flag: "REQUIRE_CANON_V2" },
-    "legacy v1 signatures accepted (REQUIRE_CANON_V2=false): transition mode is deprecated — migrate emitters to canon:\"v2\" (issue #65)"
-  );
-}
+(() => {
+  const raw = (process.env.REQUIRE_CANON_V2 || "").trim().toLowerCase();
+  // Typo guard: a value that is set but is neither a known opt-out nor a known
+  // enable token (e.g. "disabled", "none", "2") is treated as strict (fail
+  // closed) — warn so an operator who meant to accept v1 notices the typo.
+  if (raw !== "" && !REQUIRE_CANON_V2_OPT_OUT.has(raw) && !REQUIRE_CANON_V2_ENABLE.has(raw)) {
+    logger.warn(
+      { flag: "REQUIRE_CANON_V2", value: raw.slice(0, 20) },
+      "unrecognized REQUIRE_CANON_V2 value — treating as strict (v1 rejected); use false/0/no/off to accept legacy v1"
+    );
+  }
+  if (requireCanonV2Enabled()) {
+    logger.info(
+      { flag: "REQUIRE_CANON_V2" },
+      "strict signature mode active (Phase D default): legacy v1 per-event signatures are REJECTED; emitters must send canon:\"v2\" — set REQUIRE_CANON_V2=false to temporarily accept v1"
+    );
+  } else {
+    logger.warn(
+      { flag: "REQUIRE_CANON_V2" },
+      "legacy v1 signatures accepted (REQUIRE_CANON_V2=false): transition mode is deprecated — migrate emitters to canon:\"v2\" (issue #65)"
+    );
+  }
+})();
 
 // POST /events — ingest a single event
 // Rate limiting is applied per-key AFTER authentication resolves req.api_key_id.

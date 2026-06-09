@@ -148,8 +148,11 @@ function verifySignature(event, secret, { requireCanonV2 = false } = {}) {
     // unknown canon values get an accurate "unsupported" message rather than
     // a misleading "v1 canonicalization" claim. Both fit in 99 chars so
     // sanitizeInput (100-char limit) never truncates the actionable text.
+    // The hint is SDK-agnostic on purpose: the v2-default release differs per
+    // SDK (npm >= 0.4.0, PyPI/Go >= 0.3.0), so naming a single version would
+    // mislead — e.g. a Node emitter on npm 0.3.0 (still v1-default).
     const error = (canon === "v1" || canon === undefined)
-      ? 'Strict mode requires canon:"v2". Upgrade to AEP SDK >= v0.3.0 or set canon:"v2".'
+      ? 'Strict mode requires canon:"v2". Upgrade to a v2-default AEP SDK or set canon:"v2".'
       : `Unsupported canon '${String(canon).slice(0, 20)}' — strict mode only accepts canon:"v2".`;
     return { valid: false, error };
   }

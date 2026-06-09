@@ -586,8 +586,11 @@ describe("signature canonicalization metrics", () => {
     assert.equal(counterFor(after, "v2", "true"), v2Before + 1, "v2 counter should increment by 1");
   });
 
-  test("an invalid signature is rejected and counted as a rejection", async () => {
-    const ev = signedEvent(canonicalize, "v1");
+  test("an invalid signature (tampered v2 digest) is rejected and counted as a rejection", async () => {
+    // Use a v2 marker so the request clears the default-strict gate and is
+    // rejected for the GENUINE reason (digest mismatch), not for being v1 —
+    // keeping this test faithful to its name under the Phase D default.
+    const ev = signedEvent(canonicalizeV2, "v2");
     ev.signature.value = "AAAA"; // wrong digest
     const res = await ingest(ev, signKey);
     assert.equal(res.status, 401);

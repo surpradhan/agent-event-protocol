@@ -276,7 +276,9 @@ describe("verifySignature strict mode (REQUIRE_CANON_V2, issue #65 Phase C)", ()
     // the upgrade path — not an "unsupported" claim.
     assert.ok(res.error.length <= 99, `error too long (${res.error.length}): ${res.error}`);
     assert.match(res.error, /Strict mode requires canon:"v2"/);
-    assert.match(res.error, /AEP SDK >= v0\.3\.0/);
+    // SDK-agnostic hint (no single version: npm v2-default is >= 0.4.0, PyPI/Go
+    // >= 0.3.0, so naming one would mislead Node emitters on npm 0.3.0).
+    assert.match(res.error, /Upgrade to a v2-default AEP SDK/);
   });
 
   test("UNMARKED but deep-valid signature → rejected with the v1 migration hint", () => {

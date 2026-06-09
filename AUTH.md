@@ -325,7 +325,11 @@ Everything else is rejected with `401`:
 
 The `401` carries an actionable message:
 
-> `Strict mode requires canon:"v2". Upgrade to AEP SDK >= v0.3.0 or set canon:"v2".`
+> `Strict mode requires canon:"v2". Upgrade to a v2-default AEP SDK or set canon:"v2".`
+
+(The hint is SDK-agnostic on purpose — the v2-default release differs per SDK:
+**npm `@surpradhan/aep` >= 0.4.0**, **PyPI `agent-event-protocol` >= 0.3.0**,
+**Go `sdks/go` >= v0.3.0**. Note npm `0.3.0` still defaults to v1.)
 
 (For unrecognised marker values the error reads: `Unsupported canon '<value>' — strict mode only accepts canon:"v2".`)
 
