@@ -308,6 +308,18 @@ describe("verifySignature strict mode (REQUIRE_CANON_V2, issue #65 Phase C)", ()
     assert.match(res.error, /strict mode only accepts/);
   });
 
+  test("null canon under strict → 'unsupported' branch (not the migration hint)", () => {
+    // null is not undefined, so it falls into the unsupported branch, not the
+    // v1/absent migration hint. This test pins that behaviour explicitly.
+    const ev = makeSigned({ canon: null, form: canonicalizeV2 });
+    ev.signature.canon = null; // makeSigned skips setting canon for non-strings; force it
+    const res = verifySignature(ev, SECRET, STRICT);
+    assert.equal(res.valid, false);
+    assert.match(res.error, /Unsupported canon/);
+    // Also confirm transition mode rejects null (pre-existing SUPPORTED_CANON check).
+    assert.equal(verifySignature(ev, SECRET).valid, false);
+  });
+
   test("requireCanonV2 omitted/false → transition behaviour unchanged (regression lock)", () => {
     // v1 marker accepted
     assert.deepEqual(

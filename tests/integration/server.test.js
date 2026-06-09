@@ -661,10 +661,14 @@ describe("strict mode — REQUIRE_CANON_V2 (issue #65, Phase C)", () => {
     assert.equal(res.status, 202);
   });
 
-  test("REQUIRE_CANON_V2=true: a v2-signed event is accepted (202)", async () => {
+  test("REQUIRE_CANON_V2=true: a v2-signed event is accepted (202) with no deprecation headers", async () => {
     process.env.REQUIRE_CANON_V2 = "true";
     const res = await ingest(signedEvent(canonicalizeV2, "v2"), strictKey);
     assert.equal(res.status, 202);
+    const body = await res.json();
+    assert.equal(body.accepted, true);
+    assert.equal(res.headers.get("deprecation"), null);
+    assert.equal(res.headers.get("sunset"), null);
   });
 
   test("REQUIRE_CANON_V2=true: a v1-signed event is rejected (401) with an actionable error and NO deprecation headers", async () => {
