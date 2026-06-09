@@ -571,31 +571,40 @@ const SIGNATURE_V1_SUNSET = (() => {
   return raw;
 })();
 
-// Issue #65, Phase C — opt-in strict mode. When REQUIRE_CANON_V2 is enabled the
-// signature verifier rejects legacy v1 (and unmarked) signatures, requiring an
-// explicit canon:"v2" marker that verifies against the deep, payload-covering
-// form (see verifySignature). Default OFF → unchanged transition behaviour
-// (v1 AND v2 accepted). Parsed robustly: "true"/"1" (case-insensitive) → on;
-// anything else/unset → off.
+// Issue #65 — strict signature mode. When enabled the signature verifier rejects
+// legacy v1 (and unmarked) signatures, requiring an explicit canon:"v2" marker
+// that verifies against the deep, payload-covering form (see verifySignature).
+//
+// Phase D (2026-06-09, BREAKING) flipped the DEFAULT from off → ON: the server
+// now REJECTS v1 by default. The v2-default SDKs are published and there are no
+// real v1 users yet, so the deprecation window is closed. The escape hatch
+// remains: REQUIRE_CANON_V2=false (or 0/no/off, case-insensitive) restores
+// transition mode (v1 AND v2 accepted) for a deployment still migrating its own
+// emitters. Parsed robustly: an explicit opt-out value → off; anything else,
+// INCLUDING unset/empty → on. (Phase E will remove the v1 path entirely.)
 //
 // Read per-request (not cached at startup) so an operator can turn enforcement
-// on/off without restarting the server — useful for a security control. This is
-// an EXPLICIT operator decision, INDEPENDENT of SIGNATURE_V1_SUNSET: passing the
-// sunset date does NOT auto-enable strict (the global default flip is a later
-// phase of #65).
+// on/off without restarting the server. This is an EXPLICIT operator decision,
+// INDEPENDENT of SIGNATURE_V1_SUNSET: the sunset date does not drive this flag.
+const REQUIRE_CANON_V2_OPT_OUT = new Set(["false", "0", "no", "off"]);
 function requireCanonV2Enabled() {
   const raw = (process.env.REQUIRE_CANON_V2 || "").trim().toLowerCase();
-  return raw === "true" || raw === "1";
+  return !REQUIRE_CANON_V2_OPT_OUT.has(raw);
 }
 
-// Log once at startup so operators can confirm strict mode was picked up.
-// Unlike SIGNATURE_V1_SUNSET (parsed once at startup via an IIFE), this flag
-// is read per-request — changes take effect without a restart. The startup log
+// Log once at startup so operators can confirm which mode was picked up. Unlike
+// SIGNATURE_V1_SUNSET (parsed once at startup via an IIFE), this flag is read
+// per-request — changes take effect without a restart, so the startup log only
 // reflects the value at boot; a runtime toggle will silently take effect.
 if (requireCanonV2Enabled()) {
   logger.info(
     { flag: "REQUIRE_CANON_V2" },
-    "strict signature mode enabled: per-event signatures must be canon:\"v2\" (REQUIRE_CANON_V2=true)"
+    "strict signature mode active (default): per-event signatures must be canon:\"v2\"; set REQUIRE_CANON_V2=false to accept legacy v1"
+  );
+} else {
+  logger.warn(
+    { flag: "REQUIRE_CANON_V2" },
+    "legacy v1 signatures accepted (REQUIRE_CANON_V2=false): transition mode is deprecated — migrate emitters to canon:\"v2\" (issue #65)"
   );
 }
 
@@ -1028,4 +1037,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { app };
+module.exports = { app, requireCanonV2Enabled };

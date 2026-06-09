@@ -564,7 +564,14 @@ describe("signature canonicalization metrics", () => {
     signKey = (await res.json()).key;
   });
 
+  // Phase D flipped the default to strict (v1 rejected). These telemetry tests
+  // exercise the v1 *acceptance* path, so they explicitly opt back into
+  // transition mode via the REQUIRE_CANON_V2=false escape hatch; afterEach
+  // clears it so the v2/reject/unsigned tests below run under the new default.
+  afterEach(() => { delete process.env.REQUIRE_CANON_V2; });
+
   test("v1- and v2-signed ingests are counted by effective form", async () => {
+    process.env.REQUIRE_CANON_V2 = "false"; // accept v1 to exercise the v1 counter
     const before = await scrape();
     const v1Before = counterFor(before, "v1", "true");
     const v2Before = counterFor(before, "v2", "true");
@@ -591,7 +598,10 @@ describe("signature canonicalization metrics", () => {
 
   // Issue #65 Phase B — RFC 8594 deprecation signaling on accepted v1 ingest.
   // SIGNATURE_V1_SUNSET was set in the bootstrap, so Sunset is expected too.
+  // Phase D: v1 is only accepted under the REQUIRE_CANON_V2=false escape hatch,
+  // so opt into transition mode to reach the deprecation-header path at all.
   test("a v1-signed ingest carries Deprecation + Sunset headers", async () => {
+    process.env.REQUIRE_CANON_V2 = "false";
     const res = await ingest(signedEvent(canonicalize, "v1"), signKey);
     assert.equal(res.status, 202);
     assert.equal(res.headers.get("deprecation"), "true");
@@ -617,17 +627,18 @@ describe("signature canonicalization metrics", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Opt-in strict mode — REQUIRE_CANON_V2 (issue #65, Phase C)
+// Default strict mode — REQUIRE_CANON_V2 (issue #65, Phase D, BREAKING)
 //
-// With REQUIRE_CANON_V2=true the server requires an explicit canon:"v2" deep
-// signature on ingest: v1 and unmarked signatures are rejected with 401 (no
-// deprecation headers — that is a hard reject, not an accepted v1). With the
-// flag unset, transition mode is intact (v1 still accepted). The flag is read
-// per-request, so we toggle process.env around each test against the running
-// app and clear it in afterEach.
+// Phase D flipped the default: with the flag UNSET the server requires an
+// explicit canon:"v2" deep signature on ingest, rejecting v1 and unmarked
+// signatures with 401 (no deprecation headers — that is a hard reject, not an
+// accepted v1). The REQUIRE_CANON_V2=false (also 0/no/off) escape hatch restores
+// transition mode (v1 still accepted, with the Phase B deprecation header). The
+// flag is read per-request, so we toggle process.env around each test against
+// the running app and clear it in afterEach.
 // ---------------------------------------------------------------------------
 
-describe("strict mode — REQUIRE_CANON_V2 (issue #65, Phase C)", () => {
+describe("default strict mode — REQUIRE_CANON_V2 (issue #65, Phase D)", () => {
   const { canonicalize, canonicalizeV2 } = require("../../src/signature");
   const STRICT_SECRET = "phase-c-hmac-secret";
   let strictKey;
@@ -656,9 +667,31 @@ describe("strict mode — REQUIRE_CANON_V2 (issue #65, Phase C)", () => {
   // Always clear the flag so it can never leak into other test blocks.
   afterEach(() => { delete process.env.REQUIRE_CANON_V2; });
 
-  test("flag unset (default): a v1-signed event is still accepted (202) — transition intact", async () => {
+  test("flag unset (default, Phase D): a v1-signed event is REJECTED (401) with an actionable error and NO deprecation headers", async () => {
+    // The breaking flip: strict is now the default, so an unmarked v1 emitter is
+    // rejected out of the box (no REQUIRE_CANON_V2 set).
     const res = await ingest(signedEvent(canonicalize, "v1"), strictKey);
+    assert.equal(res.status, 401);
+    const body = await res.json();
+    assert.equal(body.accepted, false);
+    assert.match(body.detail, /Strict mode requires canon/);
+    assert.match(body.detail, /AEP SDK/);
+    // A strict 401 is a hard reject, not an accepted v1 → no RFC 8594 headers.
+    assert.equal(res.headers.get("deprecation"), null);
+    assert.equal(res.headers.get("sunset"), null);
+  });
+
+  test("flag unset (default, Phase D): a v2-signed event is accepted (202)", async () => {
+    const res = await ingest(signedEvent(canonicalizeV2, "v2"), strictKey);
     assert.equal(res.status, 202);
+    assert.equal(res.headers.get("deprecation"), null);
+  });
+
+  test("flag unset (default, Phase D): an unmarked deep signature is rejected (401)", async () => {
+    // Strict mode requires the explicit canon:"v2" marker, even for a sig that
+    // would verify deep (e.g. a pre-v0.3.0 Go emitter).
+    const res = await ingest(signedEvent(canonicalizeV2, undefined), strictKey);
+    assert.equal(res.status, 401);
   });
 
   test("REQUIRE_CANON_V2=true: a v2-signed event is accepted (202) with no deprecation headers", async () => {
@@ -698,9 +731,24 @@ describe("strict mode — REQUIRE_CANON_V2 (issue #65, Phase C)", () => {
     assert.equal(res.status, 401);
   });
 
-  test("REQUIRE_CANON_V2=false: treated as off — v1 still accepted (transition intact)", async () => {
+  test("REQUIRE_CANON_V2=false (escape hatch): v1 accepted (202) AND carries the Phase B Deprecation header (transition restored)", async () => {
     process.env.REQUIRE_CANON_V2 = "false";
     const res = await ingest(signedEvent(canonicalize, "v1"), strictKey);
+    assert.equal(res.status, 202);
+    // Transition mode restored → the accepted-v1 ingest signals deprecation.
+    assert.equal(res.headers.get("deprecation"), "true");
+    assert.equal(res.headers.get("sunset"), new Date(SIG_V1_SUNSET).toUTCString());
+  });
+
+  test("REQUIRE_CANON_V2=off (alias): v1 still accepted (202) — case-insensitive opt-out", async () => {
+    process.env.REQUIRE_CANON_V2 = "OFF";
+    const res = await ingest(signedEvent(canonicalize, "v1"), strictKey);
+    assert.equal(res.status, 202);
+  });
+
+  test("REQUIRE_CANON_V2=false: an unmarked deep signature is accepted (202) — transition mode", async () => {
+    process.env.REQUIRE_CANON_V2 = "false";
+    const res = await ingest(signedEvent(canonicalizeV2, undefined), strictKey);
     assert.equal(res.status, 202);
   });
 

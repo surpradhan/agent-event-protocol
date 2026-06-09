@@ -4,6 +4,43 @@ All notable changes to AEP are documented here.
 
 ---
 
+## ⚠️ BREAKING — v1 signatures rejected by default — issue #65 Phase D, 2026-06-09
+
+The **deliberate breaking cutover** of the v1 signature deprecation. The server
+now **rejects legacy v1 (envelope-only) per-event signatures by default** and
+requires the payload-covering **v2** form. Phase C added this enforcement as
+opt-in; Phase D flips the **default** to strict.
+
+**Rationale:** the v2-default SDKs are published (npm `@surpradhan/aep`, PyPI
+`agent-event-protocol`, Go `sdks/go`), so emitters already sign `canon:"v2"`, and
+there are no real v1 users yet — so the deprecation window is closed today.
+
+- **`REQUIRE_CANON_V2` now defaults to ON.** Unset / empty / any value that is
+  not an explicit opt-out → **strict** (reject v1). Only the case-insensitive
+  values `false` / `0` / `no` / `off` → transition mode. Re-read per request.
+- **What changes:** a v1-signed (or unmarked, or non-`v2`) event on a key with an
+  HMAC secret now gets a `401` with the actionable message
+  *`Strict mode requires canon:"v2". Upgrade to AEP SDK >= v0.3.0 or set canon:"v2".`*
+  v2-signed events are accepted (`202`) as before. Unsigned events on keys with
+  **no** HMAC secret are unaffected.
+- **Escape hatch (to keep accepting v1 temporarily):** set **`REQUIRE_CANON_V2=false`**
+  (or `0`/`no`/`off`). This restores the exact pre-Phase-D transition mode — v1
+  **and** v2 accepted, with the Phase B `Deprecation`/`Sunset` headers on accepted
+  v1 ingest. The v1 code path and this escape hatch are retained; removing them is
+  Phase E.
+- **Effective sunset:** today (2026-06-09). A strict `401` is a hard rejection, so
+  it carries **no** `Deprecation`/`Sunset` headers (those fire only on *accepted*
+  v1, i.e. only under `REQUIRE_CANON_V2=false`).
+- **Metrics:** default-strict v1 rejections increment the existing
+  `aep_signature_verifications_rejected_total` counter (Phase A) — no new metric.
+- **No `verifySignature` logic change** (Phase C already implemented the strict
+  path), **no SDK changes**, **no `specversion` bump** (this is a server behaviour
+  change, not an envelope-schema change). Server-only.
+- **Docs:** `CHANGELOG.md`, `AUTH.md` (canonicalization-versions + verification-
+  errors + strict-mode sections), `SECURITY.md`, `OPERATIONS.md`, `.env.example`.
+
+---
+
 ## Opt-in strict signature mode — issue #65 Phase C, 2026-06-09
 
 The **third** step toward retiring the legacy v1 (envelope-only) signature form,
