@@ -4,6 +4,22 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Python SDK `agent-event-protocol` 0.4.0 — 2026-06-09
+
+Maintenance release of the Python SDK. **No functional or signing changes** —
+0.3.0 already signs the payload-covering **v2** canonical form by default and is
+fully compatible with the v2-only server (issue #65). This release only:
+
+- Declares **Python 3.13** support (trove classifier; 3.13 has been exercised in
+  CI since #73).
+- Verified end-to-end against the v2-only server: default `sign_event(event, secret)`
+  emits `signature.canon:"v2"` → `202 Accepted`; an explicit `canon="v1"` → `401`.
+
+Upgrade with `pip install --upgrade agent-event-protocol`. No code changes are
+required for existing users.
+
+---
+
 ## ⚠️ BREAKING — legacy v1 signature path removed — issue #65 Phase E, 2026-06-09
 
 The **final cleanup** of the v1 per-event-signature retirement (closes #65).
