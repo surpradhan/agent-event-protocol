@@ -20,7 +20,8 @@ there are no real v1 users yet — so the deprecation window is closed today.
   values `false` / `0` / `no` / `off` → transition mode. Re-read per request.
 - **What changes:** a v1-signed (or unmarked, or non-`v2`) event on a key with an
   HMAC secret now gets a `401` with the actionable message
-  *`Strict mode requires canon:"v2". Upgrade to AEP SDK >= v0.3.0 or set canon:"v2".`*
+  *`Strict mode requires canon:"v2". Upgrade to a v2-default AEP SDK or set canon:"v2".`*
+  (SDK-agnostic — the v2-default release is npm >= 0.4.0, PyPI/Go >= 0.3.0).
   v2-signed events are accepted (`202`) as before. Unsigned events on keys with
   **no** HMAC secret are unaffected.
 - **Escape hatch (to keep accepting v1 temporarily):** set **`REQUIRE_CANON_V2=false`**
