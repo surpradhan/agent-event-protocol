@@ -25,10 +25,9 @@
  * Canonicalization
  * ----------------
  * The audit path uses `stableStringify` (a deep, recursively key-sorted
- * serialization) rather than the per-event signature's `canonicalize` (a shallow
- * envelope-only rule that drops nested payloads — kept that way for cross-SDK
- * parity; see src/_canonical.js).  The PRD requires payload modification to be
- * detectable, which mandates the deep form here.
+ * serialization) — the same deep rule the per-event v2 signature uses
+ * (`canonicalizeV2`; see src/_canonical.js).  The PRD requires payload
+ * modification to be detectable, which mandates this deep form.
  *
  * This proves *detection* of post-hoc modification — it does not make storage
  * immutable.  WORM storage can be layered underneath for stricter requirements.

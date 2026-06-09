@@ -1,27 +1,33 @@
 "use strict";
 
 /**
- * Regression lock for the canonicalize refactor (Phase 14 PR-A).
+ * Unit tests for the per-event HMAC signature verifier.
  *
- * `canonicalize` was lifted out of signature.js into src/_canonical.js so the
- * audit bundle path can reuse the EXACT same rule. These tests pin down the
- * canonical-form contract and the verifySignature round-trip so the refactor is
- * provably behaviour-preserving.
+ * Issue #65 Phase E retired the legacy v1 (envelope-only) canonical form and the
+ * unmarked "transition" mode: `verifySignature(event, secret)` now accepts a
+ * signature IFF it carries an explicit `canon:"v2"` marker AND verifies against
+ * the deep, payload-covering v2 form (`canonicalizeV2`). Everything else — a v1
+ * marker, an absent marker, an unmarked-but-deep-valid signature, an unknown or
+ * non-string canon, a wrong secret, a payload edit — is rejected.
  */
 
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("crypto");
 
-const { verifySignature, canonicalize, canonicalizeV2, buildDeprecationHeaders } = require("../../src/signature");
-const { canonicalize: canonicalizeShared } = require("../../src/_canonical");
+const { verifySignature, canonicalizeV2 } = require("../../src/signature");
 
 const SECRET = "shared-hmac-secret";
 
-// Build an event signed with an explicit canonical form. `canon` controls the
-// marker written onto signature.canon (pass null to OMIT the marker, simulating
-// legacy/Go emitters); `form` is the canonicalizer used to compute the digest.
-function makeSigned({ canon, form, secret = SECRET, mutate } = {}) {
+// Build an event signed over `form(event)`. `canon` controls the marker written
+// onto signature.canon (omit / pass a non-string to simulate unmarked or
+// type-confused emitters); `mutate` lets a test tamper with the event AFTER it
+// is signed.
+function makeSigned(opts = {}) {
+  const { form = canonicalizeV2, secret = SECRET, mutate } = opts;
+  // Distinguish an explicitly-omitted marker (`{ canon: undefined }`) from the
+  // default — a plain default param can't, since passing `undefined` triggers it.
+  const canon = "canon" in opts ? opts.canon : "v2";
   const event = {
     specversion: "0.2.0",
     id: "evt_xyz",
@@ -39,78 +45,35 @@ function makeSigned({ canon, form, secret = SECRET, mutate } = {}) {
   return event;
 }
 
-function signedEvent(secret = SECRET) {
-  const event = {
-    specversion: "0.2.0",
-    id: "evt_xyz",
-    time: "2026-06-06T10:00:00.000Z",
-    source: "agent://a",
-    type: "task.created",
-    session_id: "ses_1",
-    trace_id: "trc_1",
-    payload: { k: "v" },
-  };
-  const canon = canonicalize(event);
-  event.signature = {
-    alg: "hmac-sha256",
-    value: crypto.createHmac("sha256", secret).update(canon, "utf8").digest("base64"),
-  };
-  return event;
-}
-
-describe("canonicalize", () => {
-  test("signature.js re-exports the same function as _canonical.js", () => {
-    assert.equal(canonicalize, canonicalizeShared);
+describe("verifySignature — v2 acceptance (issue #65)", () => {
+  test("a correctly signed canon:\"v2\" event is accepted, reporting canon 'v2'", () => {
+    assert.deepEqual(verifySignature(makeSigned(), SECRET), { valid: true, canon: "v2" });
   });
 
-  test("sorts top-level keys and drops the signature field", () => {
-    const out = canonicalize({ b: 2, a: 1, signature: { alg: "x", value: "y" } });
-    assert.equal(out, '{"a":1,"b":2}');
-  });
-
-  test("is independent of key insertion order", () => {
-    const a = canonicalize({ type: "t", id: "1", source: "s" });
-    const b = canonicalize({ source: "s", type: "t", id: "1" });
-    assert.equal(a, b);
-  });
-
-  test("does not mutate the caller's object", () => {
-    const ev = { a: 1, signature: { alg: "x" } };
-    canonicalize(ev);
-    assert.deepEqual(ev, { a: 1, signature: { alg: "x" } });
-  });
-});
-
-describe("verifySignature (behaviour unchanged after refactor)", () => {
-  test("accepts a correctly signed event", () => {
-    // Success now carries the effective canonical form (issue #65). signedEvent()
-    // is shallow + unmarked → effective form "v1". The boolean contract is intact.
-    assert.deepEqual(verifySignature(signedEvent(), SECRET), { valid: true, canon: "v1" });
-  });
-
-  test("rejects when the secret is wrong", () => {
-    const res = verifySignature(signedEvent(), "wrong");
+  test("v2 COVERS nested-payload tampering (the whole point of the deep form)", () => {
+    const tampered = makeSigned({ mutate: (e) => { e.payload.nested.deep = 999; } });
+    const res = verifySignature(tampered, SECRET);
     assert.equal(res.valid, false);
+    assert.equal(res.canon, undefined);
+    assert.match(res.error, /Signature mismatch/);
   });
 
-  test("rejects an event with a tampered top-level field", () => {
-    const ev = signedEvent();
-    ev.source = "agent://impostor";
+  test("a top-level field edit is detected", () => {
+    const ev = makeSigned({ mutate: (e) => { e.source = "agent://impostor"; } });
     assert.equal(verifySignature(ev, SECRET).valid, false);
   });
 
-  test("documents the shallow-canonicalize limitation: nested payload edits are NOT detected", () => {
-    // The per-event signature canonicalizes with an array replacer, which drops
-    // nested object contents — so a payload-only edit does not change the digest.
-    // This is preserved behaviour (cross-SDK parity); the Phase 14 audit bundle
-    // uses a deep digest (stableStringify) to close this gap for compliance.
-    const ev = signedEvent();
-    ev.payload.k = "tampered";
-    assert.equal(verifySignature(ev, SECRET).valid, true);
+  test("rejects when the secret is wrong (carries no canon)", () => {
+    const res = verifySignature(makeSigned(), "wrong-secret");
+    assert.equal(res.valid, false);
+    assert.equal(res.canon, undefined);
+    assert.match(res.error, /Signature mismatch/);
   });
+});
 
+describe("verifySignature — structural rejections", () => {
   test("rejects a missing signature field", () => {
-    const ev = signedEvent();
+    const ev = makeSigned();
     delete ev.signature;
     const res = verifySignature(ev, SECRET);
     assert.equal(res.valid, false);
@@ -118,235 +81,68 @@ describe("verifySignature (behaviour unchanged after refactor)", () => {
   });
 
   test("rejects an unsupported algorithm", () => {
-    const ev = signedEvent();
+    const ev = makeSigned();
     ev.signature.alg = "rsa";
     const res = verifySignature(ev, SECRET);
     assert.equal(res.valid, false);
     assert.match(res.error, /Unsupported signature algorithm/);
   });
-});
 
-describe("verifySignature canonicalization versions (issue #59)", () => {
-  test("v2 (deep, marker present) verifies and COVERS nested payload tampering", () => {
-    const ev = makeSigned({ canon: "v2", form: canonicalizeV2 });
-    assert.equal(verifySignature(ev, SECRET).valid, true);
-
-    // The whole point of v2: a nested payload edit is now detected.
-    const tampered = makeSigned({
-      canon: "v2", form: canonicalizeV2,
-      mutate: (e) => { e.payload.nested.deep = 999; },
-    });
-    assert.equal(verifySignature(tampered, SECRET).valid, false);
-  });
-
-  test("v1 (marker present) verifies against the shallow form only", () => {
-    const ev = makeSigned({ canon: "v1", form: canonicalize });
-    assert.equal(verifySignature(ev, SECRET).valid, true);
-  });
-
-  test("a v2-signed event with a v1 marker does NOT verify (version is honoured)", () => {
-    // Signed deep, but mislabeled v1 → server checks shallow only → mismatch.
-    const ev = makeSigned({ canon: "v1", form: canonicalizeV2 });
+  test("rejects a missing/non-string signature.value", () => {
+    const ev = makeSigned();
+    delete ev.signature.value;
+    assert.equal(verifySignature(ev, SECRET).valid, false);
+    ev.signature.value = 123;
     assert.equal(verifySignature(ev, SECRET).valid, false);
   });
+});
 
-  test("unmarked legacy shallow signature still verifies (back-compat)", () => {
-    const ev = makeSigned({ canon: null, form: canonicalize });
-    assert.equal(verifySignature(ev, SECRET).valid, true);
-  });
-
-  test("unmarked DEEP signature verifies too (fixes the Go-SDK interop bug)", () => {
-    // The Go SDK currently signs the deep form with NO marker; transition-mode
-    // dual-verify must accept it.
-    const ev = makeSigned({ canon: null, form: canonicalizeV2 });
-    assert.equal(verifySignature(ev, SECRET).valid, true);
-  });
-
-  test("an unknown canon value is rejected with a clear error", () => {
-    const ev = makeSigned({ canon: "v9", form: canonicalizeV2 });
+describe("verifySignature — only canon:\"v2\" is accepted (v1 retired, issue #65 Phase E)", () => {
+  test("a v1 marker is rejected with the migration hint (no HMAC computed)", () => {
+    // The marker is checked before any HMAC, so the value is irrelevant.
+    const ev = makeSigned({ canon: "v1" });
     const res = verifySignature(ev, SECRET);
     assert.equal(res.valid, false);
-    assert.match(res.error, /Unsupported signature canonicalization/);
+    assert.equal(res.canon, undefined);
+    // The hint must fit in 99 chars (sanitizeInput truncates at 100) and name
+    // the actionable fix.
+    assert.ok(res.error.length <= 99, `error too long (${res.error.length}): ${res.error}`);
+    assert.match(res.error, /canon:"v2"/);
+    assert.match(res.error, /AEP SDK/);
   });
 
-  test("a non-string canon (number/null/object/array/empty) is rejected, never throws", () => {
-    // `null` must NOT be treated as "absent" — only literal omission enables
-    // transition mode. Type-confusion inputs must fail cleanly.
+  test("an ABSENT marker is rejected — even when the deep HMAC would verify", () => {
+    // A valid deep signature with NO canon marker (e.g. a pre-v0.3.0 Go emitter)
+    // was accepted in transition mode; Phase E rejects it — the explicit marker
+    // is now required.
+    const ev = makeSigned({ canon: undefined, form: canonicalizeV2 });
+    const res = verifySignature(ev, SECRET);
+    assert.equal(res.valid, false);
+    assert.ok(res.error.length <= 99, `error too long (${res.error.length}): ${res.error}`);
+    assert.match(res.error, /canon:"v2"/);
+  });
+
+  test("an unknown canon value is rejected with an accurate 'unsupported' error (NOT a v1 claim)", () => {
+    const ev = makeSigned({ canon: "v9" });
+    const res = verifySignature(ev, SECRET);
+    assert.equal(res.valid, false);
+    assert.ok(res.error.length <= 99, `error too long (${res.error.length}): ${res.error}`);
+    assert.match(res.error, /Unsupported canon/);
+    assert.match(res.error, /v9/);
+  });
+
+  test("a non-string canon (number/null/object/array/bool/empty) is rejected, never throws", () => {
     for (const bad of [1, 0, true, false, null, [], {}, ""]) {
-      const ev = makeSigned({ form: canonicalizeV2 });   // valid deep sig, unmarked
-      ev.signature.canon = bad;                           // then inject a bad marker
+      const ev = makeSigned({ canon: undefined, form: canonicalizeV2 }); // valid deep sig
+      ev.signature.canon = bad;                                          // inject a bad marker
       const res = verifySignature(ev, SECRET);
       assert.equal(res.valid, false, `canon=${JSON.stringify(bad)} should be invalid`);
+      assert.equal(res.canon, undefined);
     }
   });
 
-  test("the wrong secret fails for both v1 and v2", () => {
-    assert.equal(verifySignature(makeSigned({ canon: "v1", form: canonicalize }), "nope").valid, false);
-    assert.equal(verifySignature(makeSigned({ canon: "v2", form: canonicalizeV2 }), "nope").valid, false);
-  });
-});
-
-describe("verifySignature reports the effective canonical form (issue #65, Phase A)", () => {
-  test("v1 marker → canon 'v1'", () => {
-    const res = verifySignature(makeSigned({ canon: "v1", form: canonicalize }), SECRET);
-    assert.deepEqual(res, { valid: true, canon: "v1" });
-  });
-
-  test("v2 marker → canon 'v2'", () => {
-    const res = verifySignature(makeSigned({ canon: "v2", form: canonicalizeV2 }), SECRET);
-    assert.deepEqual(res, { valid: true, canon: "v2" });
-  });
-
-  test("unmarked shallow signature → effective canon 'v1'", () => {
-    // The thing a strict-v2 server would reject: classified by what matched,
-    // not by a (missing) marker.
-    const res = verifySignature(makeSigned({ canon: null, form: canonicalize }), SECRET);
-    assert.deepEqual(res, { valid: true, canon: "v1" });
-  });
-
-  test("unmarked deep signature (Go-SDK style) → effective canon 'v2'", () => {
-    const res = verifySignature(makeSigned({ canon: null, form: canonicalizeV2 }), SECRET);
-    assert.deepEqual(res, { valid: true, canon: "v2" });
-  });
-
-  test("the boolean/error contract is unchanged: failures carry NO canon", () => {
-    const res = verifySignature(signedEvent(), "wrong-secret");
-    assert.equal(res.valid, false);
-    assert.equal(res.canon, undefined);
-    assert.match(res.error, /Signature mismatch/);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// RFC 8594 deprecation headers for legacy v1 signatures (issue #65, Phase B)
-// ---------------------------------------------------------------------------
-
-describe("buildDeprecationHeaders (issue #65, Phase B)", () => {
-  test("always emits Deprecation + Link (deprecation is a present fact)", () => {
-    const h = buildDeprecationHeaders();
-    assert.equal(h.Deprecation, "true");
-    assert.match(h.Link, /rel="deprecation"/);
-    assert.match(h.Link, /issues\/65/);
-  });
-
-  test("a valid sunset date → well-formed IMF-fixdate Sunset header", () => {
-    const h = buildDeprecationHeaders({ sunsetIso: "2026-09-06" });
-    assert.equal(h.Deprecation, "true");
-    // RFC 7231 IMF-fixdate, e.g. "Sun, 06 Sep 2026 00:00:00 GMT".
-    assert.equal(h.Sunset, new Date("2026-09-06").toUTCString());
-    assert.match(h.Sunset, /^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/);
-  });
-
-  test("unset sunset date → Deprecation only, no Sunset, no throw", () => {
-    const h = buildDeprecationHeaders({ sunsetIso: null });
-    assert.equal(h.Deprecation, "true");
-    assert.equal(h.Sunset, undefined);
-  });
-
-  test("invalid/unparseable sunset date → no Sunset header, no throw", () => {
-    const h = buildDeprecationHeaders({ sunsetIso: "not-a-date" });
-    assert.equal(h.Deprecation, "true");
-    assert.equal(h.Sunset, undefined);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Opt-in strict mode — REQUIRE_CANON_V2 (issue #65, Phase C)
-// ---------------------------------------------------------------------------
-//
-// verifySignature(event, secret, { requireCanonV2: true }) accepts a signature
-// IFF it carries an explicit canon:"v2" marker AND verifies against the deep
-// form. v1-marked, unmarked (even deep-valid), and non-"v2" markers are all
-// rejected. With the flag false/omitted, transition behaviour is unchanged.
-
-describe("verifySignature strict mode (REQUIRE_CANON_V2, issue #65 Phase C)", () => {
-  const STRICT = { requireCanonV2: true };
-
-  test("v2-marked deep signature → accepted", () => {
-    const ev = makeSigned({ canon: "v2", form: canonicalizeV2 });
-    assert.deepEqual(verifySignature(ev, SECRET, STRICT), { valid: true, canon: "v2" });
-  });
-
-  test("v1-marked signature → rejected with the v1 migration hint", () => {
-    const ev = makeSigned({ canon: "v1", form: canonicalize });
-    const res = verifySignature(ev, SECRET, STRICT);
-    assert.equal(res.valid, false);
-    assert.equal(res.canon, undefined);
-    // Message must fit in 99 chars (sanitizeInput truncates at 100) and mention
-    // the upgrade path — not an "unsupported" claim.
-    assert.ok(res.error.length <= 99, `error too long (${res.error.length}): ${res.error}`);
-    assert.match(res.error, /Strict mode requires canon:"v2"/);
-    // SDK-agnostic hint (no single version: npm v2-default is >= 0.4.0, PyPI/Go
-    // >= 0.3.0, so naming one would mislead Node emitters on npm 0.3.0).
-    assert.match(res.error, /Upgrade to a v2-default AEP SDK/);
-  });
-
-  test("UNMARKED but deep-valid signature → rejected with the v1 migration hint", () => {
-    const ev = makeSigned({ canon: null, form: canonicalizeV2 });
-    // Sanity: transition mode (flag off) accepts this exact event as effective v2…
-    assert.deepEqual(verifySignature(ev, SECRET), { valid: true, canon: "v2" });
-    // …but strict mode rejects it because there is no explicit canon:"v2" marker.
-    const res = verifySignature(ev, SECRET, STRICT);
-    assert.equal(res.valid, false);
-    assert.ok(res.error.length <= 99, `error too long (${res.error.length}): ${res.error}`);
-    assert.match(res.error, /Strict mode requires canon:"v2"/);
-  });
-
-  test("v2-marked but payload-tampered signature → rejected", () => {
-    const ev = makeSigned({
-      canon: "v2", form: canonicalizeV2,
-      mutate: (e) => { e.payload.nested.deep = 999; }
-    });
-    assert.equal(verifySignature(ev, SECRET, STRICT).valid, false);
-  });
-
-  test("an unknown canon value → rejected with an accurate 'unsupported' error (NOT a v1 claim)", () => {
-    const ev = makeSigned({ canon: "v9", form: canonicalizeV2 });
-    const res = verifySignature(ev, SECRET, STRICT);
-    assert.equal(res.valid, false);
-    // Must NOT say "v1 canonicalization" — that would be factually wrong for v9.
-    assert.ok(!res.error.includes("v1 canonicalization"), `error wrongly claims v1: ${res.error}`);
-    assert.match(res.error, /Unsupported canon/);
-    assert.match(res.error, /strict mode only accepts/);
-  });
-
-  test("null canon under strict → 'unsupported' branch (not the migration hint)", () => {
-    // null is not undefined, so it falls into the unsupported branch, not the
-    // v1/absent migration hint. This test pins that behaviour explicitly.
-    const ev = makeSigned({ canon: null, form: canonicalizeV2 });
-    ev.signature.canon = null; // makeSigned skips setting canon for non-strings; force it
-    const res = verifySignature(ev, SECRET, STRICT);
-    assert.equal(res.valid, false);
-    assert.match(res.error, /Unsupported canon/);
-    // Also confirm transition mode rejects null (pre-existing SUPPORTED_CANON check).
+  test("a v2-marked but payload-tampered signature is rejected", () => {
+    const ev = makeSigned({ canon: "v2", mutate: (e) => { e.payload.nested.deep = 999; } });
     assert.equal(verifySignature(ev, SECRET).valid, false);
-  });
-
-  test("requireCanonV2 omitted/false → transition behaviour unchanged (regression lock)", () => {
-    // v1 marker accepted
-    assert.deepEqual(
-      verifySignature(makeSigned({ canon: "v1", form: canonicalize }), SECRET),
-      { valid: true, canon: "v1" }
-    );
-    // unmarked shallow accepted
-    assert.deepEqual(
-      verifySignature(makeSigned({ canon: null, form: canonicalize }), SECRET),
-      { valid: true, canon: "v1" }
-    );
-    // unmarked deep accepted
-    assert.deepEqual(
-      verifySignature(makeSigned({ canon: null, form: canonicalizeV2 }), SECRET),
-      { valid: true, canon: "v2" }
-    );
-    // v2 marker accepted
-    assert.deepEqual(
-      verifySignature(makeSigned({ canon: "v2", form: canonicalizeV2 }), SECRET),
-      { valid: true, canon: "v2" }
-    );
-    // explicit requireCanonV2:false still accepts v1
-    assert.deepEqual(
-      verifySignature(makeSigned({ canon: "v1", form: canonicalize }), SECRET, { requireCanonV2: false }),
-      { valid: true, canon: "v1" }
-    );
   });
 });

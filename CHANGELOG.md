@@ -4,6 +4,46 @@ All notable changes to AEP are documented here.
 
 ---
 
+## ⚠️ BREAKING — legacy v1 signature path removed — issue #65 Phase E, 2026-06-09
+
+The **final cleanup** of the v1 per-event-signature retirement (closes #65).
+Phase D made the server *reject* v1 by default while keeping the v1 code path and
+an escape hatch; Phase E **removes** them entirely. The server now accepts
+**only** payload-covering **v2** signatures and there is no longer any way to
+re-accept v1.
+
+**Removed (BREAKING):**
+
+- **The legacy v1 canonical form** (`canonicalize`, envelope-only — payload NOT
+  covered) and the unmarked **transition mode** that tried both forms. A signed
+  ingest is now accepted **iff** `signature.canon === "v2"` **and** the deep HMAC
+  verifies. A v1 marker, an absent marker, an unmarked-but-deep-valid signature,
+  or any non-`v2` marker → `401` with the actionable message
+  *`Signature must use canon:"v2" (payload-covering). Set canon:"v2" or upgrade your AEP SDK.`*
+- **The `REQUIRE_CANON_V2` environment variable** (incl. the `=false` / `0` / `no`
+  / `off` escape hatch). It is gone — setting it has **no effect**; v1 is always
+  rejected. The `verifySignature(event, secret)` call is now unconditional (the
+  `requireCanonV2` option was removed).
+- **The `SIGNATURE_V1_SUNSET` environment variable** and the RFC 8594
+  `Deprecation` / `Sunset` / `Link` response headers (`buildDeprecationHeaders` /
+  `V1_DEPRECATION_LINK`). Those fired only on *accepted* v1 ingest, which can no
+  longer happen.
+
+**Notes:**
+
+- **Server-only — the SDKs are unchanged.** The published SDKs already default to
+  v2 (npm `@surpradhan/aep` >= 0.4.0, PyPI `agent-event-protocol` >= 0.3.0, Go
+  `sdks/go` >= 0.3.0). An SDK's explicit `canon:"v1"` option still exists but the
+  server will now simply reject what it emits.
+- **Metrics unchanged:** the Phase A `aep_signature_verifications_total{form,marked}`
+  / `_rejected_total` counters still work (accepted `form` is now always `"v2"`).
+- **No `specversion` bump** — this is a server acceptance-policy change, not an
+  envelope-schema change.
+- **Audit bundles are unaffected** — `src/audit.js` already uses the deep v2 rule
+  (`stableStringify` / `canonicalizeV2`).
+
+---
+
 ## ⚠️ BREAKING — v1 signatures rejected by default — issue #65 Phase D, 2026-06-09
 
 The **deliberate breaking cutover** of the v1 signature deprecation. The server

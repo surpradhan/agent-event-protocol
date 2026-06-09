@@ -7,7 +7,7 @@ const { version: SERVER_VERSION } = require("../package.json");
 
 const { validateEvent, sanitizeInput }        = require("./validator");
 const db                       = require("./db");
-const { verifySignature, buildDeprecationHeaders } = require("./signature");
+const { verifySignature } = require("./signature");
 const {
   requireApiKey,
   requireReadAccess,
@@ -543,86 +543,13 @@ app.get("/stream", requireReadAccess, (req, res) => {
 // Routes — ingest (write endpoint, requires API key with write scope)
 // ---------------------------------------------------------------------------
 
-// Per-tenant "first-seen" set for legacy-v1 signature acceptance logging
-// (issue #65, Phase A). We log the first v1 ingest per tenant at info level for
-// attribution (tenant_id + source), then drop to debug to avoid log spam. The
-// set is bounded so a flood of distinct tenant ids can't grow it unboundedly —
-// past the cap we simply log at debug.
-const v1SeenTenants = new Set();
-const V1_SEEN_TENANTS_MAX = 10000;
-
-// Issue #65, Phase B — legacy-v1 signature deprecation signaling. When an
-// effective-v1 signature is accepted on ingest the server returns RFC 8594
-// `Deprecation`/`Sunset` headers. SIGNATURE_V1_SUNSET (ISO-8601 date) is the
-// future date after which v1 will be rejected (Phase D); when set it drives the
-// `Sunset` header. Unset → only `Deprecation` is emitted (no committed date
-// yet). Validated once at startup: a set-but-unparseable value logs a warning
-// and is treated as unset, so we never emit a malformed header (and never crash).
-const SIGNATURE_V1_SUNSET = (() => {
-  const raw = process.env.SIGNATURE_V1_SUNSET;
-  if (!raw) return null;
-  if (Number.isNaN(new Date(raw).getTime())) {
-    logger.warn(
-      { value: raw },
-      "SIGNATURE_V1_SUNSET is set but not a valid ISO-8601 date — ignoring (no Sunset header will be emitted)"
-    );
-    return null;
-  }
-  return raw;
-})();
-
-// Issue #65 — strict signature mode. When enabled the signature verifier rejects
-// legacy v1 (and unmarked) signatures, requiring an explicit canon:"v2" marker
-// that verifies against the deep, payload-covering form (see verifySignature).
-//
-// Phase D (2026-06-09, BREAKING) flipped the DEFAULT from off → ON: the server
-// now REJECTS v1 by default. The v2-default SDKs are published and there are no
-// real v1 users yet, so the deprecation window is closed. The escape hatch
-// remains: REQUIRE_CANON_V2=false (or 0/no/off, case-insensitive) restores
-// transition mode (v1 AND v2 accepted) for a deployment still migrating its own
-// emitters. Parsed robustly: an explicit opt-out value → off; anything else,
-// INCLUDING unset/empty → on. (Phase E will remove the v1 path entirely.)
-//
-// Read per-request (not cached at startup) so an operator can turn enforcement
-// on/off without restarting the server. This is an EXPLICIT operator decision,
-// INDEPENDENT of SIGNATURE_V1_SUNSET: the sunset date does not drive this flag.
-// Opt-out (transition) vs enable (strict) token sets are case-insensitive. The
-// enable set is only used to detect a typo'd value at startup; the actual
-// decision is "anything not an explicit opt-out → strict" (fail closed).
-const REQUIRE_CANON_V2_OPT_OUT = new Set(["false", "0", "no", "off"]);
-const REQUIRE_CANON_V2_ENABLE = new Set(["true", "1", "yes", "on"]);
-function requireCanonV2Enabled() {
-  const raw = (process.env.REQUIRE_CANON_V2 || "").trim().toLowerCase();
-  return !REQUIRE_CANON_V2_OPT_OUT.has(raw);
-}
-
-// Log once at startup so operators can confirm which mode was picked up. Unlike
-// SIGNATURE_V1_SUNSET (parsed once at startup via an IIFE), this flag is read
-// per-request — changes take effect without a restart, so the startup log only
-// reflects the value at boot; a runtime toggle will silently take effect.
-(() => {
-  const raw = (process.env.REQUIRE_CANON_V2 || "").trim().toLowerCase();
-  // Typo guard: a value that is set but is neither a known opt-out nor a known
-  // enable token (e.g. "disabled", "none", "2") is treated as strict (fail
-  // closed) — warn so an operator who meant to accept v1 notices the typo.
-  if (raw !== "" && !REQUIRE_CANON_V2_OPT_OUT.has(raw) && !REQUIRE_CANON_V2_ENABLE.has(raw)) {
-    logger.warn(
-      { flag: "REQUIRE_CANON_V2", value: raw.slice(0, 20) },
-      "unrecognized REQUIRE_CANON_V2 value — treating as strict (v1 rejected); use false/0/no/off to accept legacy v1"
-    );
-  }
-  if (requireCanonV2Enabled()) {
-    logger.info(
-      { flag: "REQUIRE_CANON_V2" },
-      "strict signature mode active (Phase D default): legacy v1 per-event signatures are REJECTED; emitters must send canon:\"v2\" — set REQUIRE_CANON_V2=false to temporarily accept v1"
-    );
-  } else {
-    logger.warn(
-      { flag: "REQUIRE_CANON_V2" },
-      "legacy v1 signatures accepted (REQUIRE_CANON_V2=false): transition mode is deprecated — migrate emitters to canon:\"v2\" (issue #65)"
-    );
-  }
-})();
+// Issue #65 — per-event HMAC signature verification accepts ONLY the payload-
+// covering v2 canonical form (an explicit signature.canon:"v2" marker that
+// verifies deep; see verifySignature). The legacy v1 form, the unmarked
+// "transition" mode, the REQUIRE_CANON_V2 escape hatch, and the RFC 8594 v1
+// deprecation headers were all removed in Phase E (BREAKING) — v1 was retired
+// across the server and all three published SDKs (npm @surpradhan/aep >= 0.4.0,
+// PyPI agent-event-protocol >= 0.3.0, Go sdks/go/v0.3.0).
 
 // POST /events — ingest a single event
 // Rate limiting is applied per-key AFTER authentication resolves req.api_key_id.
@@ -635,23 +562,17 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
   // Signature verification
   // ------------------------------------------------------------------
   const hmacSecret = req.api_key_record && req.api_key_record.hmac_secret;
-  // Set when an effective-v1 (legacy envelope-only) signature is accepted, so we
-  // can attach RFC 8594 deprecation headers to the success response (issue #65,
-  // Phase B). Only the success paths (202 / 200-duplicate) below read this.
-  let v1Accepted = false;
   if (hmacSecret) {
     // `marked` = the emitter declared a canonicalization version via
-    // signature.canon. Effective form classification (issue #65) is independent
-    // of the marker (transition mode classifies an unmarked sig by what matched).
+    // signature.canon. Retained for the signature observability counters
+    // (issue #65 Phase A); for an accepted signature it is always true (the only
+    // accepted form is an explicit canon:"v2"), but rejections may be unmarked.
     const marked = !!(event && event.signature && typeof event.signature === "object"
       && event.signature.canon !== undefined);
-    // Strict mode (issue #65 Phase C): when on, only an explicit canon:"v2"
-    // signature that verifies deep is accepted; v1/unmarked → 401 below. A v1
-    // event rejected here NEVER reaches the deprecation-header path (that is for
-    // ACCEPTED v1), so a strict 401 carries no Deprecation/Sunset headers.
-    const { valid, canon, error } = verifySignature(event, hmacSecret, {
-      requireCanonV2: requireCanonV2Enabled()
-    });
+    // Issue #65 — only a payload-covering v2 signature is accepted: an explicit
+    // canon:"v2" marker that verifies against the deep form. A missing/non-"v2"
+    // marker or a digest mismatch → 401 below with an actionable error.
+    const { valid, canon, error } = verifySignature(event, hmacSecret);
     if (!valid) {
       recordSignatureRejection({ marked });
       await db.incrementCounter("rejected");
@@ -675,23 +596,10 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
       });
     }
 
-    // Accepted: classify by effective canonical form for retirement telemetry.
+    // Accepted: classify by effective canonical form for signature telemetry
+    // (issue #65 Phase A). With v1 retired this is always "v2", but the counter
+    // is kept so the Prometheus/JSON metrics series stays stable.
     recordSignatureVerification({ form: canon, marked });
-
-    // Per-tenant attribution for who is still on legacy v1, via logs (NOT a
-    // high-cardinality metric label). First v1 ingest per tenant → info; the
-    // rest → debug, so dashboards/log search can surface the at-risk population
-    // without flooding the log stream.
-    if (canon === "v1") {
-      v1Accepted = true;
-      const tenantId = req.tenant_id;
-      const firstForTenant = !v1SeenTenants.has(tenantId) && v1SeenTenants.size < V1_SEEN_TENANTS_MAX;
-      if (firstForTenant) v1SeenTenants.add(tenantId);
-      const logFields = { tenant_id: tenantId, source: sanitizeInput(event.source), marked };
-      const msg = "accepted legacy v1 (envelope-only) signature — emitter should migrate to v2 (issue #65)";
-      if (firstForTenant) logger.info(logFields, msg);
-      else logger.debug(logFields, msg);
-    }
   }
 
   // ------------------------------------------------------------------
@@ -714,15 +622,6 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
       "event rejected: schema validation failed"
     );
     return res.status(400).json({ accepted: false, errors });
-  }
-
-  // Issue #65, Phase B: signal deprecation of the legacy v1 signature form on
-  // accepted ingest. Set here — past every rejection branch (401 sig / 400
-  // schema) and ahead of both success responses (200 duplicate, 202 accepted) —
-  // so the headers ride only on acceptances. Non-breaking: the event is still
-  // accepted; the headers just nudge the emitter toward v2.
-  if (v1Accepted) {
-    res.set(buildDeprecationHeaders({ sunsetIso: SIGNATURE_V1_SUNSET }));
   }
 
   // ------------------------------------------------------------------
@@ -1053,4 +952,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { app, requireCanonV2Enabled };
+module.exports = { app };

@@ -9,7 +9,7 @@
  * then shut down in the after() hook.
  */
 
-const { test, describe, before, after, afterEach } = require("node:test");
+const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("crypto");
 const os = require("os");
@@ -31,12 +31,6 @@ const TEST_DB = path.join(os.tmpdir(), `aep-test-${Date.now()}.db`);
 if (!USE_POSTGRES) {
   process.env.DATABASE_PATH = TEST_DB;
 }
-
-// Issue #65 Phase B: configure a sunset date BEFORE the server module loads so
-// the v1-deprecation `Sunset` header is emitted (the value is read once at
-// startup). The deprecation signature tests below assert on this exact date.
-const SIG_V1_SUNSET = "2026-09-06";
-process.env.SIGNATURE_V1_SUNSET = SIG_V1_SUNSET;
 
 // Clear require cache entries so a fresh DB singleton is created even if
 // another test file already loaded these modules.
@@ -520,13 +514,14 @@ describe("GET /metrics", () => {
 // ---------------------------------------------------------------------------
 // Signature canonicalization telemetry (issue #65, Phase A)
 //
-// A v1-signed and a v2-signed event ingested against a key WITH an hmac_secret
-// must be classified by effective canonical form in the Prometheus output.
+// A v2-signed ingest against a key WITH an hmac_secret is classified by its
+// effective canonical form (always "v2" now that v1 is retired) in the
+// Prometheus output; an invalid signature increments the rejection counter.
 // Counters are process-wide, so we assert on the before/after DELTA.
 // ---------------------------------------------------------------------------
 
 describe("signature canonicalization metrics", () => {
-  const { canonicalize, canonicalizeV2 } = require("../../src/signature");
+  const { canonicalizeV2 } = require("../../src/signature");
   const SIG_SECRET = "phase-a-hmac-secret";
   let signKey;
 
@@ -564,32 +559,20 @@ describe("signature canonicalization metrics", () => {
     signKey = (await res.json()).key;
   });
 
-  // Phase D flipped the default to strict (v1 rejected). These telemetry tests
-  // exercise the v1 *acceptance* path, so they explicitly opt back into
-  // transition mode via the REQUIRE_CANON_V2=false escape hatch; afterEach
-  // clears it so the v2/reject/unsigned tests below run under the new default.
-  afterEach(() => { delete process.env.REQUIRE_CANON_V2; });
-
-  test("v1- and v2-signed ingests are counted by effective form", async () => {
-    process.env.REQUIRE_CANON_V2 = "false"; // accept v1 to exercise the v1 counter
+  test("a v2-signed ingest is counted by effective form", async () => {
     const before = await scrape();
-    const v1Before = counterFor(before, "v1", "true");
     const v2Before = counterFor(before, "v2", "true");
 
-    const v1Res = await ingest(signedEvent(canonicalize, "v1"), signKey);
-    assert.equal(v1Res.status, 202);
-    const v2Res = await ingest(signedEvent(canonicalizeV2, "v2"), signKey);
-    assert.equal(v2Res.status, 202);
+    const res = await ingest(signedEvent(canonicalizeV2, "v2"), signKey);
+    assert.equal(res.status, 202);
 
     const after = await scrape();
-    assert.equal(counterFor(after, "v1", "true"), v1Before + 1, "v1 counter should increment by 1");
     assert.equal(counterFor(after, "v2", "true"), v2Before + 1, "v2 counter should increment by 1");
   });
 
   test("an invalid signature (tampered v2 digest) is rejected and counted as a rejection", async () => {
-    // Use a v2 marker so the request clears the default-strict gate and is
-    // rejected for the GENUINE reason (digest mismatch), not for being v1 —
-    // keeping this test faithful to its name under the Phase D default.
+    // A v2-marked event whose digest is wrong → the genuine digest-mismatch
+    // path (not a marker rejection), so the rejection counter increments.
     const ev = signedEvent(canonicalizeV2, "v2");
     ev.signature.value = "AAAA"; // wrong digest
     const res = await ingest(ev, signKey);
@@ -598,59 +581,30 @@ describe("signature canonicalization metrics", () => {
     const text = await scrape();
     assert.match(text, /aep_signature_verifications_rejected_total\{marked="true"\}\s+\d+/);
   });
-
-  // Issue #65 Phase B — RFC 8594 deprecation signaling on accepted v1 ingest.
-  // SIGNATURE_V1_SUNSET was set in the bootstrap, so Sunset is expected too.
-  // Phase D: v1 is only accepted under the REQUIRE_CANON_V2=false escape hatch,
-  // so opt into transition mode to reach the deprecation-header path at all.
-  test("a v1-signed ingest carries Deprecation + Sunset headers", async () => {
-    process.env.REQUIRE_CANON_V2 = "false";
-    const res = await ingest(signedEvent(canonicalize, "v1"), signKey);
-    assert.equal(res.status, 202);
-    assert.equal(res.headers.get("deprecation"), "true");
-    assert.equal(res.headers.get("sunset"), new Date(SIG_V1_SUNSET).toUTCString());
-    assert.match(res.headers.get("link") || "", /rel="deprecation"/);
-  });
-
-  test("a v2-signed ingest carries NO deprecation headers", async () => {
-    const res = await ingest(signedEvent(canonicalizeV2, "v2"), signKey);
-    assert.equal(res.status, 202);
-    assert.equal(res.headers.get("deprecation"), null);
-    assert.equal(res.headers.get("sunset"), null);
-  });
-
-  test("an unsigned ingest (no-secret key) carries NO deprecation headers", async () => {
-    // writeKey has no hmac_secret → signatures are ignored, so an unsigned event
-    // is accepted and must not be flagged as legacy v1.
-    const res = await ingest(makeEvent(), writeKey);
-    assert.equal(res.status, 202);
-    assert.equal(res.headers.get("deprecation"), null);
-    assert.equal(res.headers.get("sunset"), null);
-  });
 });
 
 // ---------------------------------------------------------------------------
-// Default strict mode — REQUIRE_CANON_V2 (issue #65, Phase D, BREAKING)
+// Per-event signature acceptance — v2 only (issue #65 Phase E, BREAKING)
 //
-// Phase D flipped the default: with the flag UNSET the server requires an
-// explicit canon:"v2" deep signature on ingest, rejecting v1 and unmarked
-// signatures with 401 (no deprecation headers — that is a hard reject, not an
-// accepted v1). The REQUIRE_CANON_V2=false (also 0/no/off) escape hatch restores
-// transition mode (v1 still accepted, with the Phase B deprecation header). The
-// flag is read per-request, so we toggle process.env around each test against
-// the running app and clear it in afterEach.
+// The server accepts ONLY a payload-covering v2 signature: an explicit
+// canon:"v2" marker that verifies against the deep form. A legacy v1 signature,
+// an unmarked signature (even one that would verify deep), and any non-"v2"
+// marker are rejected with 401 + an actionable error and NO RFC 8594
+// Deprecation/Sunset/Link headers. The transition mode, the REQUIRE_CANON_V2
+// escape hatch, and the v1 deprecation headers were all removed — there is no
+// env that re-accepts v1.
 // ---------------------------------------------------------------------------
 
-describe("default strict mode — REQUIRE_CANON_V2 (issue #65, Phase D)", () => {
-  const { canonicalize, canonicalizeV2 } = require("../../src/signature");
-  const STRICT_SECRET = "phase-c-hmac-secret";
-  let strictKey;
+describe("per-event signature acceptance — v2 only (issue #65 Phase E)", () => {
+  const { canonicalizeV2 } = require("../../src/signature");
+  const SIG_SECRET = "phase-e-hmac-secret";
+  let signKey;
 
-  // Sign `event` with `form`; attach `canon` marker only when a string is given
-  // (pass undefined to OMIT the marker — simulates a pre-v0.3.0 unmarked emitter).
+  // Sign over `form`; attach the canon marker only when a string is given (pass
+  // undefined to OMIT it — simulates a pre-v0.3.0 unmarked emitter).
   function signedEvent(form, canon) {
-    const event = makeEvent({ payload: { task: "strict", nested: { deep: 1 } } });
-    const value = crypto.createHmac("sha256", STRICT_SECRET).update(form(event), "utf8").digest("base64");
+    const event = makeEvent({ payload: { task: "v2only", nested: { deep: 1 } } });
+    const value = crypto.createHmac("sha256", SIG_SECRET).update(form(event), "utf8").digest("base64");
     event.signature = { alg: "hmac-sha256", value };
     if (typeof canon === "string") event.signature.canon = canon;
     return event;
@@ -661,104 +615,53 @@ describe("default strict mode — REQUIRE_CANON_V2 (issue #65, Phase D)", () => 
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
       body: JSON.stringify({
-        tenantId: "tenant-strict", label: "strict-signing-key", scopes: ["read", "write"], hmacSecret: STRICT_SECRET,
+        tenantId: "tenant-v2only", label: "v2-signing-key", scopes: ["read", "write"], hmacSecret: SIG_SECRET,
       }),
     });
-    strictKey = (await res.json()).key;
+    signKey = (await res.json()).key;
   });
 
-  // Always clear the flag so it can never leak into other test blocks.
-  afterEach(() => { delete process.env.REQUIRE_CANON_V2; });
+  test("a v2-signed event is accepted (202) with no deprecation headers", async () => {
+    const res = await ingest(signedEvent(canonicalizeV2, "v2"), signKey);
+    assert.equal(res.status, 202);
+    assert.equal(res.headers.get("deprecation"), null);
+    assert.equal(res.headers.get("sunset"), null);
+    assert.equal(res.headers.get("link"), null);
+  });
 
-  test("flag unset (default, Phase D): a v1-signed event is REJECTED (401) with an actionable error and NO deprecation headers", async () => {
-    // The breaking flip: strict is now the default, so an unmarked v1 emitter is
-    // rejected out of the box (no REQUIRE_CANON_V2 set).
-    const res = await ingest(signedEvent(canonicalize, "v1"), strictKey);
+  test("a v1-signed event is REJECTED (401) with an actionable error and NO deprecation headers", async () => {
+    const res = await ingest(signedEvent(canonicalizeV2, "v1"), signKey);
     assert.equal(res.status, 401);
     const body = await res.json();
     assert.equal(body.accepted, false);
-    assert.match(body.detail, /Strict mode requires canon/);
+    // Actionable, SDK-agnostic hint (sanitized detail is escaped + capped at 100
+    // chars; the message is ≤99 so it arrives intact).
+    assert.match(body.detail, /canon/);
     assert.match(body.detail, /AEP SDK/);
-    // A strict 401 is a hard reject, not an accepted v1 → no RFC 8594 headers.
+    // Hard reject, not an accepted-v1 ingest → no RFC 8594 headers.
     assert.equal(res.headers.get("deprecation"), null);
     assert.equal(res.headers.get("sunset"), null);
+    assert.equal(res.headers.get("link"), null);
   });
 
-  test("flag unset (default, Phase D): a v2-signed event is accepted (202)", async () => {
-    const res = await ingest(signedEvent(canonicalizeV2, "v2"), strictKey);
-    assert.equal(res.status, 202);
-    assert.equal(res.headers.get("deprecation"), null);
-  });
-
-  test("flag unset (default, Phase D): an unmarked deep signature is rejected (401)", async () => {
-    // Strict mode requires the explicit canon:"v2" marker, even for a sig that
-    // would verify deep (e.g. a pre-v0.3.0 Go emitter).
-    const res = await ingest(signedEvent(canonicalizeV2, undefined), strictKey);
+  test("an unmarked deep signature is rejected (401) — the explicit canon:\"v2\" marker is required", async () => {
+    const res = await ingest(signedEvent(canonicalizeV2, undefined), signKey);
     assert.equal(res.status, 401);
   });
 
-  test("REQUIRE_CANON_V2=true: a v2-signed event is accepted (202) with no deprecation headers", async () => {
-    process.env.REQUIRE_CANON_V2 = "true";
-    const res = await ingest(signedEvent(canonicalizeV2, "v2"), strictKey);
-    assert.equal(res.status, 202);
-    const body = await res.json();
-    assert.equal(body.accepted, true);
-    assert.equal(res.headers.get("deprecation"), null);
-    assert.equal(res.headers.get("sunset"), null);
-  });
-
-  test("REQUIRE_CANON_V2=true: a v1-signed event is rejected (401) with an actionable error and NO deprecation headers", async () => {
-    process.env.REQUIRE_CANON_V2 = "true";
-    const res = await ingest(signedEvent(canonicalize, "v1"), strictKey);
-    assert.equal(res.status, 401);
-    const body = await res.json();
-    assert.equal(body.accepted, false);
-    // Sanitized detail: quotes escaped, truncated at 100 chars. The new error
-    // message is ≤99 chars so it arrives intact — assert on key phrases.
-    assert.match(body.detail, /Strict mode requires canon/);
-    assert.match(body.detail, /AEP SDK/);
-    // A strict 401 is NOT an accepted-v1 ingest → no RFC 8594 headers.
-    assert.equal(res.headers.get("deprecation"), null);
-    assert.equal(res.headers.get("sunset"), null);
-  });
-
-  test("REQUIRE_CANON_V2=true: an unmarked deep signature is rejected (401)", async () => {
-    process.env.REQUIRE_CANON_V2 = "true";
-    const res = await ingest(signedEvent(canonicalizeV2, undefined), strictKey);
-    assert.equal(res.status, 401);
-  });
-
-  test("REQUIRE_CANON_V2=1: v1-signed event is rejected (401) — '1' alias works", async () => {
-    process.env.REQUIRE_CANON_V2 = "1";
-    const res = await ingest(signedEvent(canonicalize, "v1"), strictKey);
-    assert.equal(res.status, 401);
-  });
-
-  test("REQUIRE_CANON_V2=false (escape hatch): v1 accepted (202) AND carries the Phase B Deprecation header (transition restored)", async () => {
+  test("REQUIRE_CANON_V2=false has NO effect — the escape hatch is gone, v1 is still 401", async () => {
+    // The env was removed in Phase E; setting it must not re-accept v1.
     process.env.REQUIRE_CANON_V2 = "false";
-    const res = await ingest(signedEvent(canonicalize, "v1"), strictKey);
-    assert.equal(res.status, 202);
-    // Transition mode restored → the accepted-v1 ingest signals deprecation.
-    assert.equal(res.headers.get("deprecation"), "true");
-    assert.equal(res.headers.get("sunset"), new Date(SIG_V1_SUNSET).toUTCString());
+    try {
+      const res = await ingest(signedEvent(canonicalizeV2, "v1"), signKey);
+      assert.equal(res.status, 401);
+    } finally {
+      delete process.env.REQUIRE_CANON_V2;
+    }
   });
 
-  test("REQUIRE_CANON_V2=off (alias): v1 still accepted (202) — case-insensitive opt-out", async () => {
-    process.env.REQUIRE_CANON_V2 = "OFF";
-    const res = await ingest(signedEvent(canonicalize, "v1"), strictKey);
-    assert.equal(res.status, 202);
-  });
-
-  test("REQUIRE_CANON_V2=false: an unmarked deep signature is accepted (202) — transition mode", async () => {
-    process.env.REQUIRE_CANON_V2 = "false";
-    const res = await ingest(signedEvent(canonicalizeV2, undefined), strictKey);
-    assert.equal(res.status, 202);
-  });
-
-  test("REQUIRE_CANON_V2=true: key with NO hmac_secret skips signature check — event accepted regardless", async () => {
-    // Keys without an hmac_secret bypass the entire signature block; strict mode
-    // must not affect them (they have no secret to verify against).
-    process.env.REQUIRE_CANON_V2 = "true";
+  test("a key with NO hmac_secret skips signature verification — event accepted regardless", async () => {
+    // Keys without an hmac_secret bypass the entire signature block.
     const res = await ingest(makeEvent(), writeKey); // writeKey has no hmac_secret
     assert.equal(res.status, 202);
   });
