@@ -22,6 +22,7 @@ coverage/
 
 # Docs
 AEP_PRD.md
+AEP_competitive_analysis.md
 
 # PDF exports (use SETUP.md as source of truth; PDF is for sharing only)
 *.pdf
