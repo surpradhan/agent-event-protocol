@@ -99,11 +99,26 @@ const SUPPORTED_CANON = new Set(["v1", "v2"]);
  * `.valid`/`.error` are unaffected; observability (issue #65) uses `canon` to
  * see who is still relying on the legacy v1 form.
  *
+ * Strict mode (issue #65, Phase C) — opt-in via `requireCanonV2`. When enabled,
+ * a signature is accepted IFF `signature.canon === "v2"` AND it verifies against
+ * the deep (v2) form. A "v1" marker, an ABSENT marker, or any non-"v2" value is
+ * rejected up front — INCLUDING an unmarked signature that would otherwise
+ * verify deep (the transition affordance is disabled under strict; an explicit
+ * marker is required). Default `false` → unchanged transition behaviour, so the
+ * only caller that opts in is the server (via the REQUIRE_CANON_V2 env); every
+ * other caller is untouched.
+ *
+ * Security note: the `canon` marker is outside HMAC coverage (a routing hint),
+ * but requiring it is NOT a downgrade hole — strict mode STILL requires the deep
+ * HMAC to verify, which an attacker cannot forge without the secret. Adding or
+ * stripping a marker can't manufacture a valid deep signature.
+ *
  * @param {object} event   Full event envelope including the `signature` field.
  * @param {string} secret  The HMAC secret associated with the API key.
+ * @param {{ requireCanonV2?: boolean }} [opts]  Strict-mode policy (issue #65 C).
  * @returns {{ valid: boolean, canon?: "v1"|"v2", error?: string }}
  */
-function verifySignature(event, secret) {
+function verifySignature(event, secret, { requireCanonV2 = false } = {}) {
   const sig = event.signature;
 
   if (!sig || typeof sig !== "object") {
@@ -122,6 +137,21 @@ function verifySignature(event, secret) {
   }
 
   const canon = sig.canon;
+
+  // Issue #65, Phase C — opt-in strict mode. The server requires payload-
+  // covering v2 signatures: accept ONLY an explicit canon:"v2" marker (verified
+  // against the deep form below). Reject "v1", absent, or any non-"v2" value
+  // here, BEFORE trying any shallow form — including an unmarked signature that
+  // would otherwise verify deep (the transition affordance is off under strict).
+  if (requireCanonV2 && canon !== "v2") {
+    return {
+      valid: false,
+      error:
+        'Signature uses the deprecated v1 canonicalization; this server requires ' +
+        'canon:"v2". Upgrade to a v2-default AEP SDK or sign with { canon: "v2" }.'
+    };
+  }
+
   if (canon !== undefined && !SUPPORTED_CANON.has(canon)) {
     return {
       valid: false,

@@ -31,6 +31,7 @@ If `DASHBOARD_TOKEN` is not set, the dashboard and all read endpoints are **open
 | `RATE_LIMIT_RPM` | No (default: `300`) | Max `POST /events` requests per API key per 60-second window. `0` disables. |
 | `AUDIT_SIGNING_SECRET` | For audit export/verify | Server-side HMAC secret that signs/verifies tamper-evident audit bundles (`aep audit`). Distinct from per-API-key HMAC secrets. When unset, audit export/verify fail with a clear error. |
 | `SIGNATURE_V1_SUNSET` | No (default: unset) | ISO-8601 date (e.g. `2026-09-06`) after which the legacy v1 signature form will be rejected. When set, drives the RFC 8594 `Sunset` header on accepted v1-signed ingest (issue #65, Phase B). Unset → no `Sunset` header. v1 is **still accepted** regardless. |
+| `REQUIRE_CANON_V2` | No (default: `false`) | Opt-in strict mode (issue #65, Phase C). `true`/`1` → the server **rejects** per-event signatures that are not an explicit `canon:"v2"` deep signature (v1, unmarked, and any non-`v2` marker → `401`). Default off → transition mode (v1 **and** v2 accepted). **Independent of `SIGNATURE_V1_SUNSET`** — passing the sunset date does not auto-enable this; turning it on is an explicit operator decision. The global default flip to strict is a later phase of #65. |
 
 See `.env.example` for the full annotated template.
 
@@ -217,6 +218,7 @@ await fetch('http://localhost:8787/events', {
 | 401 | Signature algorithm not `hmac-sha256` |
 | 401 | Signature value is missing or wrong |
 | 401 | Unsupported `signature.canon` (must be `v1` or `v2`) |
+| 401 | Legacy v1 (or unmarked) signature rejected because `REQUIRE_CANON_V2` strict mode is enabled (issue #65, Phase C) |
 | 400 | Event fails schema validation (separate from signature) |
 
 ### Canonicalization versions (`signature.canon`) — issue #59
@@ -297,6 +299,45 @@ date after which v1 will be rejected. When unset, only `Deprecation`/`Link` are
 emitted (no committed date yet); a set-but-unparseable value is ignored with a
 startup warning. v2-signed, unsigned, and rejected requests get **no** deprecation
 headers.
+
+**Opt-in strict mode (issue #65, Phase C).** Security-sensitive deployments can
+enforce payload-covering (v2) signatures *today* by setting `REQUIRE_CANON_V2`
+(`true`/`1`, case-insensitive). It is **off by default** and non-breaking until
+an operator turns it on. When **on**, the verifier accepts a signature **iff**:
+
+- `signature.canon === "v2"` is present, **and**
+- the signature verifies against the deep (v2) form.
+
+Everything else is rejected with `401`:
+
+| Signature | Strict mode (`REQUIRE_CANON_V2=true`) |
+|---|---|
+| `canon: "v2"`, deep-valid | **accepted** (`202`) |
+| `canon: "v1"` | **rejected** (`401`) |
+| *absent* marker — **even if it would verify deep** (e.g. a pre-v0.3.0 Go emitter) | **rejected** (`401`) |
+| any non-`v2` / unknown marker | **rejected** (`401`) |
+| `canon: "v2"` but payload-tampered (deep HMAC fails) | **rejected** (`401`) |
+
+The `401` carries an actionable message:
+
+> `Signature uses the deprecated v1 canonicalization; this server requires canon:"v2". Upgrade to a v2-default AEP SDK or sign with { canon: "v2" }.`
+
+A strict rejection is a **hard `401`**, so (unlike an *accepted* v1 ingest under
+Phase B) it carries **no** `Deprecation`/`Sunset` headers. Rejections still
+increment `aep_signature_verifications_rejected_total`.
+
+Why require the *explicit* marker (and reject unmarked-but-deep)? The current
+v2-default SDKs all set `canon:"v2"`, so requiring it doesn't break them — only
+true legacy/v1 emitters are turned away. The marker is outside HMAC coverage, but
+this is safe: strict mode **also** requires the deep HMAC to verify, which an
+attacker cannot forge without the secret, so adding/stripping the marker can't
+manufacture a valid signature.
+
+`REQUIRE_CANON_V2` is **independent of `SIGNATURE_V1_SUNSET`** — reaching the
+sunset date does **not** auto-enable strict mode (that surprising auto-flip is
+deliberately out of scope). Flipping the *global default* to strict (so the
+server rejects v1 out of the box) is a separate, later, breaking phase of
+issue #65.
 
 This is **signaling only — v1 events are still accepted**. Hard rejection of v1
 (the server requiring `canon: "v2"`) is a later, breaking phase of issue #65 and
