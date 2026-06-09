@@ -1,8 +1,8 @@
 # `@surpradhan/aep` — AEP Node.js / TypeScript SDK
 
-The Node.js/TypeScript SDK for the [Agent Event Protocol](../../README.md) (AEP) —
+The Node.js/TypeScript SDK for the [Agent Event Protocol](https://github.com/surpradhan/agent-event-protocol#readme) (AEP) —
 a framework-neutral observability protocol for multi-agent AI systems. Mirrors the
-[Python](../python/) and [Go](../go/) SDKs: same event envelope, same canonical
+[Python](https://github.com/surpradhan/agent-event-protocol/tree/main/sdks/python) and [Go](https://github.com/surpradhan/agent-event-protocol/tree/main/sdks/go) SDKs: same event envelope, same canonical
 HMAC signing contract, same client surface.
 
 > Ships the SDK core (event factory, validation, HMAC signing, ingest/query
@@ -80,13 +80,15 @@ absent → accepts either form).
 envelope-only form. It remains byte-identical across all SDKs and the server
 (locked by a Python-produced parity fixture in `tests/unit/signature.test.ts`).
 
-> **Compatibility:** a v2-default emitter requires a v2-aware server (one that
-> includes server PR #60+). An older server predating `signature.canon` support
-> would reject v2; the server still accepts v1 during the transition, so
-> `{ canon: "v1" }` remains available for legacy servers. Hard-retiring v1 (server
-> requiring v2) is a separate future change tracked in [issue #59].
+> **Compatibility:** the v2 default requires a v2-aware server (one that includes
+> server PR #60+). The current AEP server **requires v2 and rejects legacy v1**
+> with `401` — the v1 retirement is complete ([issue #65], the successor to the
+> [issue #59] unification). `{ canon: "v1" }` is retained only for talking to an
+> **older self-hosted server** that predates `signature.canon` support; a current
+> server rejects it.
 
 [issue #59]: https://github.com/surpradhan/agent-event-protocol/issues/59
+[issue #65]: https://github.com/surpradhan/agent-event-protocol/issues/65
 
 ## Auto-instrumentation (LangChain.js / LangGraph)
 
@@ -154,7 +156,7 @@ Tested against Node 20.x and 22.x.
 ## Publishing / Releases
 
 Releases are cut from `main` by pushing a `node-sdk-vX.Y.Z` tag — the
-[`Release Node SDK`](../../.github/workflows/release-node-sdk.yml) workflow
+[`Release Node SDK`](https://github.com/surpradhan/agent-event-protocol/blob/main/.github/workflows/release-node-sdk.yml) workflow
 then verifies the tag, builds and tests, and — only after a required-reviewer
 approval — runs `npm publish --provenance --access public` for this package.
 To cut a release:

@@ -1,6 +1,6 @@
 # AEP Python SDK
 
-Python client library for the [Agent Event Protocol](../../README.md) — an observability framework for agent workflows.
+Python client library for the [Agent Event Protocol](https://github.com/surpradhan/agent-event-protocol#readme) — an observability framework for agent workflows.
 
 **Version:** 0.4.0 · **Python:** ≥ 3.10 · **Schema:** AEP v0.2.0
 
@@ -430,12 +430,14 @@ sign_event(event, secret="my-hmac-secret", canon="v1")  # legacy envelope-only
 `verify_signature` is version-aware (honours `canon`; an absent marker accepts
 either form).
 
-> **Compatibility:** a v2-default emitter requires a v2-aware server (server
-> PR #60+). An older server predating `signature.canon` support would reject v2;
-> the server still accepts v1 during the transition, so `canon="v1"` remains
-> available for legacy servers. Hard-retiring v1 (server requiring v2) is a
-> separate future change tracked in
-> [issue #59](https://github.com/surpradhan/agent-event-protocol/issues/59).
+> **Compatibility:** the v2 default requires a v2-aware server (one that includes
+> server PR #60+). The current AEP server **requires v2 and rejects legacy v1**
+> with `401` — the v1 retirement is complete
+> ([issue #65](https://github.com/surpradhan/agent-event-protocol/issues/65),
+> the successor to the [#59](https://github.com/surpradhan/agent-event-protocol/issues/59)
+> unification). `canon="v1"` is retained only for talking to an **older
+> self-hosted server** that predates `signature.canon` support; a current server
+> rejects it.
 
 ---
 
@@ -468,7 +470,7 @@ result = validate_event(event)
 
 ## Demo
 
-A complete multi-agent research demo is in [`demos/subagent_research.py`](demos/subagent_research.py).
+A complete multi-agent research demo is in [`demos/subagent_research.py`](https://github.com/surpradhan/agent-event-protocol/blob/main/sdks/python/demos/subagent_research.py).
 It mirrors the JS demo and exercises the session tree and workflow APIs.
 
 ```bash
@@ -500,7 +502,7 @@ AEP_INGEST_URL=http://localhost:8787 pytest tests/integration/
 ## Publishing / Releases
 
 The SDK is published to PyPI as **`agent-event-protocol`** (import name stays `aep`) by
-the [`Release Python SDK`](../../.github/workflows/release-python-sdk.yml)
+the [`Release Python SDK`](https://github.com/surpradhan/agent-event-protocol/blob/main/.github/workflows/release-python-sdk.yml)
 workflow, which is triggered **only** by pushing a `python-sdk-v*` tag — never on
 a branch push or PR. Publishing uses **PyPI Trusted Publishing (OIDC)**, so there
 is no API token to store or leak.
