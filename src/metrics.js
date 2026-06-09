@@ -13,7 +13,7 @@
  * -------
  *   metricsMiddleware            — Express middleware; must be registered early
  *   getPrometheusText(dbStats)   — Returns the full Prometheus text payload
- *   recordSignatureVerification  — Count an accepted signature by effective form
+ *   recordSignatureVerification  — Count an accepted signature by canonical form
  *   recordSignatureRejection     — Count a signature verification failure
  *   getSignatureMetrics()        — Snapshot of signature counters (for JSON /metrics)
  */
@@ -32,25 +32,23 @@ const latencyData = new Map();
 // Signature canonicalization observability (issue #65, Phase A)
 // ---------------------------------------------------------------------------
 //
-// We want to see who is still relying on the legacy v1 (envelope-only) signature
-// form before the server stops accepting it. These counters classify each
-// signature verification on ingest by its EFFECTIVE canonical form (the form
-// that actually verified) plus whether the emitter set a `signature.canon`
-// marker. Labels are intentionally low cardinality — NO tenant/source/key
+// These counters classify each accepted signature verification by its canonical
+// form (v2 is the only accepted form since issue #65 Phase E) plus whether the
+// emitter set a `signature.canon` marker. Labels are intentionally low cardinality — NO tenant/source/key
 // labels (those would explode Prometheus series; per-tenant attribution is done
 // via a sampled structured log instead, see src/server.js).
 
-// Map: "form|marked" → count   (accepted/verified signatures; form ∈ {v1,v2}, marked ∈ {true,false})
+// Map: "form|marked" → count   (accepted/verified signatures; form ∈ {v2}, marked ∈ {true,false})
 const sigVerifications = new Map();
 
 // Map: "marked" → count        (verification failures; effective form is unknown on failure)
 const sigRejections = new Map();
 
 /**
- * Record an accepted HMAC signature, classified by the effective canonical
- * form and whether a `signature.canon` marker was present.
+ * Record an accepted HMAC signature, classified by canonical form and whether
+ * a `signature.canon` marker was present.
  *
- * @param {{ form: "v1"|"v2", marked: boolean }} info
+ * @param {{ form: "v2", marked: boolean }} info
  */
 function recordSignatureVerification({ form, marked }) {
   const key = `${form}|${marked ? "true" : "false"}`;
@@ -200,7 +198,7 @@ function getPrometheusText(dbStats) {
   // ---- Signature canonicalization (issue #65) ------------------------------
 
   if (sigVerifications.size > 0) {
-    lines.push("# HELP aep_signature_verifications_total Accepted HMAC signatures by effective canonical form (v1=legacy envelope-only, v2=deep). marked=whether a signature.canon marker was present.");
+    lines.push("# HELP aep_signature_verifications_total Accepted HMAC signatures by canonical form (v2=deep). marked=whether a signature.canon marker was present.");
     lines.push("# TYPE aep_signature_verifications_total counter");
     for (const [key, count] of sigVerifications) {
       const [form, marked] = key.split("|");
