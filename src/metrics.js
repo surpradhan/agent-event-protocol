@@ -32,11 +32,9 @@ const latencyData = new Map();
 // Signature canonicalization observability (issue #65, Phase A)
 // ---------------------------------------------------------------------------
 //
-// We want to see who is still relying on the legacy v1 (envelope-only) signature
-// form before the server stops accepting it. These counters classify each
-// signature verification on ingest by its EFFECTIVE canonical form (the form
-// that actually verified) plus whether the emitter set a `signature.canon`
-// marker. Labels are intentionally low cardinality — NO tenant/source/key
+// These counters classify each accepted signature verification by its canonical
+// form (v2 is the only accepted form since issue #65 Phase E) plus whether the
+// emitter set a `signature.canon` marker. Labels are intentionally low cardinality — NO tenant/source/key
 // labels (those would explode Prometheus series; per-tenant attribution is done
 // via a sampled structured log instead, see src/server.js).
 
