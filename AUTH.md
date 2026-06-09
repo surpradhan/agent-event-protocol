@@ -273,7 +273,7 @@ Everything else is rejected with `401`:
 
 The `401` carries an actionable message:
 
-> `Signature must use canon:"v2" (payload-covering). Upgrade to a v2-default AEP SDK.`
+> `Signature must use canon:"v2" (payload-covering). Set canon:"v2" or upgrade your AEP SDK.`
 
 (For unrecognised marker values the error reads: `Unsupported canon '<value>' — only canon:"v2" is accepted.`)
 
@@ -352,10 +352,12 @@ aep audit verify bundle.json --json   # machine-readable result
 If `AUDIT_SIGNING_SECRET` is unset, both commands fail with a clear error
 (mirroring how `ADMIN_TOKEN` gates the `/admin/*` routes).
 
-> **Note on scope:** the per-event transport signature (above) canonicalizes only
-> the envelope, so it does not by itself cover nested payload bytes. The audit
-> bundle's `content_digest` uses a deeper serialization that *does* cover
-> payloads, which is what makes the bundle suitable for compliance review.
+> **Note on scope:** v2 per-event signatures cover the full event including nested
+> payloads (the deep canonical form removes the `signature` field then sorts every
+> key recursively). The audit bundle adds a separate `content_digest` over the
+> *ordered sequence* of events in a session export, making post-export tampering
+> (event deletion, reordering, or payload edits) detectable offline — complementary
+> to per-event signing, not a substitute.
 
 ---
 

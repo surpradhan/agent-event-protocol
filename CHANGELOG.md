@@ -19,7 +19,7 @@ re-accept v1.
   ingest is now accepted **iff** `signature.canon === "v2"` **and** the deep HMAC
   verifies. A v1 marker, an absent marker, an unmarked-but-deep-valid signature,
   or any non-`v2` marker → `401` with the actionable message
-  *`Signature must use canon:"v2" (payload-covering). Upgrade to a v2-default AEP SDK.`*
+  *`Signature must use canon:"v2" (payload-covering). Set canon:"v2" or upgrade your AEP SDK.`*
 - **The `REQUIRE_CANON_V2` environment variable** (incl. the `=false` / `0` / `no`
   / `off` escape hatch). It is gone — setting it has **no effect**; v1 is always
   rejected. The `verifySignature(event, secret)` call is now unconditional (the
