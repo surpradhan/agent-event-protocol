@@ -2,7 +2,7 @@
 
 Python client library for the [Agent Event Protocol](https://github.com/surpradhan/agent-event-protocol#readme) — an observability framework for agent workflows.
 
-**Version:** 0.4.0 · **Python:** ≥ 3.10 · **Schema:** AEP v0.2.0
+**Version:** 0.4.1 · **Python:** ≥ 3.10 · **Schema:** AEP v0.2.0
 
 ---
 
@@ -537,7 +537,7 @@ Before the first release, configure the publisher side (cannot be done from code
 # 1. Bump sdks/python/pyproject.toml `version` AND aep/__init__.py `__version__`
 #    (keep them in sync) on a PR; squash-merge to main.
 # 2. From main, tag the release commit and push the tag:
-git tag python-sdk-v0.4.0
-git push origin python-sdk-v0.4.0
+git tag python-sdk-v0.4.1
+git push origin python-sdk-v0.4.1
 # 3. Approve the `pypi-publish` deployment in the Actions UI once `verify` is green.
 ```

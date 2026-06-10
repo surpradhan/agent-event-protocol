@@ -24,10 +24,10 @@
  * absent marker as transition mode (accept either form), matching the server.
  *
  * **Compatibility:** a v2-default emitter requires a v2-aware server (one that
- * includes server PR #60+, i.e. a version-aware verifier). An older server that
- * predates `signature.canon` support would reject v2 signatures. The server keeps
- * accepting v1 during the transition, so `{ canon: "v1" }` remains available for
- * talking to legacy servers.
+ * includes server PR #60+). The current server requires v2 and rejects legacy v1
+ * with `401` (issue #65, v1 retirement complete). `{ canon: "v1" }` is retained
+ * only for talking to an older self-hosted server that predates `signature.canon`
+ * support.
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
