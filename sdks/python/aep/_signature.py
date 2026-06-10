@@ -23,10 +23,10 @@ from typing import Any, Literal
 # treats an absent marker as transition mode (accept either form), matching the
 # server.
 #
-# Compatibility: a v2-default emitter requires a v2-aware server (server PR #60+);
-# an older server that predates ``signature.canon`` support would reject v2. The
-# server keeps accepting v1 during the transition, so ``canon="v1"`` remains
-# available for talking to legacy servers.
+# Compatibility: a v2-default emitter requires a v2-aware server (server PR #60+).
+# The current server requires v2 and rejects legacy v1 with 401 (issue #65, v1
+# retirement complete). ``canon="v1"`` is retained only for talking to an older
+# self-hosted server that predates ``signature.canon`` support.
 _SUPPORTED_CANON = frozenset({"v1", "v2"})
 
 

@@ -49,9 +49,9 @@ import (
 // absent marker as transition mode (accept either form), matching the server.
 //
 // Compatibility: a v2-default emitter requires a v2-aware server (server PR #60+).
-// An older server that predates `signature.canon` support would reject v2; the
-// server keeps accepting v1 during the transition, so SignEventV1 remains
-// available for legacy servers.
+// The current server requires v2 and rejects legacy v1 with 401 (issue #65, v1
+// retirement complete). SignEventV1 is retained only for talking to an older
+// self-hosted server that predates signature.canon support.
 
 // supportedCanon is the set of canonicalization version markers this SDK accepts.
 var supportedCanon = map[string]bool{"v1": true, "v2": true}

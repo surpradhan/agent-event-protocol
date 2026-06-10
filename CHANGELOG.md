@@ -4,6 +4,24 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Python SDK `agent-event-protocol` 0.4.1 — 2026-06-10
+
+Docs / source-comment patch. **No functional, signing, or API changes.**
+
+- **Fixed broken links on the PyPI project page** (`../../README.md` →
+  absolute GitHub URL, `demos/subagent_research.py` → absolute GitHub URL).
+- **Corrected stale v1/v2 compatibility note** in the README: the current server
+  *requires* v2 and *rejects* legacy v1 with `401` (issue #65 complete and
+  closed); the old wording implied the server still accepted v1.
+- **Corrected stale source comments** in `_signature.py` (and the Node / Go SDK
+  source files) that said "the server keeps accepting v1 during the transition" —
+  updated to reflect issue #65 retirement.
+
+Upgrade with `pip install --upgrade agent-event-protocol`. No code changes are
+required for existing users.
+
+---
+
 ## Python SDK `agent-event-protocol` 0.4.0 — 2026-06-09
 
 Maintenance release of the Python SDK. **No functional or signing changes** —
