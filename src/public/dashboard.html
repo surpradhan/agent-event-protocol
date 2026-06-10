@@ -543,23 +543,23 @@
       <!-- Timeline sub-view -->
       <div id="sv-timeline">
         <div class="toolbar">
-        <label class="sr-only" for="search-input">Search events</label>
-        <input id="search-input" type="text" placeholder="Search event id, type, causation id, payload…" />
+          <label class="sr-only" for="search-input">Search events</label>
+          <input id="search-input" type="text" placeholder="Search event id, type, causation id, payload…" />
 
-        <label class="sr-only" for="type-filter">Filter by event type</label>
-        <select id="type-filter"><option value="">All event types</option></select>
+          <label class="sr-only" for="type-filter">Filter by event type</label>
+          <select id="type-filter"><option value="">All event types</option></select>
 
-        <label class="sr-only" for="role-filter">Filter by agent role</label>
-        <select id="role-filter">
-          <option value="">All roles</option>
-          <option value="orchestrator">orchestrator</option>
-          <option value="subagent">subagent</option>
-          <option value="standalone">standalone</option>
-        </select>
+          <label class="sr-only" for="role-filter">Filter by agent role</label>
+          <select id="role-filter">
+            <option value="">All roles</option>
+            <option value="orchestrator">orchestrator</option>
+            <option value="subagent">subagent</option>
+            <option value="standalone">standalone</option>
+          </select>
 
-        <button class="btn secondary" onclick="doExport('json')">Export JSON</button>
-        <button class="btn secondary" onclick="doExport('csv')">Export CSV</button>
-      </div>
+          <button class="btn secondary" onclick="doExport('json')">Export JSON</button>
+          <button class="btn secondary" onclick="doExport('csv')">Export CSV</button>
+        </div>
         <div id="timeline" class="item-list timeline-list"></div>
       </div>
 
@@ -1002,12 +1002,10 @@ function drillSession(sessionId) {
 function filtersUrl(sid) {
   const q    = document.getElementById('search-input').value.trim();
   const type = document.getElementById('type-filter').value;
-  const role = document.getElementById('role-filter').value;
   const p    = new URLSearchParams();
 
   if (q)    p.set('q', q);
   if (type) p.set('type', type);
-  if (role) p.set('role', role);
 
   const qs = p.toString();
   return `/sessions/${encodeURIComponent(sid)}/events${qs ? '?' + qs : ''}`;
@@ -1107,11 +1105,11 @@ function doExport(fmt) {
   if (!selSession) return;
   const q    = document.getElementById('search-input').value.trim();
   const type = document.getElementById('type-filter').value;
-  const role = document.getElementById('role-filter').value;
   const p    = new URLSearchParams({ format: fmt });
+
   if (q)    p.set('q', q);
   if (type) p.set('type', type);
-  if (role) p.set('role', role);
+
   // Include token so the export endpoint can authenticate the download.
   const tok = getToken();
   if (tok)  p.set('token', tok);
@@ -1462,7 +1460,7 @@ document.getElementById('type-filter').addEventListener('change',
   () => { activeIdx = -1; loadTimeline(); });
 document.getElementById('role-filter').addEventListener('change',
   () => { activeIdx = -1; loadTimeline(); });
-  
+
 // Session list filter
 document.getElementById('session-search').addEventListener('input',
   debounce(e => { sessionFilter = e.target.value.trim(); renderSessions(allSessions); }, 200));
