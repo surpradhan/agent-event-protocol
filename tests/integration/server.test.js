@@ -1642,15 +1642,20 @@ describe("audit-bundle endpoints", () => {
     savedSecret = process.env.AUDIT_SIGNING_SECRET;
     process.env.AUDIT_SIGNING_SECRET = AUDIT_SECRET;
 
+    // Explicit, strictly-increasing timestamps so the bundled event order is
+    // deterministic regardless of ingest timing (makeEvent otherwise stamps
+    // `new Date()` for each, which can collide in rapid succession).
+    const t = n => `2026-06-11T00:00:0${n}.000Z`;
+
     // Seed a single-session scope (2 events).
-    await ingest(makeEvent({ session_id: SESSION_ID, trace_id: "trc_audit_solo" }));
-    await ingest(makeEvent({ session_id: SESSION_ID, trace_id: "trc_audit_solo", type: "task.completed" }));
+    await ingest(makeEvent({ session_id: SESSION_ID, trace_id: "trc_audit_solo", time: t(0) }));
+    await ingest(makeEvent({ session_id: SESSION_ID, trace_id: "trc_audit_solo", type: "task.completed", time: t(1) }));
 
     // Seed a multi-session workflow trace: orchestrator root + one subagent child.
-    await ingest(makeEvent({ session_id: WF_ROOT, trace_id: WF_TRACE, agent_role: "orchestrator" }));
+    await ingest(makeEvent({ session_id: WF_ROOT, trace_id: WF_TRACE, agent_role: "orchestrator", time: t(2) }));
     await ingest(makeEvent({
       session_id: WF_CHILD, trace_id: WF_TRACE, type: "handoff.started",
-      parent_session_id: WF_ROOT, agent_role: "subagent",
+      parent_session_id: WF_ROOT, agent_role: "subagent", time: t(3),
     }));
 
     // A read key for a second tenant — used to prove tenant isolation: it must
@@ -1709,6 +1714,9 @@ describe("audit-bundle endpoints", () => {
     assert.equal(bundle.manifest.scope.trace_id, WF_TRACE);
     const sessions = new Set(bundle.events.map(e => e.session_id));
     assert.ok(sessions.has(WF_ROOT) && sessions.has(WF_CHILD));
+    // Events from both sessions are merged in ascending time order (root @t2
+    // before child @t3) — deterministic thanks to the seeded timestamps.
+    assert.deepEqual(bundle.events.map(e => e.session_id), [WF_ROOT, WF_CHILD]);
 
     const result = verifyAuditBundle(bundle, AUDIT_SECRET);
     assert.equal(result.valid, true, JSON.stringify(result.errors));

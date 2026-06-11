@@ -515,6 +515,12 @@ app.get("/workflows/:traceId/audit-bundle", requireReadAccess, validatePathParam
   // per-session fetch rejects, the whole request fails rather than emit a partial
   // bundle. Sort by the ISO `time` string with a plain comparator — the same
   // codepoint ordering the DB uses (ORDER BY time ASC), not locale-sensitive.
+  //
+  // The bundle covers exactly the session set of the `/workflows/:traceId` tree.
+  // getWorkflow derives roots as sessions whose parent is absent or outside the
+  // trace; a pathological all-in-trace parent cycle would leave those sessions
+  // unrooted and thus out of the tree (and the bundle) — the same blind spot the
+  // /workflows view has. Acceptable: such a bundle is incomplete, never wrong.
   const sessionIds = collectSessionIds(workflow.tree);
   const perSession = await Promise.all(
     sessionIds.map(sid => db.getSessionEvents(sid, { tenantId: req.tenant_id }))

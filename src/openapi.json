@@ -51,6 +51,7 @@
           "manifest": {
             "type": "object",
             "description": "Signed manifest. content_digest covers the ordered events; the signature covers the manifest (and thus, transitively, the events).",
+            "required": ["aep_audit_version", "scope", "tenant_id", "event_count", "time_range", "content_digest", "content_digest_alg", "exported_at", "per_event_signatures"],
             "properties": {
               "aep_audit_version": { "type": "string" },
               "scope": {
@@ -84,6 +85,7 @@
           "events": { "type": "array", "items": { "$ref": "#/components/schemas/AepEnvelope" } },
           "signature": {
             "type": "object",
+            "required": ["alg", "value"],
             "properties": {
               "alg": { "type": "string", "example": "hmac-sha256" },
               "value": { "type": "string", "description": "base64 HMAC-SHA256 over the canonical manifest" }
