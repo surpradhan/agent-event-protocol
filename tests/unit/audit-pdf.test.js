@@ -163,6 +163,15 @@ describe("renderAuditBundlePdf — verification honesty", () => {
     assert.ok(!text.includes(BANNER_VALID));
     assert.ok(!text.includes(BANNER_INVALID));
   });
+
+  test("malformed verification (non-boolean valid) → NOT VERIFIED, never TAMPERING DETECTED", async () => {
+    for (const verification of [{}, { valid: "yes" }, { valid: 1 }]) {
+      const text = extractPdfText(await render(sampleBundle(), { verification }));
+      assert.ok(text.includes(BANNER_UNVERIFIED));
+      assert.ok(!text.includes(BANNER_VALID));
+      assert.ok(!text.includes(BANNER_INVALID));
+    }
+  });
 });
 
 describe("renderAuditBundlePdf — payload handling", () => {

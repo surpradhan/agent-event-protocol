@@ -492,9 +492,11 @@ async function cmdAuditExport(positional, flags, serverUrl, apiKey) {
   }
 }
 
-/** bundle.json → bundle.pdf; a path without an extension just gains .pdf. */
+/** bundle.json → bundle.pdf; a path without an extension just gains .pdf.
+ * The `(.)` guard keeps an extension-only basename like `.json` intact (it
+ * becomes `.json.pdf`, not the hidden file `.pdf`). */
 function derivePdfPath(p) {
-  return p.replace(/\.[a-zA-Z0-9]+$/, "") + ".pdf";
+  return p.replace(/(.)\.[a-zA-Z0-9]+$/, "$1") + ".pdf";
 }
 
 async function cmdAuditRender(positional, flags) {
@@ -518,7 +520,10 @@ async function cmdAuditRender(positional, flags) {
     die(`Could not read/parse '${fullPath}': ${e.message}`);
   }
 
-  const verification = verifyAuditBundle(bundle, secret, { now: new Date() });
+  // One clock read shared by verify + render, so rendered_at matches the
+  // verify instant (same pattern as cmdAuditExport and sendAuditBundle).
+  const now = new Date();
+  const verification = verifyAuditBundle(bundle, secret, { now });
 
   if (!verification.valid && !flags.force) {
     console.error(`\x1b[31m✗ INVALID / TAMPERED\x1b[0m  ${fullPath}`);
@@ -534,7 +539,7 @@ async function cmdAuditRender(positional, flags) {
     die(`Output '${outPath}' would overwrite the bundle itself — give the PDF a different name.`);
   }
 
-  const pdf = await renderAuditBundlePdf(bundle, { verification, now: new Date() });
+  const pdf = await renderAuditBundlePdf(bundle, { verification, now });
   fs.writeFileSync(outPath, pdf);
   console.log(
     `\x1b[32m✓\x1b[0m PDF report written to ${outPath} ` +

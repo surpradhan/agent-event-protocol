@@ -52,7 +52,7 @@ verification result it was rendered with.
 - **OpenAPI** ([`src/openapi.json`](./src/openapi.json)): `format` query param
   (enum `json`/`pdf`, default `json`) + `application/pdf` response content on
   both audit-bundle paths.
-- **Tests:** `tests/unit/audit-pdf.test.js` (15 tests: PDF structure,
+- **Tests:** `tests/unit/audit-pdf.test.js` (17 tests: PDF structure,
   verification honesty incl. tampered-bundle rendering, payload truncation /
   ASCII sanitization, byte-determinism, no-mutation purity, input validation —
   content assertions decode pdfkit's hex `TJ` text operators back to plain

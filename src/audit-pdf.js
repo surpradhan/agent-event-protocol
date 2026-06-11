@@ -106,7 +106,11 @@ function formatPayload(payload) {
 function renderVerification(doc, verification) {
   heading(doc, "Verification status");
 
-  if (verification === undefined || verification === null) {
+  // Only a real verifyAuditBundle result (boolean `valid`) earns a VALID or
+  // INVALID banner.  Anything else — absent, null, or a malformed object —
+  // renders as NOT VERIFIED: claiming "tampering detected" for a verification
+  // that never ran would overstate what is known.
+  if (!verification || typeof verification.valid !== "boolean") {
     doc.font("Helvetica-Bold").fontSize(11).fillColor("#b45309").text(BANNER_UNVERIFIED);
     doc.fillColor("black").font("Helvetica").fontSize(9).moveDown(0.3);
     doc.text(
@@ -175,7 +179,7 @@ function renderEvent(doc, event, index) {
  *
  * @param {object} bundle  a bundle produced by buildAuditBundle:
  *                         { aep_audit_version, manifest, events, signature }.
- * @param {object} [options]
+ * @param {object} options
  * @param {object} [options.verification]  the result of verifyAuditBundle for
  *                         this bundle.  Omit only when verification genuinely
  *                         was not run — the report then says so prominently.
@@ -249,7 +253,7 @@ function renderAuditBundlePdf(bundle, { verification, now } = {}) {
     ? `${manifest.content_digest_alg || "?"}:${manifest.content_digest}`
     : "(missing)");
   kvLine(doc, "manifest signature", bundle.signature && typeof bundle.signature === "object"
-    ? `${bundle.signature.alg}:${bundle.signature.value}`
+    ? `${bundle.signature.alg ?? "?"}:${bundle.signature.value ?? "(missing)"}`
     : "(missing)");
   kvLine(doc, "exported_at", manifest.exported_at);
   kvLine(doc, "per-event transport signatures",

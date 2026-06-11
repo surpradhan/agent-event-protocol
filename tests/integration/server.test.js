@@ -1797,6 +1797,7 @@ describe("audit-bundle endpoints", () => {
     );
     const body = Buffer.from(await res.arrayBuffer());
     assert.equal(body.subarray(0, 5).toString(), "%PDF-");
+    assert.match(body.subarray(-32).toString(), /%%EOF\s*$/);
   });
 
   test("unrecognized format value falls back to the JSON bundle (parity with /export)", async () => {
