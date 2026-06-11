@@ -458,6 +458,30 @@ describe("GET /sessions/:sessionId/export", () => {
     assert.ok(text.includes("session_id"), "CSV should have header row");
     assert.ok(text.includes(SID));
   });
+
+  test("a repeated ?format param (parsed as an array) falls back to JSON, not 500", async () => {
+    // Express parses ?format=csv&format=json as req.query.format = ["csv","json"];
+    // before the typeof guard, .toLowerCase() on that array threw → 500.
+    const res = await fetch(`${baseUrl}/sessions/${SID}/export?format=csv&format=json`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") || "", /application\/json/);
+    const body = await res.json();
+    assert.equal(body.session_id, SID);
+    assert.ok(Array.isArray(body.events));
+  });
+
+  test("repeated ?type / ?q params (arrays) degrade gracefully instead of 500", async () => {
+    // type/q are passed straight to the DB; an array binding would throw there.
+    const res = await fetch(`${baseUrl}/sessions/${SID}/export?type=a&type=b&q=x&q=y`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.session_id, SID);
+    assert.ok(Array.isArray(body.events));
+  });
 });
 
 // ---------------------------------------------------------------------------
