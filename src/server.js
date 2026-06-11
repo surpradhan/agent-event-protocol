@@ -480,11 +480,12 @@ app.get("/sessions/:sessionId/audit-bundle", requireReadAccess, validatePathPara
     return res.status(403).json({ error: "Forbidden", message: "You do not have access to this session" });
   }
 
+  const derivedTraceId = singleTraceId(events);
   const bundle = buildAuditBundle({
     events,
     meta: {
       session_id: sessionId,
-      ...(singleTraceId(events) ? { trace_id: singleTraceId(events) } : {}),
+      ...(derivedTraceId ? { trace_id: derivedTraceId } : {}),
       tenant_id: req.tenant_id ?? null
     },
     secret,
@@ -510,12 +511,17 @@ app.get("/workflows/:traceId/audit-bundle", requireReadAccess, validatePathParam
 
   // Collect every session in the trace, fetch each session's (tenant-scoped)
   // events, then order the combined sequence by time. A bundle must hold ALL
-  // events for the trace to be verifiable, so there is no pagination here.
+  // events for the trace to be verifiable, so there is no pagination here; if any
+  // per-session fetch rejects, the whole request fails rather than emit a partial
+  // bundle. Sort by the ISO `time` string with a plain comparator — the same
+  // codepoint ordering the DB uses (ORDER BY time ASC), not locale-sensitive.
   const sessionIds = collectSessionIds(workflow.tree);
   const perSession = await Promise.all(
     sessionIds.map(sid => db.getSessionEvents(sid, { tenantId: req.tenant_id }))
   );
-  const events = perSession.flat().sort((a, b) => String(a.time).localeCompare(String(b.time)));
+  const events = perSession
+    .flat()
+    .sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
 
   // Defense-in-depth: never bundle events belonging to another tenant.
   if (!validateTenantOwnership(events, req.tenant_id, "workflow_events")) {

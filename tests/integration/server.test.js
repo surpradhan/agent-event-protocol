@@ -1636,6 +1636,7 @@ describe("audit-bundle endpoints", () => {
   const WF_CHILD   = "ses_audit_child";
 
   let savedSecret;
+  let otherTenantKey;   // read key bound to a DIFFERENT tenant (isolation test)
 
   before(async () => {
     savedSecret = process.env.AUDIT_SIGNING_SECRET;
@@ -1651,6 +1652,15 @@ describe("audit-bundle endpoints", () => {
       session_id: WF_CHILD, trace_id: WF_TRACE, type: "handoff.started",
       parent_session_id: WF_ROOT, agent_role: "subagent",
     }));
+
+    // A read key for a second tenant — used to prove tenant isolation: it must
+    // NOT be able to pull tenant-test's bundles (scope-nonexistent → 404).
+    const oRes = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: "tenant-other", label: "audit-other", scopes: ["read"] }),
+    });
+    otherTenantKey = (await oRes.json()).key;
   });
 
   after(() => {
@@ -1728,6 +1738,15 @@ describe("audit-bundle endpoints", () => {
   test("returns 404 for an unknown workflow trace", async () => {
     const res = await getBundle(`/workflows/trc_does_not_exist/audit-bundle`);
     assert.equal(res.status, 404);
+  });
+
+  test("tenant isolation: another tenant cannot pull this tenant's bundles", async () => {
+    // tenant-other's read key sees neither the session nor the trace owned by
+    // tenant-test, so both scopes are nonexistent for it → 404 (no leak).
+    const sRes = await getBundle(`/sessions/${SESSION_ID}/audit-bundle`, otherTenantKey);
+    assert.equal(sRes.status, 404);
+    const wRes = await getBundle(`/workflows/${WF_TRACE}/audit-bundle`, otherTenantKey);
+    assert.equal(wRes.status, 404);
   });
 
   test("returns 503 when AUDIT_SIGNING_SECRET is unset", async () => {
