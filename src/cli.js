@@ -472,16 +472,23 @@ async function cmdAuditExport(positional, flags, serverUrl, apiKey) {
         "(e.g. --pdf report.pdf), or pass --out so the name can be derived."
       );
     }
-    if (typeof flags.out === "string" && require("path").resolve(pdfPath) === require("path").resolve(flags.out)) {
+    const fs = require("fs");
+    const path = require("path");
+    if (typeof flags.out === "string" && path.resolve(pdfPath) === path.resolve(flags.out)) {
       die(`--pdf would overwrite the JSON bundle at '${flags.out}' — give the PDF a different name.`);
     }
     const { verifyAuditBundle } = require("./audit");
     const { renderAuditBundlePdf } = require("./audit-pdf");
     // Freshly built, so expected valid — but verify for real rather than assert.
-    const verification = verifyAuditBundle(bundle, secret, { now: new Date() });
-    const pdf = await renderAuditBundlePdf(bundle, { verification, now: new Date() });
-    require("fs").writeFileSync(pdfPath, pdf);
-    console.log(`\x1b[32m✓\x1b[0m PDF report written to ${pdfPath}`);
+    // One clock read shared by both, so rendered_at matches the verify instant.
+    const now = new Date();
+    const verification = verifyAuditBundle(bundle, secret, { now });
+    const pdf = await renderAuditBundlePdf(bundle, { verification, now });
+    fs.writeFileSync(pdfPath, pdf);
+    // When the JSON bundle went to stdout, this message MUST go to stderr —
+    // appending it to stdout would corrupt the piped artifact (`> bundle.json`).
+    const note = flags.out ? console.log : console.error;
+    note(`\x1b[32m✓\x1b[0m PDF report written to ${pdfPath}`);
   }
 }
 

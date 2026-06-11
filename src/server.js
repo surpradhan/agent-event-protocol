@@ -471,9 +471,14 @@ function sendAuditBundle(req, res, bundle, secret, baseName) {
   const format = (typeof req.query.format === "string" ? req.query.format : "json").toLowerCase();
   if (format === "pdf") {
     // Freshly built → expected valid; verified for real (cheap) so the PDF's
-    // verification section reports an actual check, not an assertion.
-    const verification = verifyAuditBundle(bundle, secret, { now: new Date() });
-    return renderAuditBundlePdf(bundle, { verification, now: new Date() }).then((pdf) => {
+    // verification section reports an actual check, not an assertion.  One
+    // clock read shared by both calls, so rendered_at matches the verify
+    // instant.  Like the JSON path, rendering is unpaginated and in-memory
+    // (~0.4ms/event, linear) — a bundle must be complete to be meaningful, and
+    // the endpoint is read-key-gated; same trade-off as the workflow handler.
+    const now = new Date();
+    const verification = verifyAuditBundle(bundle, secret, { now });
+    return renderAuditBundlePdf(bundle, { verification, now }).then((pdf) => {
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `attachment; filename="${baseName}-audit-bundle.pdf"`);
       res.send(pdf);

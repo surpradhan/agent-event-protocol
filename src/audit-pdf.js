@@ -137,22 +137,32 @@ function renderVerification(doc, verification) {
   }
 }
 
-/** Render one event block. */
+/** Render one event block.  Tolerates malformed entries (e.g. an event nulled
+ * by tampering, rendered via --force): a bundle that *verifies* can still hold
+ * arbitrary JSON values, and the renderer must report them, not crash. */
 function renderEvent(doc, event, index) {
-  const sig = event && typeof event === "object" ? event.signature : undefined;
+  const e = event && typeof event === "object" && !Array.isArray(event) ? event : null;
+  if (!e) {
+    doc.font("Helvetica-Bold").fontSize(10).text(`#${index}  (malformed event - not an object)`);
+    doc.font("Courier").fontSize(7.5).text(sanitizeText(formatPayload(event)));
+    doc.font("Helvetica").fontSize(9).moveDown(0.8);
+    return;
+  }
+
+  const sig = e.signature;
   const sigSummary = sig && typeof sig === "object"
     ? `present (canon: ${sig.canon || "unmarked"})`
     : "absent";
 
-  doc.font("Helvetica-Bold").fontSize(10).text(`#${index}  ${sanitizeText(event.type)}`);
-  kvLine(doc, "id", event.id);
-  kvLine(doc, "time", event.time);
-  if (event.agent_role) kvLine(doc, "agent_role", event.agent_role);
-  if (event.source) kvLine(doc, "source", event.source);
-  kvLine(doc, "session_id", event.session_id);
+  doc.font("Helvetica-Bold").fontSize(10).text(`#${index}  ${sanitizeText(e.type)}`);
+  kvLine(doc, "id", e.id);
+  kvLine(doc, "time", e.time);
+  if (e.agent_role) kvLine(doc, "agent_role", e.agent_role);
+  if (e.source) kvLine(doc, "source", e.source);
+  kvLine(doc, "session_id", e.session_id);
   kvLine(doc, "transport signature", sigSummary);
   doc.font("Helvetica-Bold").fontSize(9).text("payload:");
-  doc.font("Courier").fontSize(7.5).text(sanitizeText(formatPayload(event.payload)));
+  doc.font("Courier").fontSize(7.5).text(sanitizeText(formatPayload(e.payload)));
   doc.font("Helvetica").fontSize(9).moveDown(0.8);
 }
 
@@ -235,7 +245,9 @@ function renderAuditBundlePdf(bundle, { verification, now } = {}) {
   kvLine(doc, "time_range", timeRange.first || timeRange.last
     ? `${timeRange.first || "?"}  to  ${timeRange.last || "?"}`
     : "(empty)");
-  kvLine(doc, "content_digest", `${manifest.content_digest_alg || "?"}:${manifest.content_digest}`);
+  kvLine(doc, "content_digest", manifest.content_digest
+    ? `${manifest.content_digest_alg || "?"}:${manifest.content_digest}`
+    : "(missing)");
   kvLine(doc, "manifest signature", bundle.signature && typeof bundle.signature === "object"
     ? `${bundle.signature.alg}:${bundle.signature.value}`
     : "(missing)");

@@ -88,7 +88,9 @@ function render(bundle, opts = {}) {
 function extractPdfText(pdfBuffer) {
   const raw = pdfBuffer.toString("latin1");
   const chunks = [];
-  const tjArray = /\[((?:<[0-9a-fA-F]+>|-?\d+(?:\.\d+)?|\s+)+)\]\s*TJ/g;
+  // NB: `\s` (not `\s+`) inside the alternation — an ambiguous (\s+)+ nesting
+  // backtracks catastrophically on long unterminated whitespace runs.
+  const tjArray = /\[((?:<[0-9a-fA-F]+>|-?\d+(?:\.\d+)?|\s)+)\]\s*TJ/g;
   let m;
   while ((m = tjArray.exec(raw)) !== null) {
     const hexes = m[1].match(/<[0-9a-fA-F]+>/g) || [];
@@ -182,6 +184,23 @@ describe("renderAuditBundlePdf — payload handling", () => {
     events[0].payload = { msg: "ascii-ok 你好" };
     const text = extractPdfText(await render(sampleBundle(events)));
     assert.ok(text.includes('"msg":"ascii-ok ??"'));
+  });
+
+  test("malformed (non-object) events render a notice instead of crashing", async () => {
+    // A bundle whose events were nulled by tampering still has to render under
+    // --force; buildAuditBundle also signs whatever JSON values it's given, so
+    // even a VALID bundle can hold non-object entries.
+    const bundle = buildAuditBundle({
+      events: [null, "not-an-event", 42, ["array"]],
+      meta: { session_id: "ses_malformed" },
+      secret: SECRET,
+      now: NOW,
+    });
+    const verification = verifyAuditBundle(bundle, SECRET);
+    assert.equal(verification.valid, true);
+    const text = extractPdfText(await renderAuditBundlePdf(bundle, { verification, now: NOW }));
+    assert.ok(text.includes("(malformed event - not an object)"));
+    assert.ok(text.includes("Events (4)"));
   });
 });
 
