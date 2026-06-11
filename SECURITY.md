@@ -58,6 +58,10 @@ AEP provides the following security properties:
   immutability — for WORM/immutability requirements, layer immutable storage
   (e.g. object-lock buckets) underneath. The audit signing secret is server-side
   and distinct from the per-API-key HMAC secrets used to sign individual events.
+  The PDF report (`aep audit render`, `?format=pdf`) is a human-readable
+  *rendering* of a bundle — it carries **no integrity guarantee of its own**;
+  it prints the bundle's content digest and the verification result it was
+  rendered with so reviewers can tie it back to a verified JSON bundle.
 
 ### ✅ Input Validation
 - **JSON Schema Validation**: All event fields validated with AJV

@@ -8,7 +8,8 @@ const { version: SERVER_VERSION } = require("../package.json");
 const { validateEvent, sanitizeInput }        = require("./validator");
 const db                       = require("./db");
 const { verifySignature } = require("./signature");
-const { buildAuditBundle } = require("./audit");
+const { buildAuditBundle, verifyAuditBundle } = require("./audit");
+const { renderAuditBundlePdf } = require("./audit-pdf");
 const {
   requireApiKey,
   requireReadAccess,
@@ -450,7 +451,7 @@ app.get("/workflows/:traceId", requireReadAccess, validatePathParams, async (req
 });
 
 // ---------------------------------------------------------------------------
-// Routes — audit bundles (Phase 14 PR-B)
+// Routes — audit bundles (Phase 14 PR-B; ?format=pdf added in PR-C)
 //
 // Tamper-evident, HMAC-signed JSON bundles built from the read API's events via
 // buildAuditBundle (src/audit.js).  Read-scoped + tenant-scoped exactly like the
@@ -458,6 +459,34 @@ app.get("/workflows/:traceId", requireReadAccess, validatePathParams, async (req
 // audit.js stays pure.  Both sign their response, so both require
 // AUDIT_SIGNING_SECRET (→ 503 when unset).
 // ---------------------------------------------------------------------------
+
+/**
+ * Send a freshly built audit bundle in the requested representation.
+ * `?format=pdf` → human-readable PDF report (the JSON bundle remains the
+ * verifiable artifact; the PDF prints the digest to tie back to it).  Any other
+ * value — including absent — falls back to JSON, mirroring /export's format
+ * handling (unrecognized values are not a 400 there either).
+ */
+function sendAuditBundle(req, res, bundle, secret, baseName) {
+  const format = (typeof req.query.format === "string" ? req.query.format : "json").toLowerCase();
+  if (format === "pdf") {
+    // Freshly built → expected valid; verified for real (cheap) so the PDF's
+    // verification section reports an actual check, not an assertion.  One
+    // clock read shared by both calls, so rendered_at matches the verify
+    // instant.  Like the JSON path, rendering is unpaginated and in-memory
+    // (~0.4ms/event, linear) — a bundle must be complete to be meaningful, and
+    // the endpoint is read-key-gated; same trade-off as the workflow handler.
+    const now = new Date();
+    const verification = verifyAuditBundle(bundle, secret, { now });
+    return renderAuditBundlePdf(bundle, { verification, now }).then((pdf) => {
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${baseName}-audit-bundle.pdf"`);
+      res.send(pdf);
+    });
+  }
+  res.setHeader("Content-Disposition", `attachment; filename="${baseName}-audit-bundle.json"`);
+  return res.json(bundle);
+}
 
 // GET /sessions/:sessionId/audit-bundle — signed audit bundle for one session
 app.get("/sessions/:sessionId/audit-bundle", requireReadAccess, validatePathParams, async (req, res) => {
@@ -492,8 +521,7 @@ app.get("/sessions/:sessionId/audit-bundle", requireReadAccess, validatePathPara
     now: new Date()
   });
 
-  res.setHeader("Content-Disposition", `attachment; filename="${sessionId}-audit-bundle.json"`);
-  return res.json(bundle);
+  return sendAuditBundle(req, res, bundle, secret, sessionId);
 });
 
 // GET /workflows/:traceId/audit-bundle — signed audit bundle for a whole trace
@@ -541,8 +569,7 @@ app.get("/workflows/:traceId/audit-bundle", requireReadAccess, validatePathParam
     now: new Date()
   });
 
-  res.setHeader("Content-Disposition", `attachment; filename="${traceId}-audit-bundle.json"`);
-  return res.json(bundle);
+  return sendAuditBundle(req, res, bundle, secret, traceId);
 });
 
 // GET /metrics — counters + session count + workflow metrics (JSON)
