@@ -8,7 +8,7 @@
  *   aep emit     — Emit a single event to the ingest server
  *   aep session  — Query events for a session
  *   aep export   — Export session events as JSON or CSV
- *   aep audit    — Build / verify a tamper-evident audit bundle
+ *   aep audit    — Build / verify / render a tamper-evident audit bundle
  *   aep workflow — Query a full workflow tree by trace_id
  *   aep validate — Validate a local event JSON file (existing)
  *
@@ -120,7 +120,7 @@ Commands:
   emit       Emit a single event to the ingest server
   session    Query events for a session
   export     Export session events as JSON or CSV
-  audit      Build / verify a tamper-evident audit bundle
+  audit      Build / verify / render a tamper-evident audit bundle
   workflow   Query a full workflow tree by trace_id
   validate   Validate a local event JSON file
 
@@ -342,11 +342,12 @@ async function cmdExport(positional, flags, serverUrl, apiKey) {
 
 function auditHelp() {
   console.log(`
-\x1b[1maep audit\x1b[0m — Build / verify a tamper-evident, HMAC-signed audit bundle
+\x1b[1maep audit\x1b[0m — Build / verify / render a tamper-evident, HMAC-signed audit bundle
 
 Usage:
   aep audit export <session_id> [--out bundle.json] [flags]
   aep audit verify <bundle.json> [--json]
+  aep audit render <bundle.json> [--out report.pdf] [--force]
 
 export — fetch a session's events (via the read API), package them into a
          signed bundle and write it out. Requires AUDIT_SIGNING_SECRET to be set
@@ -358,12 +359,26 @@ export — fetch a session's events (via the read API), package them into a
   --allow-empty          Export even when the session has 0 matching events
                          (otherwise export fails — guards against signing a
                          misleading empty bundle for a missing session)
+  --pdf         [file]   Also write a human-readable PDF report alongside the
+                         JSON bundle. Filename derived from --out (bundle.json
+                         → bundle.pdf) unless given explicitly. Place --pdf
+                         AFTER the session id, or give it an explicit value —
+                         in "aep audit export --pdf ses_1", ses_1 is read as
+                         the PDF filename, not the session id.
 
 verify — recompute the content digest and manifest signature of a bundle file
          offline and report whether it is intact. Requires AUDIT_SIGNING_SECRET.
          Exit code 0 = valid, 1 = invalid/tampered.
 
   --json          Emit the machine-readable verification result as JSON
+
+render — verify a bundle file, then render it as a human-readable PDF report
+         for compliance review. The PDF is a rendering only — the JSON bundle
+         remains the tamper-evident artifact. Requires AUDIT_SIGNING_SECRET.
+
+  --out  <file>   PDF output path (default: bundle path with a .pdf extension)
+  --force         Render even when verification fails (the report then shows
+                  INVALID - TAMPERING DETECTED prominently)
 
 Environment:
   AUDIT_SIGNING_SECRET   HMAC secret used to sign / verify audit bundles (required)
@@ -442,6 +457,83 @@ async function cmdAuditExport(positional, flags, serverUrl, apiKey) {
   } else {
     process.stdout.write(out + "\n");
   }
+
+  // --pdf: write a human-readable PDF report ALONGSIDE the JSON bundle (never
+  // instead of it — the JSON is the verifiable artifact). parseArgs is greedy:
+  // `--pdf report.pdf` gives a string, bare `--pdf` gives true.
+  if (flags.pdf !== undefined) {
+    const pdfPath =
+      typeof flags.pdf === "string" ? flags.pdf
+        : typeof flags.out === "string" ? derivePdfPath(flags.out)
+          : null;
+    if (!pdfPath) {
+      die(
+        "--pdf needs an explicit filename when the JSON bundle goes to stdout " +
+        "(e.g. --pdf report.pdf), or pass --out so the name can be derived."
+      );
+    }
+    if (typeof flags.out === "string" && require("path").resolve(pdfPath) === require("path").resolve(flags.out)) {
+      die(`--pdf would overwrite the JSON bundle at '${flags.out}' — give the PDF a different name.`);
+    }
+    const { verifyAuditBundle } = require("./audit");
+    const { renderAuditBundlePdf } = require("./audit-pdf");
+    // Freshly built, so expected valid — but verify for real rather than assert.
+    const verification = verifyAuditBundle(bundle, secret, { now: new Date() });
+    const pdf = await renderAuditBundlePdf(bundle, { verification, now: new Date() });
+    require("fs").writeFileSync(pdfPath, pdf);
+    console.log(`\x1b[32m✓\x1b[0m PDF report written to ${pdfPath}`);
+  }
+}
+
+/** bundle.json → bundle.pdf; a path without an extension just gains .pdf. */
+function derivePdfPath(p) {
+  return p.replace(/\.[a-zA-Z0-9]+$/, "") + ".pdf";
+}
+
+async function cmdAuditRender(positional, flags) {
+  // positional: ["audit", "render", "<bundle.json>"]
+  const filePath = positional[2];
+  if (!filePath) die("Usage: aep audit render <bundle.json> [--out report.pdf] [--force]");
+
+  const secret = readAuditSecret();
+  const { verifyAuditBundle } = require("./audit");
+  const { renderAuditBundlePdf } = require("./audit-pdf");
+
+  const fs = require("fs");
+  const path = require("path");
+  const fullPath = path.resolve(filePath);
+
+  let bundle;
+  try {
+    const raw = fs.readFileSync(fullPath, "utf8").replace(/^\uFEFF/, "");
+    bundle = JSON.parse(raw);
+  } catch (e) {
+    die(`Could not read/parse '${fullPath}': ${e.message}`);
+  }
+
+  const verification = verifyAuditBundle(bundle, secret, { now: new Date() });
+
+  if (!verification.valid && !flags.force) {
+    console.error(`\x1b[31m✗ INVALID / TAMPERED\x1b[0m  ${fullPath}`);
+    verification.errors.forEach(e => console.error(`  - ${e}`));
+    die(
+      "Refusing to render an unverifiable bundle. Pass --force to render anyway " +
+      "(the report will state INVALID - TAMPERING DETECTED prominently)."
+    );
+  }
+
+  const outPath = typeof flags.out === "string" ? flags.out : derivePdfPath(fullPath);
+  if (path.resolve(outPath) === fullPath) {
+    die(`Output '${outPath}' would overwrite the bundle itself — give the PDF a different name.`);
+  }
+
+  const pdf = await renderAuditBundlePdf(bundle, { verification, now: new Date() });
+  fs.writeFileSync(outPath, pdf);
+  console.log(
+    `\x1b[32m✓\x1b[0m PDF report written to ${outPath} ` +
+    `(verification: ${verification.valid ? "VALID" : "\x1b[31mINVALID\x1b[0m"})`
+  );
+  if (!verification.valid) process.exitCode = 1;
 }
 
 async function cmdAuditVerify(positional, flags) {
@@ -490,9 +582,10 @@ async function cmdAudit(positional, flags, serverUrl, apiKey) {
   switch (sub) {
     case "export": return cmdAuditExport(positional, flags, serverUrl, apiKey);
     case "verify": return cmdAuditVerify(positional, flags);
+    case "render": return cmdAuditRender(positional, flags);
     default:
       auditHelp();
-      die("Usage: aep audit <export|verify> ...");
+      die("Usage: aep audit <export|verify|render> ...");
   }
 }
 

@@ -1769,4 +1769,61 @@ describe("audit-bundle endpoints", () => {
       process.env.AUDIT_SIGNING_SECRET = prev;
     }
   });
+
+  // --- ?format=pdf (Phase 14 PR-C) -----------------------------------------
+  // The PDF is a human-readable rendering; all auth/tenant/404/503 guards sit
+  // BEFORE the format branch, so only the happy-path representation changes.
+
+  test("session bundle ?format=pdf: 200, application/pdf, PDF magic, .pdf filename", async () => {
+    const res = await getBundle(`/sessions/${SESSION_ID}/audit-bundle?format=pdf`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") || "", /application\/pdf/);
+    assert.match(
+      res.headers.get("content-disposition") || "",
+      /attachment; filename="ses_audit_solo-audit-bundle\.pdf"/
+    );
+    const body = Buffer.from(await res.arrayBuffer());
+    assert.equal(body.subarray(0, 5).toString(), "%PDF-");
+    assert.match(body.subarray(-32).toString(), /%%EOF\s*$/);
+  });
+
+  test("workflow bundle ?format=pdf: 200, application/pdf, PDF magic, .pdf filename", async () => {
+    const res = await getBundle(`/workflows/${WF_TRACE}/audit-bundle?format=pdf`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") || "", /application\/pdf/);
+    assert.match(
+      res.headers.get("content-disposition") || "",
+      /attachment; filename="trc_audit_wf-audit-bundle\.pdf"/
+    );
+    const body = Buffer.from(await res.arrayBuffer());
+    assert.equal(body.subarray(0, 5).toString(), "%PDF-");
+  });
+
+  test("unrecognized format value falls back to the JSON bundle (parity with /export)", async () => {
+    const res = await getBundle(`/sessions/${SESSION_ID}/audit-bundle?format=bogus`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") || "", /application\/json/);
+    assert.match(
+      res.headers.get("content-disposition") || "",
+      /attachment; filename="ses_audit_solo-audit-bundle\.json"/
+    );
+    const bundle = await res.json();
+    assert.equal(verifyAuditBundle(bundle, AUDIT_SECRET).valid, true);
+  });
+
+  test("?format=pdf does not bypass the 404 guard for an unknown session", async () => {
+    const res = await getBundle(`/sessions/ses_does_not_exist/audit-bundle?format=pdf`);
+    assert.equal(res.status, 404);
+  });
+
+  test("?format=pdf returns 503 when AUDIT_SIGNING_SECRET is unset", async () => {
+    const prev = process.env.AUDIT_SIGNING_SECRET;
+    delete process.env.AUDIT_SIGNING_SECRET;
+    try {
+      const res = await getBundle(`/sessions/${SESSION_ID}/audit-bundle?format=pdf`);
+      assert.equal(res.status, 503);
+    } finally {
+      process.env.AUDIT_SIGNING_SECRET = prev;
+    }
+  });
 });

@@ -319,8 +319,9 @@ These labels are deliberately low cardinality (no tenant/source/key).
 
 ## Audit Export (tamper-evident bundles)
 
-> Phase 14 PR-A. JSON bundles only; download endpoints and PDF rendering come in
-> later PRs.
+> Phase 14. PR-A shipped the JSON bundle + CLI; PR-B the HTTP download
+> endpoints (`GET /sessions/{id}/audit-bundle`, `GET /workflows/{traceId}/audit-bundle`);
+> PR-C the PDF report rendering (`aep audit render`, `?format=pdf`).
 
 `aep audit export` packages a session's events into a signed, offline-verifiable
 bundle. The bundle carries two cryptographic checks:
@@ -347,9 +348,21 @@ aep audit export ses_abc123 --out bundle.json
 # Verify it offline anywhere the secret is available (exit 0 = valid, 1 = tampered):
 aep audit verify bundle.json
 aep audit verify bundle.json --json   # machine-readable result
+
+# Render a verified bundle as a human-readable PDF report for compliance review:
+aep audit render bundle.json --out report.pdf
+aep audit export ses_abc123 --out bundle.json --pdf   # JSON + PDF companion in one step
 ```
 
-If `AUDIT_SIGNING_SECRET` is unset, both commands fail with a clear error
+The PDF is a *rendering only* — integrity guarantees attach to the JSON bundle,
+and the report prints the bundle's content digest (and the verification result
+it was rendered with) so a reviewer can tie it back to a verified bundle.
+`aep audit render` refuses to render a bundle that fails verification unless
+`--force` is passed, in which case the report states INVALID - TAMPERING
+DETECTED prominently. Over HTTP, append `?format=pdf` to either audit-bundle
+endpoint to download the report instead of the JSON bundle.
+
+If `AUDIT_SIGNING_SECRET` is unset, these commands fail with a clear error
 (mirroring how `ADMIN_TOKEN` gates the `/admin/*` routes).
 
 > **Note on scope:** v2 per-event signatures cover the full event including nested

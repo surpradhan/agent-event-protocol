@@ -4,6 +4,65 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Phase 14 PR-C — Audit bundle PDF rendering — 2026-06-11
+
+Completes the PRD's "PDF + JSON" audit-export deliverable. A bundle built by
+PR-A/PR-B can now be rendered as a human-readable PDF report for legal /
+compliance review. The PDF is a *rendering only* — the JSON bundle remains the
+tamper-evident, offline-verifiable artifact — and the report keeps that honest
+by printing the bundle's `content_digest`, the manifest signature, and the
+verification result it was rendered with.
+
+- **New module [`src/audit-pdf.js`](./src/audit-pdf.js)** —
+  `renderAuditBundlePdf(bundle, { verification, now })` → `Promise<Buffer>`,
+  built on **pdfkit** (new runtime dependency; pure JS, no install scripts, no
+  new `npm audit` findings). Deterministic: `now` is injected (pdfkit's default
+  CreationDate is a clock read that perturbs the PDF trailer `/ID` — pinning it
+  makes identical inputs render **byte-identical PDFs**, which is regression-
+  locked by a unit test). The `verification` result (from `verifyAuditBundle`)
+  is an *input*, so the renderer never handles key material — the report states
+  VALID, INVALID - TAMPERING DETECTED, or NOT VERIFIED AT RENDER TIME, exactly
+  as given. Report sections: manifest summary (scope, tenant, counts, time
+  range, digest, signature), verification status, per-event blocks (envelope
+  fields, transport-signature presence/canon, deep-stable payload JSON
+  truncated at 2,000 chars with an explicit marker), and a how-to-verify
+  appendix. Content streams are uncompressed (diffable/inspectable); text is
+  sanitized to printable ASCII for legibility — lossy by design, the JSON
+  bundle is the record.
+- **CLI** ([`src/cli.js`](./src/cli.js)):
+  - `aep audit render <bundle.json> [--out report.pdf] [--force]` — verifies the
+    bundle first and **refuses to render an unverifiable bundle** unless
+    `--force` (the report then shows INVALID prominently and the command exits
+    non-zero). Output defaults to the bundle path with a `.pdf` extension; the
+    command refuses to overwrite the bundle itself.
+  - `aep audit export … --pdf [file]` — writes a PDF companion **alongside**
+    the JSON bundle (never instead of it). Filename derived from `--out`
+    (`bundle.json` → `bundle.pdf`) unless given explicitly; an explicit name is
+    required when the JSON goes to stdout. (Flag-parser note: place `--pdf`
+    after the session id or give it a value — documented in `aep audit --help`.)
+- **HTTP** ([`src/server.js`](./src/server.js)): `?format=pdf` on
+  `GET /sessions/:sessionId/audit-bundle` and
+  `GET /workflows/:traceId/audit-bundle` (shared `sendAuditBundle` helper).
+  Auth / tenant-scoping / 404 / 503 guards are untouched — the format branch
+  runs strictly after all of them. Unrecognized `format` values fall back to
+  JSON, mirroring `/export`. The server verifies the freshly built bundle for
+  real (cheap) rather than asserting validity, so the PDF's verification
+  section reports an actual check. `application/pdf` + `.pdf` attachment
+  filename.
+- **OpenAPI** ([`src/openapi.json`](./src/openapi.json)): `format` query param
+  (enum `json`/`pdf`, default `json`) + `application/pdf` response content on
+  both audit-bundle paths.
+- **Tests:** `tests/unit/audit-pdf.test.js` (15 tests: PDF structure,
+  verification honesty incl. tampered-bundle rendering, payload truncation /
+  ASCII sanitization, byte-determinism, no-mutation purity, input validation —
+  content assertions decode pdfkit's hex `TJ` text operators back to plain
+  text) and 5 integration tests appended to `tests/integration/server.test.js`
+  (PDF happy path for both endpoints, JSON fallback for unrecognized format,
+  404/503 guards unchanged under `?format=pdf`). No new CI jobs.
+- **Docs:** AUTH.md (render/`--pdf`/`?format=pdf` usage + rendering-vs-artifact
+  caveat), README.md, SECURITY.md (the PDF carries no integrity guarantee of
+  its own).
+
 ## Phase 14 PR-B — Audit-bundle HTTP endpoints — 2026-06-11
 
 Builds on Phase 14 PR-A (tamper-evident audit bundles, `src/audit.js` + `aep

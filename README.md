@@ -323,7 +323,7 @@ Reference these common response structures when building clients and integration
   "signature": { "alg": "hmac-sha256", "value": "…" }
 }
 ```
-Returns a tamper-evident, HMAC-signed audit bundle (Phase 14). Verify offline with `aep audit verify <bundle.json>`. Requires `AUDIT_SIGNING_SECRET` to be configured server-side, else **503**.
+Returns a tamper-evident, HMAC-signed audit bundle (Phase 14). Verify offline with `aep audit verify <bundle.json>`. Append `?format=pdf` for a human-readable PDF report rendering (the JSON bundle remains the verifiable artifact), or render locally with `aep audit render <bundle.json>`. Requires `AUDIT_SIGNING_SECRET` to be configured server-side, else **503**.
 
 **400 Bad Request** — schema or validation failure
 ```json

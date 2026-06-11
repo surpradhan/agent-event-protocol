@@ -590,14 +590,23 @@
             "in": "path",
             "required": true,
             "schema": { "type": "string" }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "Response format — `json` (default, the verifiable bundle) or `pdf` (a human-readable report rendering; the JSON bundle remains the tamper-evident artifact). Unrecognized values return JSON.",
+            "schema": { "type": "string", "enum": ["json", "pdf"], "default": "json" }
           }
         ],
         "responses": {
           "200": {
-            "description": "Signed audit bundle",
+            "description": "Signed audit bundle (JSON) or its PDF report rendering, per `format`",
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/AuditBundle" }
+              },
+              "application/pdf": {
+                "schema": { "type": "string", "format": "binary" }
               }
             }
           },
@@ -658,14 +667,23 @@
             "required": true,
             "schema": { "type": "string" },
             "example": "trc_xyz789"
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "Response format — `json` (default, the verifiable bundle) or `pdf` (a human-readable report rendering; the JSON bundle remains the tamper-evident artifact). Unrecognized values return JSON.",
+            "schema": { "type": "string", "enum": ["json", "pdf"], "default": "json" }
           }
         ],
         "responses": {
           "200": {
-            "description": "Signed audit bundle",
+            "description": "Signed audit bundle (JSON) or its PDF report rendering, per `format`",
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/AuditBundle" }
+              },
+              "application/pdf": {
+                "schema": { "type": "string", "format": "binary" }
               }
             }
           },
