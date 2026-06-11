@@ -115,6 +115,25 @@ describe("audit.buildAuditBundle", () => {
     const result = verifyAuditBundle(bundle, SECRET);
     assert.equal(result.valid, true);
   });
+
+  // Mirrors the HTTP endpoints' documented "scope exists, zero events" branch:
+  // an empty bundle still carries the scope/tenant and still verifies. (The
+  // endpoints can't normally reach zero events — a session/trace row implies at
+  // least one ingested event — so this locks the behavior at the builder level.)
+  test("an empty bundle still carries scope/tenant and verifies", () => {
+    const bundle = buildAuditBundle({
+      events: [],
+      meta: { session_id: "ses_empty", trace_id: "trc_empty", tenant_id: "acme" },
+      secret: SECRET,
+      now: NOW,
+    });
+    assert.deepEqual(bundle.events, []);
+    assert.equal(bundle.manifest.event_count, 0);
+    assert.equal(bundle.manifest.scope.session_id, "ses_empty");
+    assert.equal(bundle.manifest.scope.trace_id, "trc_empty");
+    assert.equal(bundle.manifest.tenant_id, "acme");
+    assert.equal(verifyAuditBundle(bundle, SECRET).valid, true);
+  });
 });
 
 describe("audit round-trip", () => {

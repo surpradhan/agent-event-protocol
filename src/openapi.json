@@ -42,6 +42,57 @@
       }
     },
     "schemas": {
+      "AuditBundle": {
+        "type": "object",
+        "description": "Tamper-evident, HMAC-signed audit bundle (Phase 14). Verify offline with the `aep audit verify` CLI or the SDK verifier.",
+        "required": ["aep_audit_version", "manifest", "events", "signature"],
+        "properties": {
+          "aep_audit_version": { "type": "string", "example": "0.1.0" },
+          "manifest": {
+            "type": "object",
+            "description": "Signed manifest. content_digest covers the ordered events; the signature covers the manifest (and thus, transitively, the events).",
+            "required": ["aep_audit_version", "scope", "tenant_id", "event_count", "time_range", "content_digest", "content_digest_alg", "exported_at", "per_event_signatures"],
+            "properties": {
+              "aep_audit_version": { "type": "string" },
+              "scope": {
+                "type": "object",
+                "properties": {
+                  "session_id": { "type": "string" },
+                  "trace_id": { "type": "string" }
+                }
+              },
+              "tenant_id": { "type": ["string", "null"] },
+              "event_count": { "type": "integer" },
+              "time_range": {
+                "type": "object",
+                "properties": {
+                  "first": { "type": ["string", "null"] },
+                  "last": { "type": ["string", "null"] }
+                }
+              },
+              "content_digest": { "type": "string" },
+              "content_digest_alg": { "type": "string", "example": "sha256" },
+              "exported_at": { "type": "string", "format": "date-time" },
+              "per_event_signatures": {
+                "type": "object",
+                "properties": {
+                  "present": { "type": "integer" },
+                  "total": { "type": "integer" }
+                }
+              }
+            }
+          },
+          "events": { "type": "array", "items": { "$ref": "#/components/schemas/AepEnvelope" } },
+          "signature": {
+            "type": "object",
+            "required": ["alg", "value"],
+            "properties": {
+              "alg": { "type": "string", "example": "hmac-sha256" },
+              "value": { "type": "string", "description": "base64 HMAC-SHA256 over the canonical manifest" }
+            }
+          }
+        }
+      },
       "AepEnvelope": {
         "type": "object",
         "required": ["specversion", "id", "time", "source", "type", "session_id", "trace_id", "payload"],
@@ -526,6 +577,37 @@
         }
       }
     },
+    "/sessions/{sessionId}/audit-bundle": {
+      "get": {
+        "tags": ["Sessions"],
+        "summary": "Build a signed, tamper-evident audit bundle for a session",
+        "description": "Returns an HMAC-signed audit bundle of the session's events (Phase 14). Requires AUDIT_SIGNING_SECRET to be configured server-side; returns 503 if it is not.",
+        "operationId": "getSessionAuditBundle",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Signed audit bundle",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AuditBundle" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "503": { "description": "Audit export not configured (AUDIT_SIGNING_SECRET unset)" }
+        }
+      }
+    },
     "/workflows/{traceId}": {
       "get": {
         "tags": ["Workflows"],
@@ -559,6 +641,38 @@
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/workflows/{traceId}/audit-bundle": {
+      "get": {
+        "tags": ["Workflows"],
+        "summary": "Build a signed, tamper-evident audit bundle for a whole trace",
+        "description": "Returns an HMAC-signed audit bundle of all events across every session sharing the trace_id (Phase 14). Requires AUDIT_SIGNING_SECRET to be configured server-side; returns 503 if it is not.",
+        "operationId": "getWorkflowAuditBundle",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          {
+            "name": "traceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "example": "trc_xyz789"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Signed audit bundle",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AuditBundle" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "503": { "description": "Audit export not configured (AUDIT_SIGNING_SECRET unset)" }
         }
       }
     },

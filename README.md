@@ -314,6 +314,17 @@ Reference these common response structures when building clients and integration
 { "session_id": "ses_01HXYZ...", "events": [ { "id": "evt_...", "type": "task.created", ... } ] }
 ```
 
+**200 OK** — `GET /sessions/{sessionId}/audit-bundle` and `GET /workflows/{traceId}/audit-bundle`
+```json
+{
+  "aep_audit_version": "0.1.0",
+  "manifest": { "scope": { "session_id": "ses_01HXYZ..." }, "event_count": 12, "content_digest": "…", "content_digest_alg": "sha256", "exported_at": "..." },
+  "events": [ { "id": "evt_...", "type": "task.created", ... } ],
+  "signature": { "alg": "hmac-sha256", "value": "…" }
+}
+```
+Returns a tamper-evident, HMAC-signed audit bundle (Phase 14). Verify offline with `aep audit verify <bundle.json>`. Requires `AUDIT_SIGNING_SECRET` to be configured server-side, else **503**.
+
 **400 Bad Request** — schema or validation failure
 ```json
 { "accepted": false, "errors": [ "/ must have required property 'session_id'", "/type must be one of: task.created, ..." ] }
