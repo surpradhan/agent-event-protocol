@@ -4,6 +4,33 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Phase 14 PR-B — Audit-bundle HTTP endpoints — 2026-06-11
+
+Builds on Phase 14 PR-A (tamper-evident audit bundles, `src/audit.js` + `aep
+audit` CLI). Exposes audit bundles over HTTP so operators and tooling can pull a
+signed bundle directly, without the CLI.
+
+- **New `GET /sessions/{sessionId}/audit-bundle`** — builds and returns an
+  HMAC-signed audit bundle of a session's events.
+- **New `GET /workflows/{traceId}/audit-bundle`** — same, scoped to every session
+  sharing a `trace_id` (events combined and ordered by time).
+- Both endpoints are **read-scoped** and **tenant-scoped**, mirroring the existing
+  `/sessions/{id}/export` and `/workflows/{traceId}` query endpoints. They reuse
+  `buildAuditBundle` from PR-A (no new bundle/signing logic) and inject `now` at
+  the request boundary so `src/audit.js` stays pure.
+- **Requires `AUDIT_SIGNING_SECRET`** (the server-side audit signing key, distinct
+  from per-API-key HMAC secrets). When unset, both endpoints return **503** with an
+  actionable hint — mirroring how `/admin/*` behaves when `ADMIN_TOKEN` is unset.
+- `404` when the scope (session or trace) does not exist for the caller's tenant;
+  an existing scope with zero events yields an empty — but still signed — bundle.
+- Responses are returned as a JSON download (`Content-Disposition: attachment`) and
+  verify offline via `aep audit verify` / `verifyAuditBundle`.
+- No schema changes, no new storage-layer methods, and **no new CI job** — the new
+  integration coverage runs under the existing test + Postgres-parity jobs.
+- OpenAPI spec updated with both paths and an `AuditBundle` schema.
+
+---
+
 ## Python SDK `agent-event-protocol` 0.4.1 — 2026-06-10
 
 Docs / source-comment patch. **No functional, signing, or API changes.**

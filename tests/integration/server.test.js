@@ -1619,3 +1619,127 @@ describe("Retention / pruning", () => {
     assert.ok(await db.getSession(sid), "dry-run left the session intact");
   });
 });
+
+// ---------------------------------------------------------------------------
+// GET /sessions/:id/audit-bundle  +  GET /workflows/:traceId/audit-bundle
+// Phase 14 PR-B — tamper-evident, HMAC-signed audit bundles over HTTP.
+// ---------------------------------------------------------------------------
+
+describe("audit-bundle endpoints", () => {
+  const { verifyAuditBundle } = require("../../src/audit");
+  const AUDIT_SECRET = "audit-test-secret-" + crypto.randomUUID();
+
+  // Scope ids unique to this block so other suites' data can't bleed in.
+  const SESSION_ID = "ses_audit_solo";
+  const WF_TRACE   = "trc_audit_wf";
+  const WF_ROOT    = "ses_audit_root";
+  const WF_CHILD   = "ses_audit_child";
+
+  let savedSecret;
+
+  before(async () => {
+    savedSecret = process.env.AUDIT_SIGNING_SECRET;
+    process.env.AUDIT_SIGNING_SECRET = AUDIT_SECRET;
+
+    // Seed a single-session scope (2 events).
+    await ingest(makeEvent({ session_id: SESSION_ID, trace_id: "trc_audit_solo" }));
+    await ingest(makeEvent({ session_id: SESSION_ID, trace_id: "trc_audit_solo", type: "task.completed" }));
+
+    // Seed a multi-session workflow trace: orchestrator root + one subagent child.
+    await ingest(makeEvent({ session_id: WF_ROOT, trace_id: WF_TRACE, agent_role: "orchestrator" }));
+    await ingest(makeEvent({
+      session_id: WF_CHILD, trace_id: WF_TRACE, type: "handoff.started",
+      parent_session_id: WF_ROOT, agent_role: "subagent",
+    }));
+  });
+
+  after(() => {
+    if (savedSecret === undefined) delete process.env.AUDIT_SIGNING_SECRET;
+    else process.env.AUDIT_SIGNING_SECRET = savedSecret;
+  });
+
+  async function getBundle(pathSuffix, key = readKey) {
+    return fetch(`${baseUrl}${pathSuffix}`, {
+      headers: key ? { Authorization: `Bearer ${key}` } : {},
+    });
+  }
+
+  test("session bundle: 200, verifiable round-trip, count + headers", async () => {
+    const res = await getBundle(`/sessions/${SESSION_ID}/audit-bundle`);
+    assert.equal(res.status, 200);
+    assert.match(
+      res.headers.get("content-disposition") || "",
+      /attachment; filename="ses_audit_solo-audit-bundle\.json"/
+    );
+
+    const bundle = await res.json();
+    assert.equal(bundle.manifest.event_count, bundle.events.length);
+    assert.equal(bundle.events.length, 2);
+    assert.equal(bundle.manifest.scope.session_id, SESSION_ID);
+    assert.equal(bundle.manifest.scope.trace_id, "trc_audit_solo");
+
+    const result = verifyAuditBundle(bundle, AUDIT_SECRET);
+    assert.equal(result.valid, true, JSON.stringify(result.errors));
+    assert.equal(result.content_digest_match, true);
+    assert.equal(result.manifest_signature_valid, true);
+  });
+
+  test("workflow bundle: 200, spans all sessions in the trace, verifiable", async () => {
+    const res = await getBundle(`/workflows/${WF_TRACE}/audit-bundle`);
+    assert.equal(res.status, 200);
+    assert.match(
+      res.headers.get("content-disposition") || "",
+      /attachment; filename="trc_audit_wf-audit-bundle\.json"/
+    );
+
+    const bundle = await res.json();
+    // Both the root and child session's events are present.
+    assert.equal(bundle.events.length, 2);
+    assert.equal(bundle.manifest.event_count, 2);
+    assert.equal(bundle.manifest.scope.trace_id, WF_TRACE);
+    const sessions = new Set(bundle.events.map(e => e.session_id));
+    assert.ok(sessions.has(WF_ROOT) && sessions.has(WF_CHILD));
+
+    const result = verifyAuditBundle(bundle, AUDIT_SECRET);
+    assert.equal(result.valid, true, JSON.stringify(result.errors));
+  });
+
+  test("tamper test: mutating a bundled event payload fails verification", async () => {
+    const res = await getBundle(`/sessions/${SESSION_ID}/audit-bundle`);
+    const bundle = await res.json();
+
+    bundle.events[0].payload = { task: "TAMPERED" };
+
+    const result = verifyAuditBundle(bundle, AUDIT_SECRET);
+    assert.equal(result.valid, false);
+    assert.equal(result.content_digest_match, false);
+  });
+
+  test("returns 401 when no API key is provided", async () => {
+    const res = await fetch(`${baseUrl}/sessions/${SESSION_ID}/audit-bundle`);
+    assert.equal(res.status, 401);
+  });
+
+  test("returns 404 for an unknown session", async () => {
+    const res = await getBundle(`/sessions/ses_does_not_exist/audit-bundle`);
+    assert.equal(res.status, 404);
+  });
+
+  test("returns 404 for an unknown workflow trace", async () => {
+    const res = await getBundle(`/workflows/trc_does_not_exist/audit-bundle`);
+    assert.equal(res.status, 404);
+  });
+
+  test("returns 503 when AUDIT_SIGNING_SECRET is unset", async () => {
+    const prev = process.env.AUDIT_SIGNING_SECRET;
+    delete process.env.AUDIT_SIGNING_SECRET;
+    try {
+      const res = await getBundle(`/sessions/${SESSION_ID}/audit-bundle`);
+      assert.equal(res.status, 503);
+      const body = await res.json();
+      assert.match(body.hint || "", /AUDIT_SIGNING_SECRET/);
+    } finally {
+      process.env.AUDIT_SIGNING_SECRET = prev;
+    }
+  });
+});
