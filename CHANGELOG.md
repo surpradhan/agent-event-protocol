@@ -35,7 +35,7 @@ route that uses it is protected by default, and removes the per-route guards.
   `sendAuditBundle` — they don't take `validateQueryParams`, and `format` there is
   already array-safe. A future option (an app-level custom query parser to protect
   routes that don't use the middleware) is noted in #94 but not done here.
-- **Tests:** new `tests/unit/queryValidation.test.js` (11 cases for
+- **Tests:** new `tests/unit/queryValidation.test.js` (8 cases for
   `coerceArrayParams`); the #93 integration tests are reworked to last-wins
   semantics; new integration cases for `/export` last-wins CSV, the new `/export`
   query-length + invalid-cursor/limit 400s, a `/sessions` repeated-`cursor` case

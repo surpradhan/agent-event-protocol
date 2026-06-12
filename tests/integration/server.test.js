@@ -319,9 +319,10 @@ describe("GET /sessions", () => {
     assert.ok(Array.isArray(body.sessions));
   });
 
-  test("a repeated ?cursor whose LAST value is invalid still 400s (coercion runs before validation)", async () => {
-    // Confirms ordering: coercion picks the last value ("!!!"), which then fails
-    // the existing base64url check → 400. (If the OLD value won, this would differ.)
+  test("a repeated ?cursor whose LAST value is invalid still 400s", async () => {
+    // The last value ("!!!") is what gets validated → 400. (The sibling
+    // ?cursor=a&cursor=b → 200 test is what uniquely locks coerce-before-validate
+    // ordering; this case asserts an invalid last value is not let through.)
     const res = await fetch(`${baseUrl}/sessions?cursor=AAAA&cursor=!!!`, {
       headers: { Authorization: `Bearer ${readKey}` },
     });
