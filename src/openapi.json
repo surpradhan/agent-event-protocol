@@ -25,6 +25,7 @@
     { "name": "Workflows", "description": "Cross-session workflow queries" },
     { "name": "Metrics", "description": "Aggregate counters and statistics" },
     { "name": "Analytics", "description": "Compliance / policy-enforcement analytics" },
+    { "name": "Compliance", "description": "Framework-mapped compliance reports" },
     { "name": "Stream", "description": "Real-time Server-Sent Events feed" },
     { "name": "Admin", "description": "API key management (requires ADMIN_TOKEN)" }
   ],
@@ -835,6 +836,105 @@
           },
           "400": {
             "description": "Invalid query parameter (e.g. a non-ISO `since`/`until`, or `limit` outside 1-1000)"
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/compliance/report": {
+      "get": {
+        "tags": ["Compliance"],
+        "summary": "Framework-mapped compliance report",
+        "description": "Maps AEP's live evidence (HMAC-signed audit bundles, the API-key access log, policy.blocked analytics, tenant isolation + key scopes, retention, the causation-linked event store) onto the control areas of SOC 2, HIPAA, GDPR, or the EU AI Act. Each control's status (`satisfied` / `partial` / `unmet`) is derived from the actual configuration. Read-scoped + tenant-scoped. This is an input to a compliance review, not a certification.",
+        "operationId": "getComplianceReport",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          {
+            "name": "framework",
+            "in": "query",
+            "required": true,
+            "description": "Which framework to report against.",
+            "schema": { "type": "string", "enum": ["soc2", "hipaa", "gdpr", "eu_ai_act"] }
+          },
+          {
+            "name": "session",
+            "in": "query",
+            "description": "Optional integrity proof-point: build + verify an audit bundle for this session. Mutually exclusive with `trace`.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "trace",
+            "in": "query",
+            "description": "Optional integrity proof-point: build + verify an audit bundle for this trace. Mutually exclusive with `session`.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Inclusive ISO-8601 lower bound for the policy-enforcement evidence.",
+            "schema": { "type": "string", "format": "date-time" }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "description": "Exclusive ISO-8601 upper bound for the policy-enforcement evidence.",
+            "schema": { "type": "string", "format": "date-time" }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "`json` (default) or `pdf` (a human-readable rendering).",
+            "schema": { "type": "string", "enum": ["json", "pdf"], "default": "json" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Compliance report (JSON), or a PDF rendering when `format=pdf`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "framework": { "type": "string" },
+                    "framework_name": { "type": "string" },
+                    "framework_version": { "type": "string" },
+                    "generated_at": { "type": "string", "format": "date-time" },
+                    "scope": { "type": "object" },
+                    "summary": {
+                      "type": "object",
+                      "properties": {
+                        "total_controls": { "type": "integer" },
+                        "satisfied": { "type": "integer" },
+                        "partial": { "type": "integer" },
+                        "unmet": { "type": "integer" },
+                        "not_applicable": { "type": "integer" }
+                      }
+                    },
+                    "controls": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "title": { "type": "string" },
+                          "requirement": { "type": "string" },
+                          "status": { "type": "string", "enum": ["satisfied", "partial", "unmet", "not_applicable"] },
+                          "detail": { "type": "string" }
+                        }
+                      }
+                    },
+                    "evidence": { "type": "object" },
+                    "disclaimer": { "type": "string" }
+                  }
+                }
+              },
+              "application/pdf": {
+                "schema": { "type": "string", "format": "binary" }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing/invalid `framework`, both `session` and `trace` given, or a non-ISO `since`/`until`"
           },
           "401": { "$ref": "#/components/responses/Unauthorized" }
         }

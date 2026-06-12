@@ -4,6 +4,38 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Compliance report templates (Phase 14 PR-F) — 2026-06-12
+
+Phase 14 (Compliance & Audit Suite) PR-F: pre-built **compliance report
+templates** for SOC 2, HIPAA, GDPR, and the EU AI Act (PRD §Phase 14). Each maps
+AEP's live evidence onto the framework's control areas.
+
+- **`src/compliance.js`:** pure `generateComplianceReport(framework, evidence,
+  { now, scope })`. Four frameworks, each control's status (`satisfied` /
+  `partial` / `unmet`) **derived from real evidence** — HMAC-signed audit bundles
+  + signature config (integrity), the API-key access log (audit trail), policy.blocked
+  analytics (enforcement / human-oversight), tenant isolation + key scopes (access
+  control), the retention policy (storage limitation), and the causation-linked
+  event store (record-keeping / traceability). Carries an honest `disclaimer`: it
+  maps technical controls, it is not a certification. Defensive evidence defaults;
+  deterministic via injected `now`.
+- **`GET /compliance/report`** (read + tenant-scoped): `?framework=` (required) +
+  optional `?session=`/`?trace=` integrity proof-point (a bundle for that scope is
+  built and verified), `?since`/`?until` window for the enforcement evidence, and
+  `?format=json|pdf`. Invalid/missing framework → 400; both session+trace → 400.
+- **`src/compliance-pdf.js`:** human-readable PDF rendering (deterministic, built-in
+  fonts), mirroring the audit-bundle PDF renderer.
+- **CLI:** `aep compliance report --framework <id> [--session|--trace] [--since
+  --until] [--json|--out|--pdf]` — a colour summary, raw JSON, or a locally
+  rendered PDF.
+- **Docs:** OpenAPI path + `Compliance` tag; CHANGELOG.
+- **Tests:** `tests/unit/compliance.test.js` (16 — framework validity, evidence-
+  driven status, summary tally, defaults, determinism) + 12 integration cases (all
+  four frameworks, 400s, signing-on/off integrity, EU-AI-Act oversight, PDF). No
+  new CI job. 196 unit + 128 integration green.
+
+---
+
 ## API-key access logs (Phase 14 PR-E) — 2026-06-12
 
 Phase 14 (Compliance & Audit Suite) PR-E: a full **API-key usage audit trail**
