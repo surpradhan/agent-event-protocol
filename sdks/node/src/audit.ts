@@ -118,7 +118,7 @@ export function verifyAuditBundle(bundle: unknown, secret: string): AuditVerific
         timingSafeEqual(Buffer.from(cd, "utf8"), Buffer.from(recomputed, "utf8"));
       if (!contentDigestMatch) {
         errors.push(
-          "content_digest does not match the bundled events (events were modified, reordered, added, or dropped)"
+          "content_digest does not match the bundled events (events were modified, reordered, added, or dropped)",
         );
       }
     }
@@ -127,7 +127,7 @@ export function verifyAuditBundle(bundle: unknown, secret: string): AuditVerific
       errors.push("manifest.event_count is missing or not a number");
     } else if (ec !== eventList.length) {
       errors.push(
-        `manifest.event_count (${ec}) does not match the number of bundled events (${eventList.length})`
+        `manifest.event_count (${ec}) does not match the number of bundled events (${eventList.length})`,
       );
     }
   }
@@ -137,7 +137,7 @@ export function verifyAuditBundle(bundle: unknown, secret: string): AuditVerific
   if (isObject(manifest) && isObject(signature)) {
     if (signature.alg !== "hmac-sha256") {
       errors.push(
-        `Unsupported signature algorithm '${String(signature.alg)}' — expected 'hmac-sha256'`
+        `Unsupported signature algorithm '${String(signature.alg)}' — expected 'hmac-sha256'`,
       );
     } else if (typeof signature.value !== "string") {
       errors.push("signature.value is missing or not a string");
@@ -146,7 +146,7 @@ export function verifyAuditBundle(bundle: unknown, secret: string): AuditVerific
       manifestSignatureValid = timingSafeBase64Equal(signature.value, expected);
       if (!manifestSignatureValid) {
         errors.push(
-          "manifest signature is invalid (manifest was modified or the wrong secret was used)"
+          "manifest signature is invalid (manifest was modified or the wrong secret was used)",
         );
       }
     }
@@ -160,8 +160,8 @@ export function verifyAuditBundle(bundle: unknown, secret: string): AuditVerific
   ) {
     errors.push(
       `aep_audit_version mismatch: bundle '${String(bundle.aep_audit_version)}' vs signed manifest '${String(
-        manifest.aep_audit_version
-      )}'`
+        manifest.aep_audit_version,
+      )}'`,
     );
   }
 

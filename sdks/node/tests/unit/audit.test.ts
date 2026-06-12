@@ -45,7 +45,12 @@ describe("verifyAuditBundle", () => {
 
   it("detects nested-payload tampering via the content digest", () => {
     const bundle = loadBundle();
-    (((bundle.events as unknown[])[0] as Record<string, unknown>).payload as Record<string, unknown>).n = 999;
+    (
+      ((bundle.events as unknown[])[0] as Record<string, unknown>).payload as Record<
+        string,
+        unknown
+      >
+    ).n = 999;
     const result = verifyAuditBundle(bundle, KAT_SECRET);
     expect(result.valid).toBe(false);
     expect(result.content_digest_match).toBe(false);
@@ -97,7 +102,7 @@ describe("verifyAuditBundle", () => {
     const bundle = loadBundle();
     ((bundle.events as unknown[])[0] as Record<string, unknown>).signature = [];
     const result = verifyAuditBundle(bundle, KAT_SECRET);
-    expect(result.per_event[0].signature_present).toBe(true);
+    expect(result.per_event[0]?.signature_present).toBe(true);
   });
 
   it("fails gracefully on bad input", () => {
