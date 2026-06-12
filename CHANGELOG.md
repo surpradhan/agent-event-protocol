@@ -4,6 +4,39 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Data-residency region labels (Phase 14 PR-G) — 2026-06-12
+
+Phase 14 (Compliance & Audit Suite) PR-G: data-residency **controls** (PRD
+§Phase 14). Deliberately scoped to *declaration + mismatch detection*, not
+storage routing.
+
+- **`projects.region`** (migration `005_data_residency.js` + Postgres `SCHEMA_DDL`
+  CREATE column + idempotent `ADD COLUMN IF NOT EXISTS`): a project declares the
+  region its data should reside in — `EU` / `US` / `APAC` / `global` — via
+  `POST /admin/projects { region }`. Nullable (unspecified). Invalid → 400.
+- **`DATA_RESIDENCY_REGION`** env declares where this deployment's storage actually
+  is. Project responses now include `region` + **`regionEnforced`** — true only
+  when the deployment's region satisfies the project's declared region (or it asks
+  for none/`global`). A `false` flag tells an operator the data is **not**
+  physically in the required region.
+- **`src/regions.js`:** pure `normalizeRegion` / `isValidRegion` /
+  `getDeploymentRegion` / `isRegionEnforced`.
+- **Audit bundles:** when `DATA_RESIDENCY_REGION` is set, exported bundles record
+  `data_residency_region` in their **signed manifest** (added only when set, so
+  bundles from deployments without it are byte-identical to before).
+- **Honest scope (documented in `.env.example`):** AEP does **not** route storage
+  by region — a single deployment writes to one backend. Real multi-region routing
+  (per-region ingest endpoints/storage) is infrastructure, out of scope. This PR
+  delivers the residency *control surface*, not the routing.
+- **Docs:** OpenAPI (`region`/`regionEnforced` on the project schema + the create
+  body); CHANGELOG; `.env.example`.
+- **Tests:** `tests/unit/regions.test.js` (11) + 6 integration cases (store/return
+  region, omitted→null+enforced, invalid→400, regionEnforced vs deployment region,
+  GET project, audit-bundle manifest residency on/off). No new CI job. 207 unit +
+  135 integration green.
+
+---
+
 ## Compliance report templates (Phase 14 PR-F) — 2026-06-12
 
 Phase 14 (Compliance & Audit Suite) PR-F: pre-built **compliance report

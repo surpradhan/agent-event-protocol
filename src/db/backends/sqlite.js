@@ -318,19 +318,19 @@ class SqliteBackend extends StorageBackend {
       // ----- projects (Phase 13 PR-C) -----
       insertProject: db.prepare(`
         INSERT INTO projects
-          (id, name, tenant_id, tier, event_quota, retention_days, created_at)
+          (id, name, tenant_id, tier, event_quota, retention_days, created_at, region)
         VALUES
-          (@id, @name, @tenant_id, @tier, @event_quota, @retention_days, @created_at)
+          (@id, @name, @tenant_id, @tier, @event_quota, @retention_days, @created_at, @region)
       `),
 
       getProject: db.prepare(`
-        SELECT id, name, tenant_id, tier, event_quota, retention_days, created_at
+        SELECT id, name, tenant_id, tier, event_quota, retention_days, created_at, region
         FROM   projects
         WHERE  id = ?
       `),
 
       listProjects: db.prepare(`
-        SELECT id, name, tenant_id, tier, event_quota, retention_days, created_at
+        SELECT id, name, tenant_id, tier, event_quota, retention_days, created_at, region
         FROM   projects
         ORDER  BY created_at DESC
       `),

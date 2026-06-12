@@ -216,6 +216,15 @@ function buildAuditBundle({ events, meta = {}, secret, now } = {}) {
     per_event_signatures: summarizePerEventSignatures(events),
   };
 
+  // Phase 14 PR-G: when the deployment declares a storage region, record it in the
+  // signed manifest so an exported bundle is self-describing about where the data
+  // physically resided. Added only when provided, so bundles from deployments
+  // without DATA_RESIDENCY_REGION are byte-identical to before (key order is
+  // irrelevant — the manifest is signed over its deep-stable serialization).
+  if (meta.data_residency_region) {
+    manifest.data_residency_region = meta.data_residency_region;
+  }
+
   const signature = {
     alg: "hmac-sha256",
     value: computeManifestSignature(manifest, secret),

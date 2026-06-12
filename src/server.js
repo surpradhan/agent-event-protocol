@@ -14,6 +14,7 @@ const { summarizePolicyBlocked } = require("./analytics");
 const { generateComplianceReport, isValidFramework, FRAMEWORK_IDS } = require("./compliance");
 const { renderComplianceReportPdf } = require("./compliance-pdf");
 const { isPrunable } = require("./retention");
+const { isValidRegion, normalizeRegion, getDeploymentRegion, isRegionEnforced } = require("./regions");
 const {
   requireApiKey,
   requireReadAccess,
@@ -534,7 +535,9 @@ app.get("/sessions/:sessionId/audit-bundle", requireReadAccess, validatePathPara
     meta: {
       session_id: sessionId,
       ...(derivedTraceId ? { trace_id: derivedTraceId } : {}),
-      tenant_id: req.tenant_id ?? null
+      tenant_id: req.tenant_id ?? null,
+      // Phase 14 PR-G: null when DATA_RESIDENCY_REGION is unset → no manifest field.
+      data_residency_region: getDeploymentRegion()
     },
     secret,
     now: new Date()
@@ -583,7 +586,12 @@ app.get("/workflows/:traceId/audit-bundle", requireReadAccess, validatePathParam
 
   const bundle = buildAuditBundle({
     events,
-    meta: { trace_id: traceId, tenant_id: req.tenant_id ?? null },
+    meta: {
+      trace_id: traceId,
+      tenant_id: req.tenant_id ?? null,
+      // Phase 14 PR-G: null when DATA_RESIDENCY_REGION is unset → no manifest field.
+      data_residency_region: getDeploymentRegion()
+    },
     secret,
     now: new Date()
   });
@@ -1266,6 +1274,7 @@ app.get("/admin/keys/:id/access-log", requireAdminAuth, validateQueryParams, asy
  * accepted-event count for the project's tenant) so operators can see headroom.
  */
 async function serializeProject(row, includeUsage = false) {
+  const region = row.region ?? null; // null = unspecified (no residency requirement)
   const out = {
     id:            row.id,
     name:          row.name,
@@ -1273,6 +1282,11 @@ async function serializeProject(row, includeUsage = false) {
     tier:          row.tier,
     eventQuota:    row.event_quota ?? null,    // null = unlimited
     retentionDays: row.retention_days ?? null, // null = unlimited
+    region,                                    // data-residency label (Phase 14 PR-G)
+    // True when this deployment's storage region satisfies the project's declared
+    // region (or it asks for none/global). False = data is NOT physically in the
+    // required region (a signal — AEP does not route storage by region).
+    regionEnforced: isRegionEnforced(region),
     createdAt:     row.created_at
   };
   if (includeUsage) {
@@ -1285,7 +1299,7 @@ async function serializeProject(row, includeUsage = false) {
 // The tier's default event_quota / retention_days are materialised onto the
 // project row; either can be overridden per-project via the request body.
 app.post("/admin/projects", requireAdminAuth, async (req, res) => {
-  const { name, tenantId, tier, eventQuota, retentionDays } = req.body || {};
+  const { name, tenantId, tier, eventQuota, retentionDays, region } = req.body || {};
 
   if (!tenantId || typeof tenantId !== "string") {
     return res.status(400).json({ error: "'tenantId' is required and must be a non-empty string" });
@@ -1297,6 +1311,14 @@ app.post("/admin/projects", requireAdminAuth, async (req, res) => {
       error: "'tier' must be one of: " + TIER_NAMES.join(", ")
     });
   }
+
+  // Data-residency region (Phase 14 PR-G): optional. Unspecified → null.
+  if (!isValidRegion(region)) {
+    return res.status(400).json({
+      error: "'region' must be one of: EU, US, APAC, global (or omitted)"
+    });
+  }
+  const resolvedRegion = normalizeRegion(region);
 
   // Per-project overrides: undefined → inherit tier default; null → unlimited.
   const policy = getTierPolicy(resolvedTier);
@@ -1317,7 +1339,8 @@ app.post("/admin/projects", requireAdminAuth, async (req, res) => {
     tier:           resolvedTier,
     event_quota:    resolvedQuota,
     retention_days: resolvedRetention,
-    created_at:     new Date().toISOString()
+    created_at:     new Date().toISOString(),
+    region:         resolvedRegion
   };
 
   try {
