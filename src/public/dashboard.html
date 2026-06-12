@@ -484,6 +484,19 @@
     .an-day-label { font-size: 9px; color: var(--muted); }
     .an-days { display: flex; align-items: flex-end; gap: 6px; height: 120px; overflow-x: auto; padding-top: 6px; }
 
+    /* Performance profiling panel */
+    .pf-overall { display: flex; flex-wrap: wrap; gap: 18px; margin: 6px 0 4px; }
+    .pf-stat { display: flex; flex-direction: column; }
+    .pf-stat .k { font-size: 10px; letter-spacing: 0.05em; color: var(--muted); text-transform: uppercase; }
+    .pf-stat .v { font-size: 18px; font-variant-numeric: tabular-nums; color: var(--ink); }
+    .pf-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 4px; }
+    .pf-table th { text-align: right; font-weight: 600; color: var(--muted); padding: 5px 8px; border-bottom: 1px solid var(--line2); font-variant-numeric: tabular-nums; }
+    .pf-table th:first-child { text-align: left; }
+    .pf-table td { text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; color: var(--ink); }
+    .pf-table td:first-child { text-align: left; overflow: hidden; text-overflow: ellipsis; max-width: 260px; white-space: nowrap; }
+    .pf-table tr:last-child td { border-bottom: none; }
+    .pf-slow-dur { color: var(--accent2); font-weight: 600; }
+
     /* ── Responsive ── */
     @media (max-width: 980px) {
       .metric-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
@@ -523,6 +536,7 @@
     <button class="tab-btn"        id="tab-workflows"  onclick="switchMain('workflows')">Workflows</button>
     <button class="tab-btn"        id="tab-rejected"   onclick="switchMain('rejected')">Rejected<span id="rejected-badge" class="tab-badge" style="display:none">0</span></button>
     <button class="tab-btn"        id="tab-analytics"  onclick="switchMain('analytics')">Policy Analytics</button>
+    <button class="tab-btn"        id="tab-performance" onclick="switchMain('performance')">Performance</button>
   </div>
 
   <!-- ═══ Sessions view ═══ -->
@@ -657,6 +671,27 @@
       </div>
       <div id="an-body">
         <div class="empty">No policy.blocked events recorded for this tenant.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Performance profiling view ═══ -->
+  <div id="view-performance" style="display:none">
+    <div class="card reject-panel">
+      <div class="panel-header" style="margin-bottom:12px">
+        <div>
+          <div class="panel-title">Performance Profiling <span id="pf-total" class="hint"></span></div>
+          <div class="hint" style="font-size:11px;margin-top:2px">Latency (p50/p95/p99) per tool, agent &amp; operation. Pairs <code>tool.called→tool.result</code> and <code>task.created→task.completed/failed</code> by causation.</div>
+        </div>
+        <button class="btn secondary" onclick="loadPerformance()">Refresh</button>
+      </div>
+      <div class="reject-toolbar">
+        <input id="pf-since" type="text" placeholder="Since (ISO-8601, optional)" autocomplete="off" />
+        <input id="pf-until" type="text" placeholder="Until (ISO-8601, optional)" autocomplete="off" />
+        <button class="btn secondary" onclick="loadPerformance()">Apply</button>
+      </div>
+      <div id="pf-body">
+        <div class="empty">No completed operations recorded for this tenant.</div>
       </div>
     </div>
   </div>
@@ -882,12 +917,15 @@ function switchMain(v) {
   document.getElementById('view-workflows').style.display = v === 'workflows' ? '' : 'none';
   document.getElementById('view-rejected').style.display  = v === 'rejected'  ? '' : 'none';
   document.getElementById('view-analytics').style.display = v === 'analytics' ? '' : 'none';
+  document.getElementById('view-performance').style.display = v === 'performance' ? '' : 'none';
   document.getElementById('tab-sessions').className   = 'tab-btn' + (v === 'sessions'  ? ' active' : '');
   document.getElementById('tab-workflows').className  = 'tab-btn' + (v === 'workflows' ? ' active' : '');
   document.getElementById('tab-rejected').className   = 'tab-btn' + (v === 'rejected'  ? ' active' : '');
   document.getElementById('tab-analytics').className  = 'tab-btn' + (v === 'analytics' ? ' active' : '');
+  document.getElementById('tab-performance').className = 'tab-btn' + (v === 'performance' ? ' active' : '');
   if (v === 'rejected') loadRejections();
   if (v === 'analytics') loadAnalytics();
+  if (v === 'performance') loadPerformance();
 }
 function switchSub(v) {
   subView = v;
@@ -1541,6 +1579,96 @@ function renderAnalytics(a) {
     <div style="margin-top:18px">
       <div class="an-section-title">Most recent (${a.recent.length})</div>
       <div class="item-list">${recentHtml}</div>
+    </div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Performance profiling panel (Phase 15-A)
+// ─────────────────────────────────────────────────────────────────────────────
+async function loadPerformance() {
+  const body  = document.getElementById('pf-body');
+  const since = document.getElementById('pf-since').value.trim();
+  const until = document.getElementById('pf-until').value.trim();
+  const qs = new URLSearchParams();
+  if (since) qs.set('since', since);
+  if (until) qs.set('until', until);
+  const url = '/analytics/performance' + (qs.toString() ? '?' + qs : '');
+  try {
+    const data = await fetchJson(url);
+    renderPerformance(data);
+  } catch (e) {
+    body.innerHTML = `<div class="empty">Could not load performance (${esc(e.message)}). Check the date filters.</div>`;
+    document.getElementById('pf-total').textContent = '';
+  }
+}
+
+function renderPerformance(a) {
+  document.getElementById('pf-total').textContent =
+    `(${a.total_operations} operation${a.total_operations === 1 ? '' : 's'})`;
+  const body = document.getElementById('pf-body');
+
+  if (!a.total_operations) {
+    body.innerHTML = '<div class="empty">No completed operations for this tenant in the selected window.</div>';
+    return;
+  }
+
+  const o = a.overall;
+  const overallHtml = `
+    <div class="pf-overall">
+      ${[['p50', o.p50], ['p95', o.p95], ['p99', o.p99], ['min', o.min], ['max', o.max], ['mean', o.mean]]
+        .map(([k, v]) => `<div class="pf-stat"><span class="k">${k} (ms)</span><span class="v">${v.toLocaleString()}</span></div>`).join('')}
+    </div>`;
+
+  // A ranked latency table: key + count + p50/p95/p99 (ms).
+  const statTable = (rows, keyHeader) => {
+    if (!rows.length) return '<div class="empty" style="padding:8px 0">No data.</div>';
+    return `
+      <table class="pf-table">
+        <thead><tr><th>${esc(keyHeader)}</th><th>n</th><th>p50</th><th>p95</th><th>p99</th><th>max</th></tr></thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr>
+              <td title="${esc(r.key)}">${esc(r.key)}</td>
+              <td>${r.count}</td>
+              <td>${r.p50.toLocaleString()}</td>
+              <td>${r.p95.toLocaleString()}</td>
+              <td>${r.p99.toLocaleString()}</td>
+              <td>${r.max.toLocaleString()}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`;
+  };
+
+  const slowHtml = a.slowest.map(s => `
+    <div class="reject-item">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="pf-slow-dur">${s.duration_ms.toLocaleString()} ms</span>
+        <span class="badge">${esc(s.op_type)}</span>
+        ${s.name ? `<span class="hint">${esc(s.name)}</span>` : ''}
+        ${s.status === 'failed' ? '<span class="hint" style="color:#fca5a5">failed</span>' : ''}
+        <span class="hint" style="margin-left:auto">${s.ended_at ? esc(ago(s.ended_at)) : ''}</span>
+      </div>
+      <div class="hint" style="margin-top:4px">
+        ${s.source ? `source: ${esc(short(s.source, 28))}` : ''}
+        ${s.session_id ? ` · session: ${esc(short(s.session_id, 20))}` : ''}
+      </div>
+    </div>`).join('');
+
+  const unmatched = a.unmatched_ends
+    ? `<div class="hint" style="margin-top:6px">${a.unmatched_ends} end event(s) skipped (no in-window start / negative duration).</div>`
+    : '';
+
+  body.innerHTML = `
+    <div class="an-section-title">Overall latency</div>
+    ${overallHtml}${unmatched}
+    <div class="an-grid">
+      <div><div class="an-section-title">By tool</div>${statTable(a.by_tool, 'Tool')}</div>
+      <div><div class="an-section-title">By agent</div>${statTable(a.by_agent, 'Agent')}</div>
+      <div><div class="an-section-title">By operation</div>${statTable(a.by_operation, 'Operation')}</div>
+    </div>
+    <div style="margin-top:18px">
+      <div class="an-section-title">Slowest operations (${a.slowest.length})</div>
+      <div class="item-list">${slowHtml}</div>
     </div>`;
 }
 

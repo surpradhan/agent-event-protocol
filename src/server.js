@@ -11,6 +11,7 @@ const { verifySignature } = require("./signature");
 const { buildAuditBundle, verifyAuditBundle } = require("./audit");
 const { renderAuditBundlePdf } = require("./audit-pdf");
 const { summarizePolicyBlocked } = require("./analytics");
+const { summarizePerformance } = require("./performance");
 const { generateComplianceReport, isValidFramework, FRAMEWORK_IDS } = require("./compliance");
 const { renderComplianceReportPdf } = require("./compliance-pdf");
 const { isPrunable } = require("./retention");
@@ -825,6 +826,46 @@ app.get("/analytics/policy-blocked", requireReadAccess, validateQueryParams, asy
   // list to 20 when the caller omits it.
   const limit = req.query.limit !== undefined ? parseInt(req.query.limit, 10) : 20;
   const summary = summarizePolicyBlocked(events, { now: new Date(), limit });
+
+  res.json({ ...summary, window: { since: since.value, until: until.value } });
+});
+
+/**
+ * GET /analytics/performance — latency / performance profiling (Phase 15-A).
+ *
+ * Pairs lifecycle events into operations (tool.called→tool.result,
+ * task.created→task.completed|failed) and reports p50/p95/p99 latency sliced by
+ * tool, agent (source), session, and operation type — "latency breakdown per
+ * agent, per tool, per event type" (PRD §Phase 15).  The DB returns the raw
+ * (tenant-scoped, time-windowed) envelopes; the pure summarizePerformance
+ * (src/performance.js) shapes them, so the SQL stays trivial on both backends.
+ *
+ * Query params (all optional):
+ *   since — ISO-8601 inclusive lower bound on event time (time >= since)
+ *   until — ISO-8601 exclusive upper bound on event time (time <  until)
+ *   limit — max entries in the `slowest` list (1–1000, default 20)
+ *
+ * Tenant-scoped from the API key; no cross-tenant leakage.
+ */
+app.get("/analytics/performance", requireReadAccess, validateQueryParams, async (req, res) => {
+  const since = parseIsoBound(req.query.since);
+  const until = parseIsoBound(req.query.until);
+  if (!since.ok || !until.ok) {
+    return res.status(400).json({
+      error: "Bad Request",
+      message: "Query parameters 'since' and 'until' must be ISO-8601 timestamps"
+    });
+  }
+
+  const events = await db.getPerformanceEvents(req.tenant_id, {
+    since: since.value,
+    until: until.value
+  });
+
+  // validateQueryParams already bounds ?limit to [1,1000]; default the slowest
+  // list to 20 when the caller omits it.
+  const limit = req.query.limit !== undefined ? parseInt(req.query.limit, 10) : 20;
+  const summary = summarizePerformance(events, { now: new Date(), limit });
 
   res.json({ ...summary, window: { since: since.value, until: until.value } });
 });

@@ -10,7 +10,7 @@
  *   aep export   — Export session events as JSON or CSV
  *   aep audit    — Build / verify / render a tamper-evident audit bundle
  *   aep workflow — Query a full workflow tree by trace_id
- *   aep analytics — Policy-enforcement analytics (policy.blocked)
+ *   aep analytics — Policy-enforcement & performance analytics
  *   aep compliance — Compliance report templates (SOC2/HIPAA/GDPR/EU AI Act)
  *   aep validate — Validate a local event JSON file (existing)
  *
@@ -124,7 +124,7 @@ Commands:
   export     Export session events as JSON or CSV
   audit      Build / verify / render a tamper-evident audit bundle
   workflow   Query a full workflow tree by trace_id
-  analytics  Policy-enforcement analytics (policy.blocked)
+  analytics  Policy-enforcement & performance analytics
   compliance Compliance report templates (SOC2/HIPAA/GDPR/EU AI Act)
   validate   Validate a local event JSON file
 
@@ -647,18 +647,20 @@ async function cmdWorkflow(positional, flags, serverUrl, apiKey) {
 
 function analyticsHelp() {
   console.log(`
-\x1b[1maep analytics\x1b[0m — Compliance / policy-enforcement analytics
+\x1b[1maep analytics\x1b[0m — Policy-enforcement & performance analytics
 
 Usage:
   aep analytics policy-blocked [flags]
+  aep analytics performance    [flags]
 
 Subcommands:
   policy-blocked   Aggregate policy.blocked events (what the agent refused, and when)
+  performance      Latency profiling: p50/p95/p99 per tool / agent / session / operation
 
 Flags:
   --since  <iso>    Inclusive lower bound on event time (ISO-8601)
   --until  <iso>    Exclusive upper bound on event time (ISO-8601)
-  --limit  <n>      Max entries in the recent list (1-1000, default 20)
+  --limit  <n>      Max entries in the recent / slowest list (1-1000, default 20)
   --json            Print the raw JSON response instead of a summary
 `);
 }
@@ -716,12 +718,75 @@ async function cmdAnalyticsPolicyBlocked(flags, serverUrl, apiKey) {
   }
 }
 
+async function cmdAnalyticsPerformance(flags, serverUrl, apiKey) {
+  if (!apiKey) die("API key required. Set --key or AEP_API_KEY env var.");
+
+  const qs = new URLSearchParams();
+  if (flags.since) qs.set("since", flags.since);
+  if (flags.until) qs.set("until", flags.until);
+  if (flags.limit) qs.set("limit", flags.limit);
+  const query = qs.toString() ? `?${qs}` : "";
+
+  const res = await request("GET", `${serverUrl}/analytics/performance${query}`, null, {
+    Authorization: `Bearer ${apiKey}`,
+  });
+
+  if (res.status !== 200) {
+    die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+  }
+
+  if (flags.json) {
+    console.log(JSON.stringify(res.body, null, 2));
+    return;
+  }
+
+  const a = res.body;
+  const win = a.window && (a.window.since || a.window.until)
+    ? `  (since=${a.window.since || "—"}, until=${a.window.until || "—"})`
+    : "";
+  console.log(`Operations: \x1b[1m${a.total_operations}\x1b[0m${win}`);
+  if (a.unmatched_ends) console.log(`  (${a.unmatched_ends} unmatched end event(s) skipped)`);
+  if (a.total_operations === 0) {
+    console.log("  (no completed operations in window)");
+    return;
+  }
+
+  const o = a.overall;
+  console.log(
+    `\n\x1b[1mOverall latency (ms)\x1b[0m  p50=${o.p50}  p95=${o.p95}  p99=${o.p99}  ` +
+    `min=${o.min}  max=${o.max}  mean=${o.mean}`
+  );
+
+  // ms columns: count / p50 / p95 / p99, label last.
+  const printStats = (label, rows) => {
+    if (!rows.length) return;
+    console.log(`\n\x1b[1m${label}\x1b[0m`);
+    console.log(`  ${"n".padStart(5)}  ${"p50".padStart(8)}  ${"p95".padStart(8)}  ${"p99".padStart(8)}  key`);
+    for (const r of rows) {
+      console.log(
+        `  ${String(r.count).padStart(5)}  ${String(r.p50).padStart(8)}  ` +
+        `${String(r.p95).padStart(8)}  ${String(r.p99).padStart(8)}  ${r.key}`
+      );
+    }
+  };
+  printStats("By tool", a.by_tool);
+  printStats("By agent", a.by_agent);
+  printStats("By operation", a.by_operation);
+
+  console.log("\n\x1b[1mSlowest operations\x1b[0m");
+  for (const s of a.slowest) {
+    const what = s.name ? `${s.op_type} (${s.name})` : s.op_type;
+    console.log(`  \x1b[33m${String(s.duration_ms).padStart(8)}ms\x1b[0m  ${what}  \x1b[36m${s.source}\x1b[0m`);
+  }
+}
+
 async function cmdAnalytics(positional, flags, serverUrl, apiKey) {
   if (flags.help && !positional[1]) { analyticsHelp(); return; }
 
   const sub = positional[1];
   switch (sub) {
     case "policy-blocked": return cmdAnalyticsPolicyBlocked(flags, serverUrl, apiKey);
+    case "performance": return cmdAnalyticsPerformance(flags, serverUrl, apiKey);
     default:
       analyticsHelp();
       if (sub) die(`Unknown analytics subcommand: '${sub}'`);

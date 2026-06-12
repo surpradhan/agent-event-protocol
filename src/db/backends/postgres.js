@@ -699,6 +699,35 @@ class PostgresBackend extends StorageBackend {
     return rows.map(r => JSON.parse(r.raw_payload));
   }
 
+  // ----- performance profiling (Phase 15-A) -----
+
+  async getPerformanceEvents(tenantId = null, { since = null, until = null } = {}) {
+    // Built dynamically (same shape as getPolicyBlockedEvents): conditions are
+    // only appended when present, so no IS NULL params / ::text cast needed. The
+    // pure src/performance.js summarizer does all aggregation, so this stays
+    // dialect-identical to the SQLite backend.
+    let sql =
+      "SELECT raw_payload FROM events WHERE type IN " +
+      "('task.created','task.completed','task.failed','tool.called','tool.result')";
+    const params = [];
+    if (tenantId) {
+      params.push(tenantId);
+      sql += ` AND tenant_id = $${params.length}`;
+    }
+    if (since) {
+      params.push(since);
+      sql += ` AND time >= $${params.length}`;
+    }
+    if (until) {
+      params.push(until);
+      sql += ` AND time < $${params.length}`;
+    }
+    sql += " ORDER BY time ASC";
+
+    const { rows } = await this._pool.query(sql, params);
+    return rows.map(r => JSON.parse(r.raw_payload));
+  }
+
   // ----- API-key access log (Phase 14 PR-E) -----
 
   async recordApiKeyAccess({ id, apiKeyId, tenantId, method, path, status, ts }) {

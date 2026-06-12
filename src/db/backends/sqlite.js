@@ -701,6 +701,28 @@ class SqliteBackend extends StorageBackend {
     return rows.map(r => JSON.parse(r.raw_payload));
   }
 
+  // ----- performance profiling (Phase 15-A) -----
+
+  async getPerformanceEvents(tenantId = null, { since = null, until = null } = {}) {
+    // The lifecycle events whose start→end pairs define latency operations
+    // (task.created→completed/failed, tool.called→result). Aggregation lives in
+    // the pure src/performance.js summarizer; this SELECT stays trivial and
+    // dialect-identical to the Postgres backend. Constant statement text (fixed
+    // IN list + `(? IS NULL OR …)` guards) keeps SQLite's plan cache warm.
+    const sql = `
+      SELECT raw_payload
+      FROM   events
+      WHERE  type IN ('task.created','task.completed','task.failed','tool.called','tool.result')
+        AND  (? IS NULL OR tenant_id = ?)
+        AND  (? IS NULL OR time >= ?)
+        AND  (? IS NULL OR time <  ?)
+      ORDER  BY time ASC
+    `;
+    const params = [tenantId, tenantId, since, since, until, until];
+    const rows = this._db.prepare(sql).all(...params);
+    return rows.map(r => JSON.parse(r.raw_payload));
+  }
+
   // ----- API-key access log (Phase 14 PR-E) -----
 
   async recordApiKeyAccess({ id, apiKeyId, tenantId, method, path, status, ts }) {

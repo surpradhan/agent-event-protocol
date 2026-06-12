@@ -4,6 +4,32 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Performance profiling analytics (Phase 15-A) — 2026-06-12
+
+Phase 15 (Advanced Dashboard) PR-A: latency/performance profiling — "latency
+breakdown per agent, per tool, per event type" (PRD §Phase 15).
+
+- **`GET /analytics/performance`** (read- + tenant-scoped, `?since`/`?until`/`?limit`):
+  pairs lifecycle events into *operations* — `tool.called`→`tool.result` and
+  `task.created`→`task.completed`|`task.failed`, matched by the end event's
+  `causation_id` — and reports **p50/p95/p99** latency (computed from event `time`
+  fields) sliced `by_tool`, `by_agent` (source), `by_session`, and `by_operation`,
+  plus an `overall` summary and a `slowest` list. End events with no in-window
+  start (or a negative duration) are reported in `unmatched_ends`.
+- **Pure aggregator** `src/performance.js` (`summarizePerformance`, injected `now`,
+  no I/O) — mirrors the PR-D pattern: the dual-backend `getPerformanceEvents`
+  (`src/db/backends/{sqlite,postgres}.js` + `interface.js` + `src/db/index.js`)
+  does a trivial, dialect-identical `SELECT` and the shaping is unit-tested with
+  zero database. Percentiles use the nearest-rank method (each reported value is
+  an actually-observed sample).
+- **`aep analytics performance`** CLI subcommand, a **Performance** dashboard tab
+  (`src/public/dashboard.html`) with overall stats + per-tool/agent/operation
+  latency tables + a slowest-operations list, and an OpenAPI path under the
+  **Analytics** tag (`LatencyStats`/`LatencyGroup` schemas).
+- No schema change, no new CI job. Server suite: 228 unit + 141 integration.
+
+---
+
 ## SDK-side offline audit-bundle verifiers (Phase 14 add-on) — 2026-06-12
 
 Ports the server's `verifyAuditBundle` to the **Python, Go, and Node SDKs** so a
