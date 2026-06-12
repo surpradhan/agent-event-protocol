@@ -11,6 +11,7 @@
  *   aep audit    — Build / verify / render a tamper-evident audit bundle
  *   aep workflow — Query a full workflow tree by trace_id
  *   aep analytics — Policy-enforcement analytics (policy.blocked)
+ *   aep compliance — Compliance report templates (SOC2/HIPAA/GDPR/EU AI Act)
  *   aep validate — Validate a local event JSON file (existing)
  *
  * Configuration (in priority order):
@@ -124,6 +125,7 @@ Commands:
   audit      Build / verify / render a tamper-evident audit bundle
   workflow   Query a full workflow tree by trace_id
   analytics  Policy-enforcement analytics (policy.blocked)
+  compliance Compliance report templates (SOC2/HIPAA/GDPR/EU AI Act)
   validate   Validate a local event JSON file
 
 Global flags:
@@ -727,6 +729,107 @@ async function cmdAnalytics(positional, flags, serverUrl, apiKey) {
 }
 
 // ---------------------------------------------------------------------------
+// Command: compliance (Phase 14 PR-F)
+// ---------------------------------------------------------------------------
+
+function complianceHelp() {
+  console.log(`
+\x1b[1maep compliance\x1b[0m — Pre-built compliance report templates
+
+Usage:
+  aep compliance report --framework <id> [flags]
+
+Frameworks (--framework):
+  soc2 | hipaa | gdpr | eu_ai_act
+
+Flags:
+  --framework <id>   REQUIRED: which framework to report against
+  --session   <id>   Add an integrity proof-point: verify a bundle for this session
+  --trace     <id>   Add an integrity proof-point: verify a bundle for this trace
+  --since     <iso>  ISO-8601 lower bound for the policy-enforcement evidence
+  --until     <iso>  ISO-8601 upper bound for the policy-enforcement evidence
+  --json             Print the raw JSON report
+  --out       <file> Write the JSON report to a file
+  --pdf       <file> Render a human-readable PDF report to a file
+`);
+}
+
+const STATUS_MARK = {
+  satisfied: "\x1b[32m✓\x1b[0m",
+  partial: "\x1b[33m~\x1b[0m",
+  unmet: "\x1b[31m✗\x1b[0m",
+  not_applicable: "\x1b[90m-\x1b[0m"
+};
+
+async function cmdComplianceReport(flags, serverUrl, apiKey) {
+  if (!apiKey) die("API key required. Set --key or AEP_API_KEY env var.");
+  const framework = flags.framework;
+  if (!framework || flags.framework === true) {
+    die("Usage: aep compliance report --framework <soc2|hipaa|gdpr|eu_ai_act> [--session id | --trace id] [--pdf out.pdf | --out file.json]");
+  }
+
+  const qs = new URLSearchParams({ framework });
+  if (flags.session) qs.set("session", flags.session);
+  if (flags.trace)   qs.set("trace", flags.trace);
+  if (flags.since)   qs.set("since", flags.since);
+  if (flags.until)   qs.set("until", flags.until);
+
+  const res = await request("GET", `${serverUrl}/compliance/report?${qs}`, null, {
+    Authorization: `Bearer ${apiKey}`,
+  });
+  if (res.status !== 200) {
+    die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+  }
+  const report = res.body;
+
+  // --pdf: render the JSON report locally (the same renderer the server uses).
+  if (flags.pdf !== undefined) {
+    const pdfPath = typeof flags.pdf === "string" ? flags.pdf : null;
+    if (!pdfPath) die("--pdf needs a filename, e.g. --pdf report.pdf");
+    const { renderComplianceReportPdf } = require("./compliance-pdf");
+    // Pin `now` to the report's own timestamp so the PDF metadata matches it.
+    const pdf = await renderComplianceReportPdf(report, { now: new Date(report.generated_at) });
+    require("fs").writeFileSync(pdfPath, pdf);
+    console.log(`\x1b[32m✓\x1b[0m Compliance PDF written to ${pdfPath}`);
+    return;
+  }
+
+  if (flags.out) {
+    require("fs").writeFileSync(flags.out, JSON.stringify(report, null, 2) + "\n");
+    console.log(`\x1b[32m✓\x1b[0m Compliance report written to ${flags.out}`);
+    return;
+  }
+
+  if (flags.json) {
+    process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+    return;
+  }
+
+  // Default: a human-readable summary.
+  const s = report.summary;
+  console.log(`\x1b[1m${report.framework_name}\x1b[0m  (${report.framework_version})`);
+  console.log(`  ${s.satisfied} satisfied · ${s.partial} partial · ${s.unmet} unmet  (of ${s.total_controls})\n`);
+  for (const c of report.controls) {
+    const mark = STATUS_MARK[c.status] || STATUS_MARK.not_applicable;
+    console.log(`  ${mark} \x1b[1m${c.id}\x1b[0m  ${c.title}`);
+    console.log(`      ${c.detail}`);
+  }
+  console.log(`\n\x1b[90m${report.disclaimer}\x1b[0m`);
+}
+
+async function cmdCompliance(positional, flags, serverUrl, apiKey) {
+  if (flags.help && !positional[1]) { complianceHelp(); return; }
+
+  const sub = positional[1];
+  switch (sub) {
+    case "report": return cmdComplianceReport(flags, serverUrl, apiKey);
+    default:
+      complianceHelp();
+      if (sub) die(`Unknown compliance subcommand: '${sub}'`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Command: validate (thin wrapper around existing cli-validate.js logic)
 // ---------------------------------------------------------------------------
 
@@ -800,6 +903,7 @@ async function main() {
       case "audit":    await cmdAudit(positional, flags, serverUrl, apiKey); break;
       case "workflow": await cmdWorkflow(positional, flags, serverUrl, apiKey); break;
       case "analytics": await cmdAnalytics(positional, flags, serverUrl, apiKey); break;
+      case "compliance": await cmdCompliance(positional, flags, serverUrl, apiKey); break;
       case "validate": await cmdValidate(positional, flags); break;
       default:
         console.error(`Unknown command: '${command}'\n`);

@@ -2255,3 +2255,121 @@ describe("GET /admin/keys/:id/access-log", () => {
     assert.ok(!JSON.stringify(body).includes(SECRET), "the secret query param must never appear in the access log");
   });
 });
+
+// ---------------------------------------------------------------------------
+// GET /compliance/report — compliance report templates (Phase 14 PR-F)
+// ---------------------------------------------------------------------------
+
+describe("GET /compliance/report", () => {
+  before(async () => {
+    // Seed a small workflow so the report has events/policy.blocked to evidence.
+    await ingest(makeEvent({ id: "evt_cmp_1", time: "2026-04-01T08:00:00Z", session_id: "ses_cmp", trace_id: "trc_cmp", type: "task.created" }));
+    await ingest(makeEvent({ id: "evt_cmp_2", time: "2026-04-01T09:00:00Z", session_id: "ses_cmp", trace_id: "trc_cmp", type: "policy.blocked", payload: { policy: "pii_guard", action_blocked: "tool.called/x" } }));
+  });
+
+  function getReport(qs) {
+    return fetch(`${baseUrl}/compliance/report?${qs}`, { headers: { Authorization: `Bearer ${readKey}` } });
+  }
+
+  test("requires authentication (401 without a key)", async () => {
+    const res = await fetch(`${baseUrl}/compliance/report?framework=soc2`);
+    assert.equal(res.status, 401);
+  });
+
+  test("missing / invalid framework → 400", async () => {
+    assert.equal((await getReport("")).status, 400);
+    assert.equal((await getReport("framework=nope")).status, 400);
+  });
+
+  for (const fw of ["soc2", "hipaa", "gdpr", "eu_ai_act"]) {
+    test(`${fw}: returns a well-formed report`, async () => {
+      const res = await getReport(`framework=${fw}`);
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.framework, fw);
+      assert.ok(typeof body.framework_name === "string");
+      assert.ok(Array.isArray(body.controls) && body.controls.length > 0);
+      assert.equal(
+        body.summary.satisfied + body.summary.partial + body.summary.unmet + body.summary.not_applicable,
+        body.summary.total_controls
+      );
+      assert.ok(typeof body.disclaimer === "string" && body.disclaimer.length > 0);
+      for (const c of body.controls) {
+        assert.ok(c.id && c.title && c.requirement && c.status && c.detail);
+      }
+    });
+  }
+
+  test("rejects both session and trace together with 400", async () => {
+    const res = await getReport("framework=soc2&session=ses_cmp&trace=trc_cmp");
+    assert.equal(res.status, 400);
+  });
+
+  test("rejects a non-ISO ?since with 400", async () => {
+    const res = await getReport("framework=soc2&since=not-a-date");
+    assert.equal(res.status, 400);
+  });
+
+  test("integrity control is PARTIAL when AUDIT_SIGNING_SECRET is unset", async () => {
+    const prev = process.env.AUDIT_SIGNING_SECRET;
+    delete process.env.AUDIT_SIGNING_SECRET;
+    try {
+      const body = await (await getReport("framework=soc2")).json();
+      const integrity = body.controls.find(c => c.id === "CC7.1");
+      assert.equal(integrity.status, "partial");
+      assert.equal(body.evidence.integrity.signing_configured, false);
+    } finally {
+      if (prev === undefined) delete process.env.AUDIT_SIGNING_SECRET;
+      else process.env.AUDIT_SIGNING_SECRET = prev;
+    }
+  });
+
+  test("integrity control is SATISFIED + bundle verified when signing is configured and a trace scope is given", async () => {
+    const prev = process.env.AUDIT_SIGNING_SECRET;
+    process.env.AUDIT_SIGNING_SECRET = "test-compliance-secret";
+    try {
+      const body = await (await getReport("framework=soc2&trace=trc_cmp")).json();
+      const integrity = body.controls.find(c => c.id === "CC7.1");
+      assert.equal(integrity.status, "satisfied");
+      assert.equal(body.evidence.integrity.signing_configured, true);
+      assert.equal(body.evidence.integrity.bundle_verified, true);
+      assert.equal(body.scope.trace_id, "trc_cmp");
+    } finally {
+      if (prev === undefined) delete process.env.AUDIT_SIGNING_SECRET;
+      else process.env.AUDIT_SIGNING_SECRET = prev;
+    }
+  });
+
+  test("EU AI Act human-oversight is satisfied once a policy.blocked event exists", async () => {
+    const body = await (await getReport("framework=eu_ai_act")).json();
+    const oversight = body.controls.find(c => c.id === "Art.14");
+    assert.equal(oversight.status, "satisfied");
+  });
+
+  test("?format=pdf returns a PDF document", async () => {
+    const res = await getReport("framework=hipaa&format=pdf");
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "application/pdf");
+    const buf = Buffer.from(await res.arrayBuffer());
+    assert.equal(buf.subarray(0, 5).toString("latin1"), "%PDF-");
+  });
+
+  test("a nonexistent ?trace scope is not a 404 — it just yields no integrity proof", async () => {
+    // The scope is an OPTIONAL proof-point, not the resource; a typo'd/missing
+    // scope returns 200 with bundle_verified=null (capability still reported).
+    const prev = process.env.AUDIT_SIGNING_SECRET;
+    process.env.AUDIT_SIGNING_SECRET = "test-compliance-secret";
+    try {
+      const res = await getReport("framework=soc2&trace=trc_does_not_exist");
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.evidence.integrity.bundle_verified, null);
+      // signing is configured, so the integrity control is still satisfied (the
+      // capability exists) even though no bundle could be built for the scope.
+      assert.equal(body.controls.find(c => c.id === "CC7.1").status, "satisfied");
+    } finally {
+      if (prev === undefined) delete process.env.AUDIT_SIGNING_SECRET;
+      else process.env.AUDIT_SIGNING_SECRET = prev;
+    }
+  });
+});

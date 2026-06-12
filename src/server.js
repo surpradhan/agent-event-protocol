@@ -11,6 +11,9 @@ const { verifySignature } = require("./signature");
 const { buildAuditBundle, verifyAuditBundle } = require("./audit");
 const { renderAuditBundlePdf } = require("./audit-pdf");
 const { summarizePolicyBlocked } = require("./analytics");
+const { generateComplianceReport, isValidFramework, FRAMEWORK_IDS } = require("./compliance");
+const { renderComplianceReportPdf } = require("./compliance-pdf");
+const { isPrunable } = require("./retention");
 const {
   requireApiKey,
   requireReadAccess,
@@ -586,6 +589,171 @@ app.get("/workflows/:traceId/audit-bundle", requireReadAccess, validatePathParam
   });
 
   return sendAuditBundle(req, res, bundle, secret, traceId);
+});
+
+// ---------------------------------------------------------------------------
+// Route — compliance report templates (Phase 14 PR-F)
+//
+// Maps AEP's live evidence (audit bundles + HMAC signatures, the API-key access
+// log, policy.blocked analytics, tenant isolation + key scopes, retention, the
+// causation-linked event store) onto the control areas of SOC 2 / HIPAA / GDPR /
+// EU AI Act. Read-scoped + tenant-scoped. The pure generator lives in
+// src/compliance.js; this handler only assembles the evidence object.
+// ---------------------------------------------------------------------------
+
+/**
+ * Assemble the evidence facets a compliance report is derived from, scoped to the
+ * requesting tenant. An optional `session`/`trace` adds a concrete integrity
+ * proof-point (a freshly built audit bundle for that scope is verified); the
+ * monitoring / record-keeping counts are tenant-wide posture.
+ */
+async function assembleComplianceEvidence(req, { session, trace, since, until }) {
+  const tenantId = req.tenant_id;
+
+  const metrics = await db.getMetrics(tenantId);
+  const totalEvents = metrics.accepted || 0;
+  const distinctTypes = Object.keys(metrics.byType || {}).length;
+
+  const policyBlocked = await db.getPolicyBlockedEvents(tenantId, { since, until });
+
+  const signingConfigured = !!process.env.AUDIT_SIGNING_SECRET;
+  const accessLogEnabled = isAccessLogEnabled();
+
+  // Retention posture from the requesting key's project.
+  let retentionConfigured = false;
+  let retentionDays = null;
+  const project = await db.getProject(req.project_id || "default");
+  if (project) {
+    retentionDays = project.retention_days ?? null;
+    retentionConfigured = isPrunable(retentionDays);
+  }
+
+  // Integrity proof-point: when signing is configured AND a session/trace scope is
+  // named, build a bundle for it and verify it. Otherwise bundle_verified stays
+  // null (the capability is reported via signing_configured).
+  //
+  // Note (intentional non-404): a session/trace that does not exist for the
+  // tenant simply leaves bundle_verified null — the scope is an OPTIONAL integrity
+  // proof-point, not the resource being fetched, so (unlike /sessions/:id/audit-
+  // bundle) a missing/typo'd scope yields a weaker proof rather than a 404.
+  let bundleVerified = null;
+  let perEventSignatures = { present: 0, total: 0 };
+  if (signingConfigured && (session || trace)) {
+    const secret = process.env.AUDIT_SIGNING_SECRET;
+    let events = null;
+    let meta = null;
+    if (session) {
+      const s = await db.getSession(session, tenantId);
+      if (s) {
+        events = await db.getSessionEvents(session, { tenantId });
+        meta = { session_id: session, tenant_id: tenantId ?? null };
+      }
+    } else {
+      const wf = await db.getWorkflow(trace, tenantId);
+      if (wf) {
+        const sids = collectSessionIds(wf.tree);
+        const perSession = await Promise.all(
+          sids.map(sid => db.getSessionEvents(sid, { tenantId }))
+        );
+        events = perSession.flat().sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+        meta = { trace_id: trace, tenant_id: tenantId ?? null };
+      }
+    }
+    if (events && validateTenantOwnership(events, tenantId, "compliance_events")) {
+      const now = new Date();
+      const bundle = buildAuditBundle({ events, meta, secret, now });
+      bundleVerified = verifyAuditBundle(bundle, secret, { now }).valid;
+      perEventSignatures = bundle.manifest.per_event_signatures || perEventSignatures;
+    }
+  }
+
+  return {
+    access_control: { api_key_auth: true, scopes_enforced: true, tenant_isolation: true },
+    access_log: { enabled: accessLogEnabled },
+    integrity: {
+      signing_configured: signingConfigured,
+      bundle_verified: bundleVerified,
+      per_event_signatures: perEventSignatures
+    },
+    monitoring: {
+      policy_blocked_count: policyBlocked.length,
+      total_events: totalEvents,
+      distinct_event_types: distinctTypes
+    },
+    retention: { configured: retentionConfigured, retention_days: retentionDays },
+    // trace_id is a REQUIRED envelope field (v0.2.0), so any in-scope event is
+    // trace-linked — has_trace_ids = "events exist" is accurate, not a proxy. We
+    // deliberately do NOT claim has_causation_links here: causation_id is optional
+    // and we don't scan for it, so it stays at its conservative default (false)
+    // rather than over-claiming (no transparency control depends on it).
+    causation: { has_trace_ids: totalEvents > 0 },
+    record_keeping: { total_events: totalEvents, audit_export_available: signingConfigured }
+  };
+}
+
+/**
+ * GET /compliance/report — a framework-mapped compliance report.
+ *
+ * Query params:
+ *   framework — REQUIRED: soc2 | hipaa | gdpr | eu_ai_act
+ *   session / trace — optional integrity proof-point scope (at most one)
+ *   since / until — optional ISO-8601 window for the policy-enforcement evidence
+ *   format — json (default) | pdf
+ */
+app.get("/compliance/report", requireReadAccess, validateQueryParams, async (req, res) => {
+  const framework = typeof req.query.framework === "string" ? req.query.framework.toLowerCase() : "";
+  if (!isValidFramework(framework)) {
+    return res.status(400).json({
+      error: "Bad Request",
+      message: `Query parameter 'framework' is required and must be one of: ${FRAMEWORK_IDS.join(", ")}`
+    });
+  }
+
+  const session = typeof req.query.session === "string" ? req.query.session : undefined;
+  const trace = typeof req.query.trace === "string" ? req.query.trace : undefined;
+  if (session && trace) {
+    return res.status(400).json({
+      error: "Bad Request",
+      message: "Specify at most one of 'session' or 'trace'"
+    });
+  }
+
+  const since = parseIsoBound(req.query.since);
+  const until = parseIsoBound(req.query.until);
+  if (!since.ok || !until.ok) {
+    return res.status(400).json({
+      error: "Bad Request",
+      message: "Query parameters 'since' and 'until' must be ISO-8601 timestamps"
+    });
+  }
+
+  const evidence = await assembleComplianceEvidence(req, {
+    session,
+    trace,
+    since: since.value,
+    until: until.value
+  });
+
+  const now = new Date();
+  const report = generateComplianceReport(framework, evidence, {
+    now,
+    scope: {
+      tenant_id: req.tenant_id ?? null,
+      ...(session ? { session_id: session } : {}),
+      ...(trace ? { trace_id: trace } : {}),
+      since: since.value,
+      until: until.value
+    }
+  });
+
+  const format = (typeof req.query.format === "string" ? req.query.format : "json").toLowerCase();
+  if (format === "pdf") {
+    const pdf = await renderComplianceReportPdf(report, { now });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="compliance-${framework}.pdf"`);
+    return res.send(pdf);
+  }
+  return res.json(report);
 });
 
 // GET /metrics — counters + session count + workflow metrics (JSON)
