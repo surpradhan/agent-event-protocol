@@ -274,6 +274,8 @@
           "tier": { "type": "string", "enum": ["free", "team", "enterprise"] },
           "eventQuota": { "type": ["integer", "null"], "description": "Max accepted events; null = unlimited" },
           "retentionDays": { "type": ["integer", "null"], "description": "Retention policy in days; null = unlimited" },
+          "region": { "type": ["string", "null"], "enum": ["EU", "US", "APAC", "global", null], "description": "Declared data-residency region; null = unspecified (Phase 14 PR-G)" },
+          "regionEnforced": { "type": "boolean", "description": "Whether this deployment's DATA_RESIDENCY_REGION satisfies the project's declared region (false = data not physically in the required region; AEP does not route storage by region)" },
           "createdAt": { "type": "string", "format": "date-time" },
           "usage": { "type": "integer", "description": "Current accepted-event count for the project's tenant (list/get only)" }
         }
@@ -1215,6 +1217,12 @@
                     "type": ["integer", "null"],
                     "description": "Override the tier's default retention. null = unlimited.",
                     "example": 30
+                  },
+                  "region": {
+                    "type": "string",
+                    "enum": ["EU", "US", "APAC", "global"],
+                    "description": "Declared data-residency region (Phase 14 PR-G). Omit for unspecified.",
+                    "example": "EU"
                   }
                 }
               }

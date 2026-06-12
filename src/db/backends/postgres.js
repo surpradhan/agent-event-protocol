@@ -134,10 +134,15 @@ const SCHEMA_DDL = `
     tier           TEXT    NOT NULL DEFAULT 'free',
     event_quota    INTEGER,
     retention_days INTEGER,
-    created_at     TEXT    NOT NULL
+    created_at     TEXT    NOT NULL,
+    region         TEXT
   );
 
   CREATE INDEX IF NOT EXISTS idx_projects_tenant ON projects (tenant_id);
+
+  -- Phase 14 PR-G: mirrors migration 005 for already-existing Postgres DBs
+  -- (the CREATE above only adds the column on a fresh database).
+  ALTER TABLE projects ADD COLUMN IF NOT EXISTS region TEXT;
 
   -- Seed the 'default' project so legacy keys/data keep working unchanged.
   INSERT INTO projects
@@ -538,8 +543,8 @@ class PostgresBackend extends StorageBackend {
   async createProject(record) {
     await this._pool.query(
       `INSERT INTO projects
-         (id, name, tenant_id, tier, event_quota, retention_days, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+         (id, name, tenant_id, tier, event_quota, retention_days, created_at, region)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         record.id,
         record.name,
@@ -547,14 +552,15 @@ class PostgresBackend extends StorageBackend {
         record.tier,
         record.event_quota ?? null,
         record.retention_days ?? null,
-        record.created_at
+        record.created_at,
+        record.region ?? null
       ]
     );
   }
 
   async getProject(id) {
     const { rows } = await this._pool.query(
-      `SELECT id, name, tenant_id, tier, event_quota, retention_days, created_at
+      `SELECT id, name, tenant_id, tier, event_quota, retention_days, created_at, region
        FROM   projects
        WHERE  id = $1`,
       [id]
@@ -564,7 +570,7 @@ class PostgresBackend extends StorageBackend {
 
   async listProjects() {
     const { rows } = await this._pool.query(
-      `SELECT id, name, tenant_id, tier, event_quota, retention_days, created_at
+      `SELECT id, name, tenant_id, tier, event_quota, retention_days, created_at, region
        FROM   projects
        ORDER  BY created_at DESC`
     );

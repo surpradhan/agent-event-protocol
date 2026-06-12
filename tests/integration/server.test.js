@@ -2373,3 +2373,101 @@ describe("GET /compliance/report", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Data-residency region labels (Phase 14 PR-G)
+// ---------------------------------------------------------------------------
+
+describe("data-residency region labels", () => {
+  async function createProject(body) {
+    return fetch(`${baseUrl}/admin/projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify(body),
+    });
+  }
+
+  test("a project stores and returns its region + regionEnforced", async () => {
+    const res = await createProject({ tenantId: "res-a", tier: "team", region: "eu" });
+    assert.equal(res.status, 201);
+    const { project } = await res.json();
+    assert.equal(project.region, "EU"); // canonicalized
+    assert.equal(typeof project.regionEnforced, "boolean");
+  });
+
+  test("an omitted region is null and regionEnforced (no requirement)", async () => {
+    const res = await createProject({ tenantId: "res-b", tier: "free" });
+    assert.equal(res.status, 201);
+    const { project } = await res.json();
+    assert.equal(project.region, null);
+    assert.equal(project.regionEnforced, true);
+  });
+
+  test("an invalid region → 400", async () => {
+    const res = await createProject({ tenantId: "res-c", region: "mars" });
+    assert.equal(res.status, 400);
+  });
+
+  test("regionEnforced reflects the deployment's DATA_RESIDENCY_REGION", async () => {
+    const prev = process.env.DATA_RESIDENCY_REGION;
+    process.env.DATA_RESIDENCY_REGION = "EU";
+    try {
+      const euRes = await (await createProject({ tenantId: "res-eu", region: "EU" })).json();
+      assert.equal(euRes.project.regionEnforced, true); // deployment is EU, project wants EU
+
+      const usRes = await (await createProject({ tenantId: "res-us", region: "US" })).json();
+      assert.equal(usRes.project.regionEnforced, false); // deployment is EU, project wants US — mismatch
+      assert.equal(usRes.project.region, "US");
+    } finally {
+      if (prev === undefined) delete process.env.DATA_RESIDENCY_REGION;
+      else process.env.DATA_RESIDENCY_REGION = prev;
+    }
+  });
+
+  test("GET /admin/projects/:id includes region + regionEnforced", async () => {
+    const created = await (await createProject({ tenantId: "res-d", region: "APAC" })).json();
+    const res = await fetch(`${baseUrl}/admin/projects/${created.project.id}`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    assert.equal(res.status, 200);
+    const { project } = await res.json();
+    assert.equal(project.region, "APAC");
+    assert.ok("regionEnforced" in project);
+  });
+
+  test("audit bundle records data_residency_region only when the deployment declares one", async () => {
+    // Seed a one-event session for this tenant.
+    await ingest(makeEvent({ id: "evt_res_1", session_id: "ses_res", trace_id: "trc_res" }));
+
+    const prevSecret = process.env.AUDIT_SIGNING_SECRET;
+    const prevRegion = process.env.DATA_RESIDENCY_REGION;
+    process.env.AUDIT_SIGNING_SECRET = "test-residency-secret";
+    try {
+      // With a deployment region set → manifest carries data_residency_region.
+      process.env.DATA_RESIDENCY_REGION = "EU";
+      let res = await fetch(`${baseUrl}/sessions/ses_res/audit-bundle`, {
+        headers: { Authorization: `Bearer ${readKey}` },
+      });
+      assert.equal(res.status, 200);
+      let bundle = await res.json();
+      assert.equal(bundle.manifest.data_residency_region, "EU");
+      // The region field is INSIDE the signed manifest: the bundle still verifies
+      // (the signature is recomputed over the manifest including the new field).
+      const { verifyAuditBundle } = require("../../src/audit");
+      assert.equal(verifyAuditBundle(bundle, process.env.AUDIT_SIGNING_SECRET).valid, true);
+
+      // Without a deployment region → field is absent (byte-compatible with pre-PR-G).
+      delete process.env.DATA_RESIDENCY_REGION;
+      res = await fetch(`${baseUrl}/sessions/ses_res/audit-bundle`, {
+        headers: { Authorization: `Bearer ${readKey}` },
+      });
+      bundle = await res.json();
+      assert.equal("data_residency_region" in bundle.manifest, false);
+    } finally {
+      if (prevSecret === undefined) delete process.env.AUDIT_SIGNING_SECRET;
+      else process.env.AUDIT_SIGNING_SECRET = prevSecret;
+      if (prevRegion === undefined) delete process.env.DATA_RESIDENCY_REGION;
+      else process.env.DATA_RESIDENCY_REGION = prevRegion;
+    }
+  });
+});

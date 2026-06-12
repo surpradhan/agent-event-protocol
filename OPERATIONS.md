@@ -272,6 +272,38 @@ different cause: rate limiting throttles *request frequency*; the quota caps
   window × instance count. Hard global enforcement would need a shared counter
   (Redis / a per-ingest DB upsert) — out of scope for Phase 13.
 
+### Data residency (Phase 14 PR-G)
+
+A project can **declare** the region its data should reside in — `EU` / `US` /
+`APAC` / `global` — at creation:
+
+```bash
+curl -s -X POST http://localhost:8787/admin/projects \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"tenantId":"acme","tier":"team","region":"EU"}'
+```
+
+The deployment declares where its storage **actually** lives via the
+`DATA_RESIDENCY_REGION` env var. Each project response then carries:
+
+- `region` — the project's declared region (`null` = unspecified), and
+- `regionEnforced` — `true` only when `DATA_RESIDENCY_REGION` satisfies the
+  project's declared region (or it asks for none / `global`). **A `false` flag
+  means the data is NOT physically in the region the project requires** — monitor
+  it as a residency-violation signal.
+
+When `DATA_RESIDENCY_REGION` is set, exported audit bundles also record
+`data_residency_region` in their **signed manifest**, so the evidence is
+self-describing about where the data resided.
+
+> **Important — this is a control, not routing.** AEP does **not** route storage
+> by region: a single deployment writes to one backend, so `DATA_RESIDENCY_REGION`
+> is your *attestation* of that backend's location and `regionEnforced` is a
+> *mismatch signal*. True multi-region residency requires infrastructure —
+> separate per-region ingest endpoints + storage — which is outside the
+> application layer. Run one AEP deployment per region and point each region's
+> tenants at the matching endpoint.
+
 ---
 
 ## 4. Retention & pruning runbook
