@@ -631,6 +631,11 @@ async function assembleComplianceEvidence(req, { session, trace, since, until })
   // Integrity proof-point: when signing is configured AND a session/trace scope is
   // named, build a bundle for it and verify it. Otherwise bundle_verified stays
   // null (the capability is reported via signing_configured).
+  //
+  // Note (intentional non-404): a session/trace that does not exist for the
+  // tenant simply leaves bundle_verified null — the scope is an OPTIONAL integrity
+  // proof-point, not the resource being fetched, so (unlike /sessions/:id/audit-
+  // bundle) a missing/typo'd scope yields a weaker proof rather than a 404.
   let bundleVerified = null;
   let perEventSignatures = { present: 0, total: 0 };
   if (signingConfigured && (session || trace)) {
@@ -676,7 +681,12 @@ async function assembleComplianceEvidence(req, { session, trace, since, until })
       distinct_event_types: distinctTypes
     },
     retention: { configured: retentionConfigured, retention_days: retentionDays },
-    causation: { has_trace_ids: totalEvents > 0, has_causation_links: totalEvents > 0 },
+    // trace_id is a REQUIRED envelope field (v0.2.0), so any in-scope event is
+    // trace-linked — has_trace_ids = "events exist" is accurate, not a proxy. We
+    // deliberately do NOT claim has_causation_links here: causation_id is optional
+    // and we don't scan for it, so it stays at its conservative default (false)
+    // rather than over-claiming (no transparency control depends on it).
+    causation: { has_trace_ids: totalEvents > 0 },
     record_keeping: { total_events: totalEvents, audit_export_available: signingConfigured }
   };
 }

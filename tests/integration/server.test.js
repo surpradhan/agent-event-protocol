@@ -2353,4 +2353,23 @@ describe("GET /compliance/report", () => {
     const buf = Buffer.from(await res.arrayBuffer());
     assert.equal(buf.subarray(0, 5).toString("latin1"), "%PDF-");
   });
+
+  test("a nonexistent ?trace scope is not a 404 — it just yields no integrity proof", async () => {
+    // The scope is an OPTIONAL proof-point, not the resource; a typo'd/missing
+    // scope returns 200 with bundle_verified=null (capability still reported).
+    const prev = process.env.AUDIT_SIGNING_SECRET;
+    process.env.AUDIT_SIGNING_SECRET = "test-compliance-secret";
+    try {
+      const res = await getReport("framework=soc2&trace=trc_does_not_exist");
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.evidence.integrity.bundle_verified, null);
+      // signing is configured, so the integrity control is still satisfied (the
+      // capability exists) even though no bundle could be built for the scope.
+      assert.equal(body.controls.find(c => c.id === "CC7.1").status, "satisfied");
+    } finally {
+      if (prev === undefined) delete process.env.AUDIT_SIGNING_SECRET;
+      else process.env.AUDIT_SIGNING_SECRET = prev;
+    }
+  });
 });

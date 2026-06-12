@@ -64,6 +64,11 @@ function normalizeEvidence(evidence) {
   const recordKeeping = e.record_keeping || {};
 
   return {
+    // Access-control primitives default to ON (`!== false`) because they are
+    // architectural in AEP — every request is key-authenticated, scopes are
+    // enforced, and tenant isolation is enforced at the DB+API layer by default.
+    // The sole caller (the server) always passes explicit `true`; a future caller
+    // can pass `false` to mark one as not active in its deployment.
     access_control: {
       api_key_auth: accessControl.api_key_auth !== false,
       scopes_enforced: accessControl.scopes_enforced !== false,
