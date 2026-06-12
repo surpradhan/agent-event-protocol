@@ -441,6 +441,36 @@ either form).
 
 ---
 
+## Offline audit-bundle verification
+
+Verify a tamper-evident audit bundle (from `GET /sessions/:id/audit-bundle`,
+`GET /workflows/:traceId/audit-bundle`, or `aep audit export`) entirely offline —
+no server, no database — with just the bundle JSON and the audit signing secret:
+
+```python
+import json
+from aep import verify_audit_bundle
+
+with open("bundle.json", encoding="utf-8") as fh:
+    bundle = json.load(fh)
+
+result = verify_audit_bundle(bundle, secret="my-audit-signing-secret")
+# {"valid": True, "content_digest_match": True, "manifest_signature_valid": True,
+#  "errors": [], "per_event": [...]}
+
+if not result["valid"]:
+    raise SystemExit(f"bundle failed verification: {result['errors']}")
+```
+
+It recomputes the content digest over the bundle's events and the HMAC signature
+over its manifest — both **byte-identical to the server** (and the Go/Node SDKs;
+locked by a shared known-answer fixture). Any post-hoc change — a mutated payload
+field, reordered/added/dropped events, an edited manifest, or the wrong secret —
+makes `valid` false. (Building/signing bundles stays server-side, where the
+signing secret lives.)
+
+---
+
 ## Validation
 
 ```python

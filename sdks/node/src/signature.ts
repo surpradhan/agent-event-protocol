@@ -69,6 +69,15 @@ function sortDeep(value: unknown): unknown {
 }
 
 /**
+ * Deep, recursively key-sorted, whitespace-free JSON of any value — byte-identical
+ * to the server's `stableStringify` (src/_canonical.js). Used as the audit-bundle
+ * manifest's HMAC input (see {@link ./audit}).
+ */
+export function stableStringify(value: unknown): string {
+  return JSON.stringify(sortDeep(value));
+}
+
+/**
  * Produce the **v2** (deep) canonical JSON string covering the whole event
  * including nested payloads. Byte-identical to the server's `canonicalizeV2`.
  *

@@ -22,8 +22,14 @@ export {
   verifySignature,
   canonicalize,
   canonicalizeV2,
+  stableStringify,
   type SignOptions,
 } from "./signature.js";
+export {
+  verifyAuditBundle,
+  type AuditVerification,
+  type AuditPerEvent,
+} from "./audit.js";
 export { handleResponse, parseRetryAfter } from "./http.js";
 export {
   AEPClient,
