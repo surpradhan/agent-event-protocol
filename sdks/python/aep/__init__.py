@@ -16,6 +16,7 @@ Quick start::
         result = client.emit(event)
 """
 
+from aep._audit import verify_audit_bundle
 from aep._event import create_event
 from aep._signature import canonicalize_v2, sign_event, verify_signature
 from aep._types import CORE_EVENT_TYPES, AgentRole, EventType
@@ -55,5 +56,6 @@ __all__ = [
     "sign_event",
     "uninstrument",
     "validate_event",
+    "verify_audit_bundle",
     "verify_signature",
 ]

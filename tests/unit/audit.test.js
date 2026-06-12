@@ -363,3 +363,51 @@ describe("audit error / guard paths", () => {
     assert.deepEqual(result.per_event, []);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Cross-language KAT anchor (Phase 14 add-on: SDK-side verifiers)
+//
+// The shared fixture tests/fixtures/audit/kat-bundle.json is verified
+// byte-for-byte by the Python, Go, and Node SDK verifiers. This test anchors it
+// to the server: rebuilding the bundle from the same inputs must reproduce the
+// fixture's content_digest + signature exactly, so the fixture can never silently
+// drift from the canonical server implementation.
+// ---------------------------------------------------------------------------
+
+describe("audit bundle — shared cross-language KAT", () => {
+  const fs = require("fs");
+  const path = require("path");
+
+  const KAT_SECRET = "shared-secret-123";
+  const KAT_CONTENT_DIGEST = "3de94f67e3ff35fc9b3e31c2e5efc1932f9e950cc6be0813eed571271ad6f6d5";
+  const KAT_SIGNATURE = "D6IW2aVORoxIZWy+LiWUrZ08QKLkzFo9uTEySZlcWVA=";
+  const KAT_NOW = "2026-01-01T00:00:00.000Z";
+
+  function katEvents() {
+    return [
+      { specversion: "0.2.0", id: "evt_kat_1", time: "2026-01-01T00:00:00Z", source: "agent://kat", type: "task.created", session_id: "ses_kat", trace_id: "trc_kat", agent_role: "orchestrator", payload: { n: 1, msg: "hello", nested: { b: 2, a: 1 } } },
+      { specversion: "0.2.0", id: "evt_kat_2", time: "2026-01-01T00:01:00Z", source: "agent://kat", type: "policy.blocked", session_id: "ses_kat", trace_id: "trc_kat", payload: { policy: "pii_guard", blocked: true, items: ["x", "y"] } },
+    ];
+  }
+
+  test("rebuilding the KAT inputs reproduces the fixture digest + signature", () => {
+    const bundle = buildAuditBundle({
+      events: katEvents(),
+      meta: { session_id: "ses_kat", trace_id: "trc_kat", tenant_id: "kat-tenant" },
+      secret: KAT_SECRET,
+      now: KAT_NOW,
+    });
+    assert.equal(bundle.manifest.content_digest, KAT_CONTENT_DIGEST);
+    assert.equal(bundle.signature.value, KAT_SIGNATURE);
+  });
+
+  test("the committed fixture matches the rebuilt bundle and verifies", () => {
+    const fixture = JSON.parse(
+      fs.readFileSync(path.join(__dirname, "..", "fixtures", "audit", "kat-bundle.json"), "utf8")
+    );
+    assert.equal(fixture.manifest.content_digest, KAT_CONTENT_DIGEST);
+    assert.equal(fixture.signature.value, KAT_SIGNATURE);
+    const result = verifyAuditBundle(fixture, KAT_SECRET);
+    assert.equal(result.valid, true);
+  });
+});

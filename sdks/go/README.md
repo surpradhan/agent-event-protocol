@@ -173,6 +173,34 @@ and Python SDKs (locked by a cross-language known-answer test).
 > them). Verified by `TestECMANumberFormatting`, `TestEcmaQuote`, and
 > server-derived known-answer vectors covering special characters.
 
+### Offline audit-bundle verification
+
+Verify a tamper-evident audit bundle (from `GET /sessions/:id/audit-bundle`,
+`GET /workflows/:traceId/audit-bundle`, or `aep audit export`) entirely offline —
+no server, no database — with just the bundle JSON and the audit signing secret:
+
+```go
+data, _ := os.ReadFile("bundle.json")
+result, err := aep.VerifyAuditBundleJSON(data, "my-audit-signing-secret")
+if err != nil {
+	log.Fatalf("bundle is not valid JSON: %v", err)
+}
+if !result.Valid {
+	log.Fatalf("bundle failed verification: %v", result.Errors)
+}
+// result.ContentDigestMatch && result.ManifestSignatureValid == true
+
+// Or, if you already have the parsed bundle as a map[string]any:
+//   result := aep.VerifyAuditBundle(bundle, secret)
+```
+
+It recomputes the content digest over the bundle's events and the HMAC signature
+over its manifest — both **byte-identical to the server** (and the Python/Node
+SDKs; locked by a shared known-answer fixture). Any post-hoc change — a mutated
+payload field, reordered/added/dropped events, an edited manifest, or the wrong
+secret — makes `Valid` false. (Building/signing bundles stays server-side, where
+the signing secret lives.)
+
 ## Features
 
 - **Sync & Async Clients**: Both `Client` and `AsyncClient` with context-aware timeouts

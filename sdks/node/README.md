@@ -54,6 +54,7 @@ const workflow = await client.getWorkflow("trc_xyz");
 | `createEvent(source, type, sessionId, traceId, payload, options?)` | Build a v0.2.0 envelope; auto `id`/`time`; validates `type` + `agentRole`. |
 | `validateEvent(event)` | `{ valid, errors }` against the bundled envelope schema (+ optional `payload.$schema`). `[warn]`-prefixed errors are non-blocking. |
 | `signEvent(event, secret, { canon })` / `verifySignature(event, secret)` / `canonicalize(event)` / `canonicalizeV2(event)` | HMAC-SHA256 signing/verification. `canon` selects the canonical form: `"v2"` (default, deep) or `"v1"` (legacy, envelope-only). |
+| `verifyAuditBundle(bundle, secret)` | Offline verification of a tamper-evident audit bundle (see *Offline audit-bundle verification* below). |
 | `AEPClient` | Async `fetch`-based client: `emit`, `emitBatch`, `getSessions`, `getSessionEvents`, `getSessionTree`, `getSessionExport`, `getWorkflow`, `getMetrics`, `health`, `ready`. |
 | `EventType`, `AgentRole`, `CORE_EVENT_TYPES` | Protocol enums/constants. |
 | `AEPError` + `AEPValidationError` / `AEPAuthError` / `AEPRateLimitError` / `AEPNotFoundError` / `AEPConnectionError` / `AEPServerError` | Error hierarchy. |
@@ -89,6 +90,30 @@ envelope-only form. It remains byte-identical across all SDKs and the server
 
 [issue #59]: https://github.com/surpradhan/agent-event-protocol/issues/59
 [issue #65]: https://github.com/surpradhan/agent-event-protocol/issues/65
+
+### Offline audit-bundle verification
+
+Verify a tamper-evident audit bundle (from `GET /sessions/:id/audit-bundle`,
+`GET /workflows/:traceId/audit-bundle`, or `aep audit export`) entirely offline —
+no server, no database — with just the bundle JSON and the audit signing secret:
+
+```ts
+import { readFileSync } from "node:fs";
+import { verifyAuditBundle } from "@surpradhan/aep";
+
+const bundle = JSON.parse(readFileSync("bundle.json", "utf8"));
+const result = verifyAuditBundle(bundle, "my-audit-signing-secret");
+// { valid, content_digest_match, manifest_signature_valid, errors, per_event }
+
+if (!result.valid) throw new Error(`bundle failed verification: ${result.errors.join("; ")}`);
+```
+
+It recomputes the content digest over the bundle's events and the HMAC signature
+over its manifest — both **byte-identical to the server** (and the Python/Go SDKs;
+locked by a shared known-answer fixture). Any post-hoc change — a mutated payload
+field, reordered/added/dropped events, an edited manifest, or the wrong secret —
+makes `valid` false. (Building/signing bundles stays server-side, where the
+signing secret lives.)
 
 ## Auto-instrumentation (LangChain.js / LangGraph)
 
