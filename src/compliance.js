@@ -96,8 +96,7 @@ function normalizeEvidence(evidence) {
         retention.retention_days === undefined ? null : retention.retention_days
     },
     causation: {
-      has_trace_ids: !!causation.has_trace_ids,
-      has_causation_links: !!causation.has_causation_links
+      has_trace_ids: !!causation.has_trace_ids
     },
     record_keeping: {
       total_events: Number(recordKeeping.total_events) || 0,
