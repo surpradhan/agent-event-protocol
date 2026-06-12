@@ -75,8 +75,12 @@ function getDeploymentRegion() {
  */
 function isRegionEnforced(projectRegion, deploymentRegion = getDeploymentRegion()) {
   const pr = normalizeRegion(projectRegion);
-  // Invalid or no specific requirement → nothing to enforce, so "enforced" holds.
-  if (pr === undefined || pr === null || pr === "global") return true;
+  // No specific requirement (unspecified or global) → nothing to enforce.
+  if (pr === null || pr === "global") return true;
+  // An UNRECOGNIZED declared region (only reachable via a corrupt/tampered row —
+  // the API validates on write) is NOT satisfiable, so report it as not enforced
+  // rather than silently "compliant".
+  if (pr === undefined) return false;
   return pr === deploymentRegion;
 }
 

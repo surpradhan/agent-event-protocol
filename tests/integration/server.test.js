@@ -2451,6 +2451,10 @@ describe("data-residency region labels", () => {
       assert.equal(res.status, 200);
       let bundle = await res.json();
       assert.equal(bundle.manifest.data_residency_region, "EU");
+      // The region field is INSIDE the signed manifest: the bundle still verifies
+      // (the signature is recomputed over the manifest including the new field).
+      const { verifyAuditBundle } = require("../../src/audit");
+      assert.equal(verifyAuditBundle(bundle, process.env.AUDIT_SIGNING_SECRET).valid, true);
 
       // Without a deployment region → field is absent (byte-compatible with pre-PR-G).
       delete process.env.DATA_RESIDENCY_REGION;

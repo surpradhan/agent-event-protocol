@@ -73,10 +73,13 @@ describe("getDeploymentRegion", () => {
 });
 
 describe("isRegionEnforced", () => {
-  test("no requirement (null / global / invalid) is always enforced", () => {
+  test("no requirement (null / global) is always enforced", () => {
     assert.equal(isRegionEnforced(null, "US"), true);
     assert.equal(isRegionEnforced("global", "US"), true);
-    assert.equal(isRegionEnforced("mars", "US"), true); // invalid project region → nothing to enforce
+  });
+  test("an unrecognized declared region is NOT enforced (surfaces a corrupt row)", () => {
+    assert.equal(isRegionEnforced("mars", "US"), false);
+    assert.equal(isRegionEnforced("mars", "mars"), false);
   });
   test("a specific region is enforced only when the deployment matches", () => {
     assert.equal(isRegionEnforced("EU", "EU"), true);
