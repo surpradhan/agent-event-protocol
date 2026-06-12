@@ -650,6 +650,32 @@ class PostgresBackend extends StorageBackend {
     }
   }
 
+  // ----- analytics (Phase 14 PR-D) -----
+
+  async getPolicyBlockedEvents(tenantId = null, { since = null, until = null } = {}) {
+    // Built dynamically (same shape as getSessionEvents): conditions are only
+    // appended when their value is present, so no IS NULL params and thus no
+    // ::text cast workaround is needed.
+    let sql = "SELECT raw_payload FROM events WHERE type = 'policy.blocked'";
+    const params = [];
+    if (tenantId) {
+      params.push(tenantId);
+      sql += ` AND tenant_id = $${params.length}`;
+    }
+    if (since) {
+      params.push(since);
+      sql += ` AND time >= $${params.length}`;
+    }
+    if (until) {
+      params.push(until);
+      sql += ` AND time < $${params.length}`;
+    }
+    sql += " ORDER BY time ASC";
+
+    const { rows } = await this._pool.query(sql, params);
+    return rows.map(r => JSON.parse(r.raw_payload));
+  }
+
   // ----- pagination -----
 
   async getPaginatedSessions(tenantId = null, { limit = 50, cursor = null } = {}) {

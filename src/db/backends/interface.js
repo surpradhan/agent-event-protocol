@@ -201,6 +201,26 @@ class StorageBackend {
   async countEventsBefore(tenantId, cutoff) {
     throw new Error("StorageBackend.countEventsBefore() not implemented");
   }
+
+  // ----- analytics (Phase 14 PR-D) -----
+
+  /**
+   * Return the full `policy.blocked` event envelopes for a tenant, optionally
+   * restricted to a time window, ordered by `time` ascending.  Tenant-scoped
+   * exactly like the read API: `null` tenantId means all tenants (dashboard).
+   *
+   * The aggregation itself lives in the pure src/analytics.js summarizer, so this
+   * method stays a trivial, dialect-identical SELECT on both backends.
+   *
+   * @param {string|null} tenantId
+   * @param {{ since?: string|null, until?: string|null }} [opts]
+   *        since — inclusive ISO-8601 lower bound (`time >= since`)
+   *        until — exclusive ISO-8601 upper bound (`time < until`)
+   * @returns {Promise<Array<object>>} parsed event envelopes
+   */
+  async getPolicyBlockedEvents(tenantId, opts) {
+    throw new Error("StorageBackend.getPolicyBlockedEvents() not implemented");
+  }
 }
 
 module.exports = { StorageBackend };

@@ -4,6 +4,40 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Policy-enforcement analytics (Phase 14 PR-D) — 2026-06-12
+
+Phase 14 (Compliance & Audit Suite) PR-D: `policy.blocked` event analytics — the
+compliance view of *what did the agent refuse to do, and when?* (PRD §Phase 14;
+delivers the "policy.blocked analytics dashboard live" success criterion).
+
+- **`GET /analytics/policy-blocked`** (read-scoped + tenant-scoped, like `/metrics`):
+  returns `total`, ranked breakdowns `by_policy` / `by_action` / `by_source`, a
+  per-day `by_day` series (the date prefix of `event.time`), and a `recent` list.
+  Optional query params: `since`
+  (inclusive) / `until` (exclusive) ISO-8601 time window, and `limit` (1–1000,
+  default 20) for the `recent` list. Non-ISO `since`/`until` → 400; repeated params
+  are coerced last-wins by the shared `validateQueryParams` middleware.
+- **`src/analytics.js`:** new pure `summarizePolicyBlocked(events, { now, limit })`
+  — no I/O, unit-testable against fabricated events. Missing/blank `policy` /
+  `action_blocked` / `source` fold into an explicit `(unspecified)` bucket so every
+  breakdown's counts sum to `total`; ties break alphabetically (deterministic).
+- **Storage:** new `getPolicyBlockedEvents(tenantId, { since, until })` on the
+  StorageBackend interface + both backends (SQLite null-guard fixed SQL; Postgres
+  dynamic `$n`). Aggregation stays in the pure summarizer, so the SQL is trivial
+  and dialect-identical (no `json_extract` vs `->>` divergence).
+- **CLI:** `aep analytics policy-blocked [--since --until --limit --json]` — a
+  human-readable summary or raw JSON.
+- **Dashboard:** new "Policy Analytics" tab in `src/public/dashboard.html` —
+  ranked bars (policy / action / source), a per-day bar chart, a recent list, and
+  since/until filters. Read via the existing token flow.
+- **Docs:** OpenAPI path + `Analytics` tag added to `src/openapi.json`.
+- **Tests:** `tests/unit/analytics.test.js` (15 cases for the summarizer) + 8
+  integration cases appended to `tests/integration/server.test.js` (aggregation,
+  window bounds, limit, auth, 400 on bad params, last-wins coercion). No new CI
+  job (drift-guard untouched). 176 unit + 107 integration green.
+
+---
+
 ## Centralized array-valued query-param handling — 2026-06-11
 
 Follow-up to #93 (closes #94). Repeated query params (`?type=a&type=b`) are

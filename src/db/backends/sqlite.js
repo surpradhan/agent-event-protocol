@@ -672,6 +672,26 @@ class SqliteBackend extends StorageBackend {
     return this._pruneTx(tenantId, cutoff);
   }
 
+  // ----- analytics (Phase 14 PR-D) -----
+
+  async getPolicyBlockedEvents(tenantId = null, { since = null, until = null } = {}) {
+    // Fixed SQL with `(? IS NULL OR …)` guards (same pattern as
+    // getPaginatedSessions) so the statement text is constant — SQLite caches
+    // the prepared plan — while tenant/since/until each toggle on a bound NULL.
+    const sql = `
+      SELECT raw_payload
+      FROM   events
+      WHERE  type = 'policy.blocked'
+        AND  (? IS NULL OR tenant_id = ?)
+        AND  (? IS NULL OR time >= ?)
+        AND  (? IS NULL OR time <  ?)
+      ORDER  BY time ASC
+    `;
+    const params = [tenantId, tenantId, since, since, until, until];
+    const rows = this._db.prepare(sql).all(...params);
+    return rows.map(r => JSON.parse(r.raw_payload));
+  }
+
   // ----- pagination -----
 
   async getPaginatedSessions(tenantId = null, { limit = 50, cursor = null } = {}) {

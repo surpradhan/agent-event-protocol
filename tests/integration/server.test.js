@@ -1970,3 +1970,134 @@ describe("audit-bundle endpoints", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// GET /analytics/policy-blocked — policy-enforcement analytics (Phase 14 PR-D)
+// ---------------------------------------------------------------------------
+
+describe("GET /analytics/policy-blocked", () => {
+  // Five policy.blocked events for tenant-test, with fixed past times so the
+  // since/until window tests are deterministic. No other test emits
+  // policy.blocked, so the tenant-scoped aggregates here are exact.
+  const PB_TRACE = "trc_pb_analytics";
+  const seed = [
+    { id: "evt_pb_1", time: "2026-03-01T08:00:00Z", source: "agent://orchestrator", policy: "pii_guard", reason: "PII to external", action_blocked: "tool.called/send_email" },
+    { id: "evt_pb_2", time: "2026-03-01T20:00:00Z", source: "agent://orchestrator", policy: "pii_guard", reason: "PII to external", action_blocked: "tool.called/send_email" },
+    { id: "evt_pb_3", time: "2026-03-02T09:00:00Z", source: "agent://orchestrator", policy: "pii_guard", reason: "PII to external", action_blocked: "tool.called/send_email" },
+    { id: "evt_pb_4", time: "2026-03-03T10:00:00Z", source: "agent://worker", policy: "rate_limit_guard", reason: "Too many calls", action_blocked: "tool.called/http_post" },
+    { id: "evt_pb_5", time: "2026-03-03T11:00:00Z", source: "agent://worker", policy: "rate_limit_guard", reason: "Too many calls", action_blocked: "tool.called/http_post" },
+  ];
+
+  before(async () => {
+    for (const s of seed) {
+      const res = await ingest(makeEvent({
+        id: s.id,
+        time: s.time,
+        source: s.source,
+        type: "policy.blocked",
+        session_id: "ses_pb_001",
+        trace_id: PB_TRACE,
+        agent_role: "orchestrator",
+        payload: { policy: s.policy, reason: s.reason, action_blocked: s.action_blocked },
+      }));
+      assert.equal(res.status, 202);
+    }
+  });
+
+  test("requires authentication (401 without a key)", async () => {
+    const res = await fetch(`${baseUrl}/analytics/policy-blocked`);
+    assert.equal(res.status, 401);
+  });
+
+  test("returns aggregated analytics for the tenant", async () => {
+    const res = await fetch(`${baseUrl}/analytics/policy-blocked`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+
+    assert.equal(body.total, 5);
+    assert.deepEqual(body.by_policy, [
+      { key: "pii_guard", count: 3 },
+      { key: "rate_limit_guard", count: 2 },
+    ]);
+    assert.deepEqual(body.by_action, [
+      { key: "tool.called/send_email", count: 3 },
+      { key: "tool.called/http_post", count: 2 },
+    ]);
+    assert.deepEqual(body.by_source, [
+      { key: "agent://orchestrator", count: 3 },
+      { key: "agent://worker", count: 2 },
+    ]);
+    assert.deepEqual(body.by_day, [
+      { date: "2026-03-01", count: 2 },
+      { date: "2026-03-02", count: 1 },
+      { date: "2026-03-03", count: 2 },
+    ]);
+    // recent is most-recent-first and carries the projected fields
+    assert.equal(body.recent[0].id, "evt_pb_5");
+    assert.equal(body.recent[0].policy, "rate_limit_guard");
+    assert.equal(body.recent[0].action_blocked, "tool.called/http_post");
+    assert.equal(body.recent.length, 5);
+    assert.ok(typeof body.generated_at === "string");
+    assert.deepEqual(body.window, { since: null, until: null });
+  });
+
+  test("?since is an inclusive lower bound on event time", async () => {
+    const res = await fetch(`${baseUrl}/analytics/policy-blocked?since=2026-03-02T00:00:00Z`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    // excludes the two 2026-03-01 events
+    assert.equal(body.total, 3);
+    assert.equal(body.window.since, "2026-03-02T00:00:00Z");
+  });
+
+  test("?until is an exclusive upper bound; window narrows to a single day", async () => {
+    const res = await fetch(
+      `${baseUrl}/analytics/policy-blocked?since=2026-03-02T00:00:00Z&until=2026-03-03T00:00:00Z`,
+      { headers: { Authorization: `Bearer ${readKey}` } }
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    // only the single 2026-03-02 event
+    assert.equal(body.total, 1);
+    assert.deepEqual(body.by_day, [{ date: "2026-03-02", count: 1 }]);
+  });
+
+  test("?limit caps the recent list without changing totals", async () => {
+    const res = await fetch(`${baseUrl}/analytics/policy-blocked?limit=2`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.total, 5);
+    assert.equal(body.recent.length, 2);
+  });
+
+  test("rejects a non-ISO ?since with 400", async () => {
+    const res = await fetch(`${baseUrl}/analytics/policy-blocked?since=not-a-date`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("rejects ?limit outside [1,1000] with 400 (shared query validation)", async () => {
+    const res = await fetch(`${baseUrl}/analytics/policy-blocked?limit=0`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("repeated ?since params are coerced (last wins), not a 500", async () => {
+    const res = await fetch(
+      `${baseUrl}/analytics/policy-blocked?since=not-a-date&since=2026-03-02T00:00:00Z`,
+      { headers: { Authorization: `Bearer ${readKey}` } }
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.window.since, "2026-03-02T00:00:00Z");
+    assert.equal(body.total, 3);
+  });
+});

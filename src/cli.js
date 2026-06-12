@@ -10,6 +10,7 @@
  *   aep export   — Export session events as JSON or CSV
  *   aep audit    — Build / verify / render a tamper-evident audit bundle
  *   aep workflow — Query a full workflow tree by trace_id
+ *   aep analytics — Policy-enforcement analytics (policy.blocked)
  *   aep validate — Validate a local event JSON file (existing)
  *
  * Configuration (in priority order):
@@ -122,6 +123,7 @@ Commands:
   export     Export session events as JSON or CSV
   audit      Build / verify / render a tamper-evident audit bundle
   workflow   Query a full workflow tree by trace_id
+  analytics  Policy-enforcement analytics (policy.blocked)
   validate   Validate a local event JSON file
 
 Global flags:
@@ -638,6 +640,93 @@ async function cmdWorkflow(positional, flags, serverUrl, apiKey) {
 }
 
 // ---------------------------------------------------------------------------
+// Command: analytics (Phase 14 PR-D)
+// ---------------------------------------------------------------------------
+
+function analyticsHelp() {
+  console.log(`
+\x1b[1maep analytics\x1b[0m — Compliance / policy-enforcement analytics
+
+Usage:
+  aep analytics policy-blocked [flags]
+
+Subcommands:
+  policy-blocked   Aggregate policy.blocked events (what the agent refused, and when)
+
+Flags:
+  --since  <iso>    Inclusive lower bound on event time (ISO-8601)
+  --until  <iso>    Exclusive upper bound on event time (ISO-8601)
+  --limit  <n>      Max entries in the recent list (1-1000, default 20)
+  --json            Print the raw JSON response instead of a summary
+`);
+}
+
+async function cmdAnalyticsPolicyBlocked(flags, serverUrl, apiKey) {
+  if (!apiKey) die("API key required. Set --key or AEP_API_KEY env var.");
+
+  const qs = new URLSearchParams();
+  if (flags.since) qs.set("since", flags.since);
+  if (flags.until) qs.set("until", flags.until);
+  if (flags.limit) qs.set("limit", flags.limit);
+  const query = qs.toString() ? `?${qs}` : "";
+
+  const res = await request("GET", `${serverUrl}/analytics/policy-blocked${query}`, null, {
+    Authorization: `Bearer ${apiKey}`,
+  });
+
+  if (res.status !== 200) {
+    die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+  }
+
+  if (flags.json) {
+    console.log(JSON.stringify(res.body, null, 2));
+    return;
+  }
+
+  const a = res.body;
+  const win = a.window && (a.window.since || a.window.until)
+    ? `  (since=${a.window.since || "—"}, until=${a.window.until || "—"})`
+    : "";
+  console.log(`Policy-blocked events: \x1b[1m${a.total}\x1b[0m${win}`);
+  if (a.total === 0) {
+    console.log("  (none)");
+    return;
+  }
+
+  const printBreakdown = (label, rows) => {
+    console.log(`\n\x1b[1m${label}\x1b[0m`);
+    for (const r of rows) console.log(`  ${String(r.count).padStart(5)}  ${r.key}`);
+  };
+  printBreakdown("By policy", a.by_policy);
+  printBreakdown("By blocked action", a.by_action);
+
+  console.log("\n\x1b[1mBy day\x1b[0m");
+  for (const d of a.by_day) console.log(`  ${d.date}  ${d.count}`);
+
+  console.log("\n\x1b[1mMost recent\x1b[0m");
+  for (const r of a.recent) {
+    // Guard against a missing/malformed time (new Date(bad).toISOString() throws).
+    const d = r.time ? new Date(r.time) : null;
+    const ts = d && !Number.isNaN(d.getTime())
+      ? d.toISOString().replace("T", " ").replace("Z", "")
+      : "—";
+    console.log(`  \x1b[36m${ts}\x1b[0m  \x1b[33m${r.policy ?? "—"}\x1b[0m  ${r.action_blocked ?? "—"}`);
+  }
+}
+
+async function cmdAnalytics(positional, flags, serverUrl, apiKey) {
+  if (flags.help && !positional[1]) { analyticsHelp(); return; }
+
+  const sub = positional[1];
+  switch (sub) {
+    case "policy-blocked": return cmdAnalyticsPolicyBlocked(flags, serverUrl, apiKey);
+    default:
+      analyticsHelp();
+      if (sub) die(`Unknown analytics subcommand: '${sub}'`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Command: validate (thin wrapper around existing cli-validate.js logic)
 // ---------------------------------------------------------------------------
 
@@ -710,6 +799,7 @@ async function main() {
       case "export":   await cmdExport(positional, flags, serverUrl, apiKey); break;
       case "audit":    await cmdAudit(positional, flags, serverUrl, apiKey); break;
       case "workflow": await cmdWorkflow(positional, flags, serverUrl, apiKey); break;
+      case "analytics": await cmdAnalytics(positional, flags, serverUrl, apiKey); break;
       case "validate": await cmdValidate(positional, flags); break;
       default:
         console.error(`Unknown command: '${command}'\n`);
