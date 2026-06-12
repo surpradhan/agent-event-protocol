@@ -880,6 +880,11 @@ app.get("/analytics/performance", requireReadAccess, validateQueryParams, async 
 // JS over the tenant-scoped, time-windowed raw envelopes the DB returns — so there
 // is no injection surface and no SQLite-vs-Postgres divergence.  Queries can be run
 // ad-hoc or saved to a per-tenant library and re-run by id.
+//
+// Note: getEventsForQuery loads the tenant's events in the [since, until) window
+// into memory before aggregating (the same fetch-then-aggregate model as the other
+// analytics endpoints).  `since`/`until` are therefore the way to bound the working
+// set on a large tenant; callers querying big stores should always supply them.
 // ---------------------------------------------------------------------------
 
 /**

@@ -150,11 +150,21 @@ function compareOrdered(a, b) {
 /** Evaluate one filter against one event. */
 function matchFilter(event, filter) {
   const actual = resolveField(event, filter.field);
+
+  // exists / not_exists are presence checks (objects count as present).
+  if (filter.op === "exists") return actual !== undefined && actual !== null;
+  if (filter.op === "not_exists") return actual === undefined || actual === null;
+
+  // For the scalar comparison operators, a non-scalar (object/array) value is
+  // treated the same as a missing value rather than stringified to
+  // "[object Object]": eq/in/prefix/contains/gt… never match; ne/nin do match
+  // (a non-scalar is "not equal to" any scalar) — consistent with how a missing
+  // field behaves.
+  if (actual !== null && typeof actual === "object") {
+    return filter.op === "ne" || filter.op === "nin";
+  }
+
   switch (filter.op) {
-    case "exists":
-      return actual !== undefined && actual !== null;
-    case "not_exists":
-      return actual === undefined || actual === null;
     case "eq":
       return actual !== undefined && actual !== null && String(actual) === String(filter.value);
     case "ne":

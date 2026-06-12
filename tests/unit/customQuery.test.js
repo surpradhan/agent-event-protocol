@@ -233,4 +233,18 @@ describe("runQuery — operator semantics", () => {
   test("lt against a missing field does not match (NaN-guarded)", () => {
     assert.equal(count([{ field: "payload.status", op: "lt", value: "zzz" }]), 2); // only present ones compared
   });
+
+  test("an object-valued field is treated like a missing value (no '[object Object]' stringify)", () => {
+    const objEvents = [ev({ id: "o1", payload: { nested: { a: 1 } } })];
+    const cnt = (filters) => {
+      const { normalized } = validateQuerySpec({ filters });
+      return runQuery(objEvents, normalized, { now: NOW }).total_matched;
+    };
+    // eq / prefix / contains never match a non-scalar...
+    assert.equal(cnt([{ field: "payload.nested", op: "eq", value: "[object Object]" }]), 0);
+    assert.equal(cnt([{ field: "payload.nested", op: "contains", value: "object" }]), 0);
+    // ...but ne / nin do (a non-scalar is "not equal to" any scalar), and exists sees it.
+    assert.equal(cnt([{ field: "payload.nested", op: "ne", value: "x" }]), 1);
+    assert.equal(cnt([{ field: "payload.nested", op: "exists" }]), 1);
+  });
 });

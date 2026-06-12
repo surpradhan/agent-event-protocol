@@ -925,7 +925,9 @@ async function fetchJson(url) {
 function setMetric(id, v) { document.getElementById(id).textContent = v; }
 function short(id, n = 20) { return id && id.length > n ? id.slice(0, n - 1) + '…' : (id || ''); }
 function esc(s) {
-  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  // Escapes both quote styles so values are safe in double- AND single-quoted
+  // attribute/inline-handler contexts (e.g. onclick="fn('${esc(id)}')").
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 function ago(iso) {
   const d = Date.now() - new Date(iso).getTime();

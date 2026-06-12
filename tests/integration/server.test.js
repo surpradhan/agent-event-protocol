@@ -2762,6 +2762,13 @@ describe("Custom analytics — saved-query library", () => {
     assert.ok(body.saved_queries.some((q) => q.id === savedId));
   });
 
+  test("rejects a malformed saved-query id with 400 (path-param validation)", async () => {
+    const res = await fetch(`${baseUrl}/analytics/saved-queries/bad..id`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
+  });
+
   test("get one by id (read scope), 404 for unknown", async () => {
     const ok = await fetch(`${baseUrl}/analytics/saved-queries/${savedId}`, {
       headers: { Authorization: `Bearer ${readKey}` },
