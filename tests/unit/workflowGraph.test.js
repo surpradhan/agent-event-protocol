@@ -111,6 +111,14 @@ describe("buildWorkflowGraph — edges & cross-session classification", () => {
     assert.deepEqual(g.root_ids, ["c"]);
   });
 
+  test("self-causation (causation_id === id) yields no self-loop edge and stays a root", () => {
+    const g = buildWorkflowGraph([
+      ev({ id: "s1", session_id: "ses_a", causation_id: "s1" }),
+    ], { now: NOW });
+    assert.equal(g.edge_count, 0);
+    assert.deepEqual(g.root_ids, ["s1"]);
+  });
+
   test("roots are nodes without an in-graph causation parent", () => {
     const g = buildWorkflowGraph([
       ev({ id: "r1", time: "2026-06-01T00:00:00Z" }),
