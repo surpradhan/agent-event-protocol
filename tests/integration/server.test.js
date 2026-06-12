@@ -2838,3 +2838,84 @@ describe("Custom analytics — saved-query library", () => {
     assert.equal(second.status, 404);
   });
 });
+
+// ---------------------------------------------------------------------------
+// GET /workflows/:traceId/graph — cross-session causation graph (Phase 15-C)
+// ---------------------------------------------------------------------------
+
+describe("GET /workflows/:traceId/graph", () => {
+  // A two-session workflow: an orchestrator session hands off to a sub-agent
+  // session; the cross-session causation edge is handoff.started → task.created.
+  const WG_TRACE = "trc_wfgraph_15c";
+  before(async () => {
+    const seed = [
+      { id: "wg_t1", time: "2032-01-01T00:00:00Z", source: "agent://orch", type: "task.created", session_id: "ses_wg_orch", agent_role: "orchestrator" },
+      { id: "wg_h1", time: "2032-01-01T00:00:01Z", source: "agent://orch", type: "handoff.started", session_id: "ses_wg_orch", agent_role: "orchestrator", causation_id: "wg_t1" },
+      { id: "wg_t2", time: "2032-01-01T00:00:02Z", source: "agent://sub", type: "task.created", session_id: "ses_wg_sub", parent_session_id: "ses_wg_orch", agent_role: "subagent", causation_id: "wg_h1" },
+      { id: "wg_r2", time: "2032-01-01T00:00:03Z", source: "agent://sub", type: "task.completed", session_id: "ses_wg_sub", agent_role: "subagent", causation_id: "wg_t2" },
+    ];
+    for (const s of seed) {
+      const res = await ingest(makeEvent({ trace_id: WG_TRACE, ...s }));
+      assert.equal(res.status, 202);
+    }
+  });
+
+  test("requires authentication (401 without a key)", async () => {
+    const res = await fetch(`${baseUrl}/workflows/${WG_TRACE}/graph`);
+    assert.equal(res.status, 401);
+  });
+
+  test("404 for an unknown trace", async () => {
+    const res = await fetch(`${baseUrl}/workflows/trc_does_not_exist/graph`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test("assembles the cross-session causation graph", async () => {
+    const res = await fetch(`${baseUrl}/workflows/${WG_TRACE}/graph`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const g = await res.json();
+
+    assert.equal(g.trace_id, WG_TRACE);
+    assert.equal(g.event_count, 4);
+    assert.equal(g.session_count, 2);
+    assert.equal(g.edge_count, 3); // t1→h1, h1→t2, t2→r2
+    assert.equal(g.cross_session_edge_count, 1); // only h1→t2 spans sessions
+    assert.deepEqual(g.root_ids, ["wg_t1"]);
+
+    // sessions ordered by first appearance: orch then sub
+    assert.deepEqual(g.sessions.map((s) => [s.session_id, s.event_count]), [
+      ["ses_wg_orch", 2],
+      ["ses_wg_sub", 2],
+    ]);
+
+    // the cross-session edge is the handoff → sub-agent task
+    const cross = g.edges.find((e) => e.cross_session);
+    assert.equal(cross.from, "wg_h1");
+    assert.equal(cross.to, "wg_t2");
+    assert.ok(typeof g.generated_at === "string");
+  });
+
+  test("rejects a malformed traceId with 400 (path-param validation)", async () => {
+    const res = await fetch(`${baseUrl}/workflows/bad..trace/graph`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("tenant isolation: another tenant cannot see the graph", async () => {
+    const keyRes = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: "tenant-other-15c", label: "other", scopes: ["read"] }),
+    });
+    const otherKey = (await keyRes.json()).key;
+    const res = await fetch(`${baseUrl}/workflows/${WG_TRACE}/graph`, {
+      headers: { Authorization: `Bearer ${otherKey}` },
+    });
+    assert.equal(res.status, 404);
+  });
+});

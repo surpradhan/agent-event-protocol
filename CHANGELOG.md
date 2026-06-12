@@ -4,6 +4,32 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Cross-session causation DAG (Phase 15-C) — 2026-06-12
+
+Phase 15 (Advanced Dashboard) PR-C: "Workflow visualization: interactive DAG
+showing causation chains" (PRD §Phase 15). Extends the per-session DAG (which
+could only show cross-session links as dangling stubs) to a **workflow-level
+causation graph spanning every session of a trace**.
+
+- **`GET /workflows/:traceId/graph`** (read- + tenant-scoped, 404 like the workflow
+  tree): assembles the event-level causation graph for a whole trace — `nodes`
+  (projected events, time-ordered), `edges` (causation parent→child) classified
+  **intra- vs cross-session**, a per-session summary, `root_ids`, and
+  `cross_session_edge_count`.
+- **Pure `src/workflowGraph.js`** (`buildWorkflowGraph`, injected `now`, no I/O) +
+  thin dual-backend `getWorkflowEvents(traceId, tenantId)` (trivial dialect-identical
+  `SELECT … WHERE trace_id = ?`; shaping stays in JS) — the proven fetch-then-shape
+  split. Unit-tested with zero database.
+- **Dashboard**: the Workflows tab gains a **Session Tree / Causation Graph** toggle;
+  the graph view renders an interactive SVG DAG with nodes colour-coded by session,
+  **cross-session causation edges highlighted** (purple, dashed), a session legend,
+  and click-to-inspect node details.
+- **`aep workflow <traceId> --graph`** CLI (summary or `--json`) and OpenAPI under
+  the Workflows tag (`WorkflowGraph` schema).
+- No schema change, no new CI job. Server suite: 269 unit + 162 integration.
+
+---
+
 ## Custom analytics — user-defined queries (Phase 15-B) — 2026-06-12
 
 Phase 15 (Advanced Dashboard) PR-B: "Custom analytics: user-defined queries over

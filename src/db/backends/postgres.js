@@ -744,6 +744,23 @@ class PostgresBackend extends StorageBackend {
     return rows.map(r => JSON.parse(r.raw_payload));
   }
 
+  // ----- workflow causation graph (Phase 15-C) -----
+
+  async getWorkflowEvents(traceId, tenantId = null) {
+    // All events of one trace, tenant-scoped. Conditions appended only when
+    // present (same shape as getPolicyBlockedEvents), so no ::text cast needed.
+    let sql = "SELECT raw_payload FROM events WHERE trace_id = $1";
+    const params = [traceId];
+    if (tenantId) {
+      params.push(tenantId);
+      sql += ` AND tenant_id = $${params.length}`;
+    }
+    sql += " ORDER BY time ASC";
+
+    const { rows } = await this._pool.query(sql, params);
+    return rows.map(r => JSON.parse(r.raw_payload));
+  }
+
   // ----- API-key access log (Phase 14 PR-E) -----
 
   async recordApiKeyAccess({ id, apiKeyId, tenantId, method, path, status, ts }) {

@@ -1,0 +1,136 @@
+"use strict";
+
+/**
+ * src/workflowGraph.js — cross-session causation graph (Phase 15-C)
+ *
+ * The per-session DAG in the dashboard draws event-level causation edges within a
+ * single session and can only show cross-session links as dangling "stubs". This
+ * module assembles the *workflow-level* graph: every event across every session of
+ * a trace, with causation edges classified as intra- vs cross-session — the PRD
+ * §Phase 15 "interactive DAG showing causation chains".
+ *
+ * `buildWorkflowGraph` is pure (no I/O, clock only via injected `now`): the storage
+ * backend fetches the trace's raw envelopes (tenant-scoped) with a trivial,
+ * dialect-identical SELECT and hands them here for shaping — the same fetch-then-
+ * aggregate split as src/analytics.js / src/performance.js / src/customQuery.js.
+ */
+
+/** Coerce to a non-empty trimmed string, or null. */
+function strOrNull(v) {
+  return typeof v === "string" && v.trim() !== "" ? v : null;
+}
+
+/**
+ * Build the cross-session causation graph for a set of trace events.
+ *
+ * @param {Array<object>} events  all event envelopes for one trace (any order)
+ * @param {{ trace_id?: string|null, now?: Date }} [opts]
+ * @returns {{
+ *   trace_id: string|null,
+ *   session_count: number,
+ *   event_count: number,
+ *   edge_count: number,
+ *   cross_session_edge_count: number,
+ *   sessions: Array<{ session_id: string, agent_role: string|null, source: string|null,
+ *                     parent_session_id: string|null, event_count: number, first_time: string|null }>,
+ *   nodes: Array<{ id, type, time, session_id, source, agent_role, causation_id, payload }>,
+ *   edges: Array<{ from: string, to: string, cross_session: boolean }>,
+ *   root_ids: string[],
+ *   generated_at: string
+ * }}
+ */
+function buildWorkflowGraph(events, { trace_id = null, now = new Date() } = {}) {
+  const list = Array.isArray(events) ? events : [];
+
+  // Nodes — projected, ordered by time (lexicographic on ISO-8601 is chronological;
+  // a missing/non-string time sorts last via "").
+  const timeKey = (e) => (e && typeof e.time === "string" ? e.time : "");
+  const sorted = [...list].sort((a, b) => timeKey(a).localeCompare(timeKey(b)));
+
+  // Map every event id → its session. Event ids are unique (PRIMARY KEY +
+  // idempotency dedup at ingest), so last-write-wins here is never exercised in
+  // practice; on arbitrary input a later duplicate id simply wins.
+  const idToSession = new Map();
+  const nodes = sorted.map((e) => {
+    const node = {
+      id: e && e.id !== undefined && e.id !== null ? e.id : null,
+      type: (e && e.type) ?? null,
+      time: (e && e.time) ?? null,
+      session_id: (e && e.session_id) ?? null,
+      source: (e && e.source) ?? null,
+      agent_role: (e && e.agent_role) ?? null,
+      causation_id: (e && e.causation_id) ?? null,
+      payload: e && typeof e.payload === "object" && e.payload ? e.payload : {}
+    };
+    if (node.id !== null) idToSession.set(node.id, node.session_id ?? null);
+    return node;
+  });
+
+  // A node has an in-graph parent when its causation_id names a different event
+  // that is part of this graph. Self-causation (causation_id === id) is treated as
+  // "no parent" so it never produces a degenerate self-loop edge nor hides a root.
+  const hasInGraphParent = (n) =>
+    n.causation_id !== null &&
+    n.causation_id !== undefined &&
+    n.causation_id !== n.id &&
+    idToSession.has(n.causation_id);
+
+  // Sessions — first appearance time + event count, ordered by first_time.
+  const sessMap = new Map();
+  for (const e of sorted) {
+    const sid = (e && e.session_id) ?? null;
+    const key = sid === null ? "(none)" : sid;
+    let s = sessMap.get(key);
+    if (!s) {
+      s = {
+        session_id: sid,
+        agent_role: strOrNull(e && e.agent_role),
+        source: strOrNull(e && e.source),
+        parent_session_id: strOrNull(e && e.parent_session_id),
+        event_count: 0,
+        first_time: timeKey(e) || null
+      };
+      sessMap.set(key, s);
+    }
+    s.event_count += 1;
+    // Keep the earliest non-empty role/source/parent we see for the session.
+    if (!s.agent_role) s.agent_role = strOrNull(e && e.agent_role);
+    if (!s.source) s.source = strOrNull(e && e.source);
+    if (!s.parent_session_id) s.parent_session_id = strOrNull(e && e.parent_session_id);
+  }
+  const sessions = [...sessMap.values()].sort((a, b) => {
+    const at = a.first_time || "";
+    const bt = b.first_time || "";
+    return at.localeCompare(bt) || String(a.session_id).localeCompare(String(b.session_id));
+  });
+
+  // Edges — causation_id (parent) → event (child), only when BOTH endpoints are in
+  // the graph. cross_session = the two events belong to different sessions.
+  const edges = [];
+  let crossCount = 0;
+  for (const n of nodes) {
+    if (!hasInGraphParent(n)) continue;
+    const parentSession = idToSession.get(n.causation_id);
+    const cross = (parentSession ?? null) !== (n.session_id ?? null);
+    if (cross) crossCount += 1;
+    edges.push({ from: n.causation_id, to: n.id, cross_session: cross });
+  }
+
+  // Roots: nodes with no in-graph causation parent.
+  const root_ids = nodes.filter((n) => !hasInGraphParent(n)).map((n) => n.id);
+
+  return {
+    trace_id: trace_id ?? (sorted[0] && sorted[0].trace_id) ?? null,
+    session_count: sessions.length,
+    event_count: nodes.length,
+    edge_count: edges.length,
+    cross_session_edge_count: crossCount,
+    sessions,
+    nodes,
+    edges,
+    root_ids,
+    generated_at: now.toISOString()
+  };
+}
+
+module.exports = { buildWorkflowGraph };

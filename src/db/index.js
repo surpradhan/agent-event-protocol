@@ -216,6 +216,10 @@ async function getPerformanceEvents(tenantId, opts) {
   return getBackend().getPerformanceEvents(tenantId, opts);
 }
 
+async function getWorkflowEvents(traceId, tenantId) {
+  return getBackend().getWorkflowEvents(traceId, tenantId);
+}
+
 async function createSavedQuery(record) {
   return getBackend().createSavedQuery(record);
 }
@@ -288,6 +292,8 @@ module.exports = {
   getPolicyBlockedEvents,
   // Performance profiling (Phase 15-A)
   getPerformanceEvents,
+  // Workflow causation graph (Phase 15-C)
+  getWorkflowEvents,
   // Saved custom-analytics queries (Phase 15-B)
   createSavedQuery,
   getSavedQuery,

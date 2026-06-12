@@ -44,6 +44,62 @@
       }
     },
     "schemas": {
+      "WorkflowGraph": {
+        "type": "object",
+        "description": "Event-level causation graph spanning all sessions of a trace (Phase 15-C).",
+        "properties": {
+          "trace_id": { "type": "string", "nullable": true },
+          "session_count": { "type": "integer" },
+          "event_count": { "type": "integer" },
+          "edge_count": { "type": "integer", "description": "Causation edges where both endpoints are in the graph." },
+          "cross_session_edge_count": { "type": "integer", "description": "Of those, the edges whose two events belong to different sessions." },
+          "sessions": {
+            "type": "array",
+            "description": "Per-session summary, ordered by first event time.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "session_id": { "type": "string", "nullable": true },
+                "agent_role": { "type": "string", "nullable": true },
+                "source": { "type": "string", "nullable": true },
+                "parent_session_id": { "type": "string", "nullable": true },
+                "event_count": { "type": "integer" },
+                "first_time": { "type": "string", "format": "date-time", "nullable": true }
+              }
+            }
+          },
+          "nodes": {
+            "type": "array",
+            "description": "Projected events, ordered by time.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "type": { "type": "string" },
+                "time": { "type": "string", "format": "date-time" },
+                "session_id": { "type": "string", "nullable": true },
+                "source": { "type": "string", "nullable": true },
+                "agent_role": { "type": "string", "nullable": true },
+                "causation_id": { "type": "string", "nullable": true },
+                "payload": { "type": "object" }
+              }
+            }
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "from": { "type": "string", "description": "causation parent event id" },
+                "to": { "type": "string", "description": "caused event id" },
+                "cross_session": { "type": "boolean" }
+              }
+            }
+          },
+          "root_ids": { "type": "array", "items": { "type": "string" }, "description": "Events with no in-graph causation parent." },
+          "generated_at": { "type": "string", "format": "date-time" }
+        }
+      },
       "QuerySpec": {
         "type": "object",
         "description": "A safe, structured custom-analytics query (NOT SQL). Field references are whitelist-validated: a top-level event field (type, source, session_id, trace_id, parent_session_id, causation_id, agent_role, subject, time, id, tenant) or a `payload.*` / `labels.*` / `extensions.*` dot-path. The segments `__proto__`, `prototype`, `constructor` are rejected.",
@@ -735,6 +791,26 @@
                 }
               }
             }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/workflows/{traceId}/graph": {
+      "get": {
+        "tags": ["Workflows"],
+        "summary": "Cross-session causation graph for a trace",
+        "description": "Assembles the event-level causation graph spanning every session of a trace: nodes (projected events), causation edges classified as intra- vs cross-session, the per-session summary, and the root events. Read- + tenant-scoped; 404 if the trace has no sessions for the tenant (same as the workflow tree). Powers the dashboard's interactive cross-session DAG.",
+        "operationId": "getWorkflowGraph",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "traceId", "in": "path", "required": true, "schema": { "type": "string" }, "example": "trc_xyz789" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The cross-session causation graph",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowGraph" } } }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "404": { "$ref": "#/components/responses/NotFound" }
