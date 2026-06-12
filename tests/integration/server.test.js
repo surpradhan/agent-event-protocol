@@ -304,6 +304,19 @@ describe("GET /sessions", () => {
 
     assert.ok(after.sessions.length > before.sessions.length);
   });
+
+  test("a repeated ?cursor param (array) is coerced (last wins), not 500", async () => {
+    // /sessions has no inline param guard — it relies entirely on the central
+    // coercion in validateQueryParams. A repeated cursor used to reach the
+    // pagination layer as an array; now it is reduced to its last value and
+    // validated like any single cursor (here a harmless first-page read).
+    const res = await fetch(`${baseUrl}/sessions?cursor=a&cursor=b`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body.sessions));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -385,25 +398,25 @@ describe("GET /sessions/:sessionId/events", () => {
     assert.equal(res.status, 401);
   });
 
-  test("repeated ?type / ?q params (arrays) degrade to the unfiltered result, not 500", async () => {
-    // validateQueryParams only length-checks a String() copy; the raw array still
-    // reaches the DB, where an array binding throws → 500. The guard coerces a
-    // non-string filter to "" (no filter), so the result must equal the
-    // unfiltered timeline exactly (not 500, and not a silent filter-to-empty).
-    const baseRes = await fetch(`${baseUrl}/sessions/${SESSION_ID}/events`, {
-      headers: { Authorization: `Bearer ${readKey}` },
-    });
-    const baseBody = await baseRes.json();
-
-    const res = await fetch(
-      `${baseUrl}/sessions/${SESSION_ID}/events?type=a&type=b&q=x&q=y`,
+  test("repeated ?type param (array) coerces to the last value (last wins), not 500", async () => {
+    // validateQueryParams coerces a repeated param to its last value before the
+    // DB binding (which would otherwise throw on an array → 500). So a request
+    // whose LAST type is a real type behaves exactly like that single-type query.
+    const lastWinsRes = await fetch(
+      `${baseUrl}/sessions/${SESSION_ID}/events?type=nope&type=task.created`,
       { headers: { Authorization: `Bearer ${readKey}` } }
     );
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.equal(body.session_id, SESSION_ID);
-    assert.equal(body.events.length, baseBody.events.length,
-      "array type/q degrades to the unfiltered timeline, not an empty/filtered one");
+    const singleRes = await fetch(
+      `${baseUrl}/sessions/${SESSION_ID}/events?type=task.created`,
+      { headers: { Authorization: `Bearer ${readKey}` } }
+    );
+    assert.equal(lastWinsRes.status, 200);
+    const lastWins = await lastWinsRes.json();
+    const single = await singleRes.json();
+    assert.ok(lastWins.events.length >= 1, "last value (task.created) matches real events");
+    assert.equal(lastWins.events.length, single.events.length,
+      "?type=nope&type=task.created === ?type=task.created (last wins)");
+    assert.ok(lastWins.events.every(e => e.type === "task.created"));
   });
 });
 
@@ -480,64 +493,75 @@ describe("GET /sessions/:sessionId/export", () => {
     assert.ok(text.includes(SID));
   });
 
-  test("a repeated ?format param (parsed as an array) falls back to JSON, not 500", async () => {
-    // Express parses ?format=csv&format=json as req.query.format = ["csv","json"];
-    // before the typeof guard, .toLowerCase() on that array threw → 500.
+  test("a repeated ?format param (array) coerces to the LAST value, not 500", async () => {
+    // validateQueryParams coerces ?format=csv&format=json to "json" (last wins)
+    // before the handler — an array reaching .toLowerCase() used to throw → 500.
     const res = await fetch(`${baseUrl}/sessions/${SID}/export?format=csv&format=json`, {
       headers: { Authorization: `Bearer ${readKey}` },
     });
     assert.equal(res.status, 200);
-    assert.match(res.headers.get("content-type") || "", /application\/json/);
+    assert.match(res.headers.get("content-type") || "", /application\/json/,
+      "last value 'json' wins");
     const body = await res.json();
     assert.equal(body.session_id, SID);
     assert.ok(Array.isArray(body.events));
   });
 
-  test("a repeated ?format=csv&format=csv (still an array) falls back to JSON, never CSV", async () => {
-    // Locks the rule: a non-string format is JSON, regardless of the values —
-    // an array of two "csv" is still not the string "csv".
-    const res = await fetch(`${baseUrl}/sessions/${SID}/export?format=csv&format=csv`, {
+  test("a repeated ?format=json&format=csv coerces to CSV (last value wins)", async () => {
+    // Confirms last-wins is the rule (not a blanket JSON fallback): the last
+    // value is the string "csv", so the response is CSV.
+    const res = await fetch(`${baseUrl}/sessions/${SID}/export?format=json&format=csv`, {
       headers: { Authorization: `Bearer ${readKey}` },
     });
     assert.equal(res.status, 200);
-    assert.match(res.headers.get("content-type") || "", /application\/json/);
+    assert.match(res.headers.get("content-type") || "", /text\/csv/,
+      "last value 'csv' wins");
   });
 
-  test("repeated ?type / ?q params (arrays) degrade to no-filter instead of 500", async () => {
-    // type/q are passed straight to the DB; an array binding would throw there.
-    // The guard coerces a non-string filter to "" (no filter), so the result
-    // matches the unfiltered export rather than 500ing or silently emptying.
-    const baseRes = await fetch(`${baseUrl}/sessions/${SID}/export`, {
+  test("repeated ?type param (array) coerces to the last value (last wins), not 500", async () => {
+    // type/q used to reach the DB as a raw array → binding throws → 500. Now the
+    // array is coerced to its last value, so a request whose LAST type is real
+    // behaves exactly like that single-type export.
+    const lastWinsRes = await fetch(`${baseUrl}/sessions/${SID}/export?type=nope&type=task.created`, {
       headers: { Authorization: `Bearer ${readKey}` },
     });
-    const baseBody = await baseRes.json();
-
-    const res = await fetch(`${baseUrl}/sessions/${SID}/export?type=a&type=b&q=x&q=y`, {
+    const singleRes = await fetch(`${baseUrl}/sessions/${SID}/export?type=task.created`, {
       headers: { Authorization: `Bearer ${readKey}` },
     });
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.equal(body.session_id, SID);
-    assert.equal(body.events.length, baseBody.events.length,
-      "array type/q degrades to the unfiltered export, not an empty/filtered one");
+    assert.equal(lastWinsRes.status, 200);
+    const lastWins = await lastWinsRes.json();
+    const single = await singleRes.json();
+    assert.ok(lastWins.events.length >= 1, "last value (task.created) matches real events");
+    assert.equal(lastWins.events.length, single.events.length,
+      "?type=nope&type=task.created === ?type=task.created (last wins)");
   });
 
-  test("a mixed array ?type + scalar ?q keeps the valid scalar filter (no 500)", async () => {
-    // The guards are independent: an array `type` degrades to no-filter, while a
-    // scalar `q` is still honoured as a string. So this must match a q-only
-    // request exactly — one bad param does not nuke a valid sibling filter.
-    const scalarRes = await fetch(`${baseUrl}/sessions/${SID}/export?q=created`, {
+  test("a mixed array ?type + scalar ?q applies last-wins type AND the scalar q", async () => {
+    // The params are independent: an array `type` coerces to its last value, a
+    // scalar `q` is honoured as-is. So this must equal the equivalent
+    // single-type + same-q request — neither param nukes the other.
+    const refRes = await fetch(`${baseUrl}/sessions/${SID}/export?type=task.created&q=created`, {
       headers: { Authorization: `Bearer ${readKey}` },
     });
-    const scalarBody = await scalarRes.json();
+    const refBody = await refRes.json();
 
-    const mixedRes = await fetch(`${baseUrl}/sessions/${SID}/export?type=a&type=b&q=created`, {
+    const mixedRes = await fetch(`${baseUrl}/sessions/${SID}/export?type=nope&type=task.created&q=created`, {
       headers: { Authorization: `Bearer ${readKey}` },
     });
     assert.equal(mixedRes.status, 200);
     const mixedBody = await mixedRes.json();
-    assert.equal(mixedBody.events.length, scalarBody.events.length,
-      "array type is ignored, scalar q is applied — same as a q-only request");
+    assert.ok(mixedBody.events.length >= 1, "task.created matches and contains 'created'");
+    assert.equal(mixedBody.events.length, refBody.events.length,
+      "last-wins type + scalar q === ?type=task.created&q=created");
+  });
+
+  test("now inherits the shared query-length 400 (q > 200 chars) via validateQueryParams", async () => {
+    // /export now runs validateQueryParams, so it gains the same DoS-guard 400s
+    // /events has. Locks the intentional behaviour change (see PR notes).
+    const res = await fetch(`${baseUrl}/sessions/${SID}/export?q=${"x".repeat(201)}`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
   });
 });
 

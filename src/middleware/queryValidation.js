@@ -7,6 +7,9 @@
  * - Prevents ReDoS attacks on free-text search
  *
  * Security Rules:
+ * - Repeated params (?type=a&type=b) are coerced to a single value (last wins)
+ *   before any other check, so a raw array never reaches a string method or a
+ *   DB binding (which would throw → 500). See coerceArrayParams below.
  * - ?q (free-text search): max 200 characters
  * - ?type: max 100 characters
  * - ?cursor: must be valid base64url
@@ -54,10 +57,46 @@ function isSafePathParam(str) {
 }
 
 /**
+ * Coerce any array-valued query param to a single string (LAST value wins).
+ *
+ * Express parses a repeated param (?type=a&type=b) into an array. Passed to a
+ * string method or a SQL binding, an array throws → HTTP 500. Reducing it to one
+ * value keeps a repeated param meaningful (it still filters by one value) and
+ * matches the graceful-degradation house style (no 400 for a repeat). Pure: takes
+ * a query object, returns a NEW normalized object; never mutates its input.
+ *
+ * The Express 5 default query parser is "simple" (querystring-based), so values
+ * are only ever `string | string[]` — no nested objects to recurse into.
+ *
+ * @param {object} query  req.query (string | string[] values)
+ * @returns {object} a new object with every array reduced to its last element
+ */
+function coerceArrayParams(query) {
+  const out = {};
+  for (const key of Object.keys(query || {})) {
+    const value = query[key];
+    out[key] = Array.isArray(value) ? value[value.length - 1] : value;
+  }
+  return out;
+}
+
+/**
  * Express middleware for validating query and path parameters.
  * Returns 400 Bad Request if validation fails.
  */
 function validateQueryParams(req, res, next) {
+  // Normalize repeated params to a single value BEFORE any check below, so the
+  // length/format checks and the route handlers all see scalars. req.query in
+  // Express 5 is a getter-only accessor that re-parses on each access (in-place
+  // mutation and reassignment are silently lost), so install the coerced object
+  // as an own data property that shadows the prototype getter.
+  Object.defineProperty(req, "query", {
+    value: coerceArrayParams(req.query),
+    writable: true,
+    configurable: true,
+    enumerable: true,
+  });
+
   // Validate ?q (free-text search)
   if (req.query.q !== undefined) {
     const q = String(req.query.q);
@@ -138,5 +177,6 @@ function validatePathParams(req, res, next) {
 
 module.exports = {
   validateQueryParams,
-  validatePathParams
+  validatePathParams,
+  coerceArrayParams
 };
