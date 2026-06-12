@@ -44,6 +44,71 @@
       }
     },
     "schemas": {
+      "QuerySpec": {
+        "type": "object",
+        "description": "A safe, structured custom-analytics query (NOT SQL). Field references are whitelist-validated: a top-level event field (type, source, session_id, trace_id, parent_session_id, causation_id, agent_role, subject, time, id, tenant) or a `payload.*` / `labels.*` / `extensions.*` dot-path. The segments `__proto__`, `prototype`, `constructor` are rejected.",
+        "properties": {
+          "filters": {
+            "type": "array",
+            "description": "AND-combined predicates.",
+            "maxItems": 25,
+            "items": {
+              "type": "object",
+              "required": ["field", "op"],
+              "properties": {
+                "field": { "type": "string", "description": "A whitelisted field reference." },
+                "op": { "type": "string", "enum": ["eq", "ne", "in", "nin", "exists", "not_exists", "prefix", "contains", "gt", "gte", "lt", "lte"] },
+                "value": { "description": "Scalar for most ops; an array for `in`/`nin`; omitted for `exists`/`not_exists`." }
+              }
+            }
+          },
+          "group_by": { "type": "array", "maxItems": 5, "items": { "type": "string" }, "description": "Field references to group by." },
+          "time_bucket": { "type": "string", "enum": ["hour", "day", "month"], "description": "Optional extra group dimension bucketing event time (`_bucket`)." },
+          "aggregations": {
+            "type": "array",
+            "maxItems": 10,
+            "description": "A `count` is always included. `count_distinct` requires a `field`.",
+            "items": { "type": "object", "properties": { "op": { "type": "string", "enum": ["count", "count_distinct"] }, "field": { "type": "string" } } }
+          },
+          "since": { "type": "string", "format": "date-time", "description": "Inclusive lower bound on event time." },
+          "until": { "type": "string", "format": "date-time", "description": "Exclusive upper bound on event time." },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 100, "description": "Max result rows (groups)." }
+        }
+      },
+      "QueryResult": {
+        "type": "object",
+        "properties": {
+          "total_matched": { "type": "integer", "description": "Events matching the filters + window." },
+          "rows": {
+            "type": "array",
+            "description": "One row per group, ranked by count descending then group-key ascending.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "group": { "type": "object", "description": "Resolved group_by field values (plus `_bucket` when time_bucket is set)." },
+                "count": { "type": "integer" },
+                "distinct": { "type": "object", "description": "Per count_distinct field, the number of distinct values in the group.", "additionalProperties": { "type": "integer" } }
+              }
+            }
+          },
+          "group_by": { "type": "array", "items": { "type": "string" } },
+          "time_bucket": { "type": "string", "nullable": true },
+          "aggregations": { "type": "array", "items": { "type": "string" } },
+          "truncated": { "type": "boolean", "description": "True when more groups existed than `limit`." },
+          "generated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SavedQuery": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "example": "sq_…" },
+          "tenant_id": { "type": "string" },
+          "name": { "type": "string" },
+          "spec": { "$ref": "#/components/schemas/QuerySpec" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
       "LatencyStats": {
         "type": "object",
         "description": "Latency percentile statistics over a set of operation durations (milliseconds). Percentiles use the nearest-rank method, so each is an actually-observed sample.",
@@ -960,6 +1025,111 @@
             "description": "Invalid query parameter (e.g. a non-ISO `since`/`until`, or `limit` outside 1-1000)"
           },
           "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/analytics/query": {
+      "post": {
+        "tags": ["Analytics"],
+        "summary": "Run an ad-hoc custom-analytics query",
+        "description": "Runs a safe, structured user-defined query (filters + group_by + aggregations + window) over the tenant's event stream. The body is a query **spec**, never SQL: field references are whitelist-validated (top-level fields, or `payload.*` / `labels.*` / `extensions.*` dot-paths with a prototype-pollution guard) and all execution happens in pure JS over the tenant-scoped events. Read- + tenant-scoped.",
+        "operationId": "runCustomQuery",
+        "security": [{ "ApiKeyAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/QuerySpec" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "Query result",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/QueryResult" } } }
+          },
+          "400": {
+            "description": "Invalid query spec (unknown/forbidden field, bad operator, out-of-range limit, …). Includes a `details` array.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "error": { "type": "string" }, "message": { "type": "string" }, "details": { "type": "array", "items": { "type": "string" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/analytics/saved-queries": {
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "List saved custom-analytics queries",
+        "description": "Lists the authenticated tenant's saved query library (newest first). Read- + tenant-scoped.",
+        "operationId": "listSavedQueries",
+        "security": [{ "ApiKeyAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "The tenant's saved queries",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "saved_queries": { "type": "array", "items": { "$ref": "#/components/schemas/SavedQuery" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      },
+      "post": {
+        "tags": ["Analytics"],
+        "summary": "Save a custom-analytics query",
+        "description": "Persists a named query to the tenant's library. Requires a **write**-scoped key (it mutates tenant data). The spec is validated before storage.",
+        "operationId": "createSavedQuery",
+        "security": [{ "ApiKeyAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["name", "spec"], "properties": { "name": { "type": "string", "maxLength": 120 }, "spec": { "$ref": "#/components/schemas/QuerySpec" } } } } }
+        },
+        "responses": {
+          "201": { "description": "The stored saved query", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SavedQuery" } } } },
+          "400": { "description": "Missing/too-long name, or invalid query spec" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "description": "Key lacks the 'write' scope" },
+          "409": { "description": "A saved query with this name already exists for the tenant" }
+        }
+      }
+    },
+    "/analytics/saved-queries/{id}": {
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "Fetch a saved query",
+        "operationId": "getSavedQuery",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "The saved query", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SavedQuery" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "description": "Not found for this tenant" }
+        }
+      },
+      "delete": {
+        "tags": ["Analytics"],
+        "summary": "Delete a saved query",
+        "description": "Removes a saved query. Requires a **write**-scoped key.",
+        "operationId": "deleteSavedQuery",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "204": { "description": "Deleted" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "description": "Key lacks the 'write' scope" },
+          "404": { "description": "Not found for this tenant" }
+        }
+      }
+    },
+    "/analytics/saved-queries/{id}/run": {
+      "post": {
+        "tags": ["Analytics"],
+        "summary": "Run a saved query by id",
+        "description": "Loads the tenant's saved query and runs it. The stored spec is re-validated defensively before execution. Read- + tenant-scoped.",
+        "operationId": "runSavedQuery",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": {
+            "description": "Query result, with a reference to the saved query that produced it",
+            "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/QueryResult" }, { "type": "object", "properties": { "saved_query": { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" } } } } }] } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "description": "Not found for this tenant" },
+          "422": { "description": "The stored spec is no longer valid" }
         }
       }
     },

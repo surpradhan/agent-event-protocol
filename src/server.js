@@ -12,6 +12,7 @@ const { buildAuditBundle, verifyAuditBundle } = require("./audit");
 const { renderAuditBundlePdf } = require("./audit-pdf");
 const { summarizePolicyBlocked } = require("./analytics");
 const { summarizePerformance } = require("./performance");
+const { validateQuerySpec, runQuery } = require("./customQuery");
 const { generateComplianceReport, isValidFramework, FRAMEWORK_IDS } = require("./compliance");
 const { renderComplianceReportPdf } = require("./compliance-pdf");
 const { isPrunable } = require("./retention");
@@ -868,6 +869,122 @@ app.get("/analytics/performance", requireReadAccess, validateQueryParams, async 
   const summary = summarizePerformance(events, { now: new Date(), limit });
 
   res.json({ ...summary, window: { since: since.value, until: until.value } });
+});
+
+// ---------------------------------------------------------------------------
+// Routes — custom analytics: user-defined queries (Phase 15-B)
+//
+// A query is a structured JSON *spec* (filters + group_by + aggregations +
+// window), NOT SQL.  validateQuerySpec enforces a field/operator whitelist and a
+// prototype-pollution guard; runQuery (src/customQuery.js) executes it purely in
+// JS over the tenant-scoped, time-windowed raw envelopes the DB returns — so there
+// is no injection surface and no SQLite-vs-Postgres divergence.  Queries can be run
+// ad-hoc or saved to a per-tenant library and re-run by id.
+// ---------------------------------------------------------------------------
+
+/**
+ * Run a validated spec against the caller's tenant and shape the response.
+ * Shared by the ad-hoc and saved-query-run routes.
+ */
+async function executeCustomQuery(tenantId, spec) {
+  const events = await db.getEventsForQuery(tenantId, {
+    since: spec.since,
+    until: spec.until
+  });
+  return runQuery(events, spec, { now: new Date() });
+}
+
+/**
+ * POST /analytics/query — run an ad-hoc custom-analytics query.
+ * Body: a query spec (see src/customQuery.js). Read- + tenant-scoped.
+ */
+app.post("/analytics/query", requireReadAccess, async (req, res) => {
+  const { ok, errors, normalized } = validateQuerySpec(req.body);
+  if (!ok) {
+    return res.status(400).json({ error: "Bad Request", message: "Invalid query spec", details: errors });
+  }
+  const result = await executeCustomQuery(req.tenant_id, normalized);
+  res.json(result);
+});
+
+/**
+ * POST /analytics/saved-queries — save a named query to the tenant's library.
+ * Body: { name, spec }. Requires a WRITE-scoped key (mutates tenant data).
+ * 400 invalid spec/name, 409 duplicate name.
+ */
+app.post("/analytics/saved-queries", requireApiKey("write"), async (req, res) => {
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (!name) {
+    return res.status(400).json({ error: "Bad Request", message: "A non-empty 'name' is required" });
+  }
+  if (name.length > 120) {
+    return res.status(400).json({ error: "Bad Request", message: "'name' must be ≤ 120 characters" });
+  }
+  const { ok, errors, normalized } = validateQuerySpec(body.spec);
+  if (!ok) {
+    return res.status(400).json({ error: "Bad Request", message: "Invalid query spec", details: errors });
+  }
+
+  const now = new Date().toISOString();
+  try {
+    const saved = await db.createSavedQuery({
+      id: `sq_${crypto.randomUUID().replace(/-/g, "")}`,
+      tenantId: req.tenant_id,
+      name,
+      spec: normalized,
+      createdAt: now,
+      updatedAt: now
+    });
+    res.status(201).json(saved);
+  } catch (err) {
+    if (err && err.code === "SAVED_QUERY_CONFLICT") {
+      return res.status(409).json({ error: "Conflict", message: err.message });
+    }
+    throw err;
+  }
+});
+
+/**
+ * GET /analytics/saved-queries — list the tenant's saved queries (newest first).
+ */
+app.get("/analytics/saved-queries", requireReadAccess, async (req, res) => {
+  const queries = await db.listSavedQueries(req.tenant_id);
+  res.json({ saved_queries: queries });
+});
+
+/**
+ * GET /analytics/saved-queries/:id — fetch one saved query (tenant-scoped). 404 if absent.
+ */
+app.get("/analytics/saved-queries/:id", requireReadAccess, validatePathParams, async (req, res) => {
+  const saved = await db.getSavedQuery(req.params.id, req.tenant_id);
+  if (!saved) return res.status(404).json({ error: "Not Found", message: "Saved query not found" });
+  res.json(saved);
+});
+
+/**
+ * POST /analytics/saved-queries/:id/run — run a saved query by id (tenant-scoped).
+ * Re-validates the stored spec defensively before executing. 404 if absent.
+ */
+app.post("/analytics/saved-queries/:id/run", requireReadAccess, validatePathParams, async (req, res) => {
+  const saved = await db.getSavedQuery(req.params.id, req.tenant_id);
+  if (!saved) return res.status(404).json({ error: "Not Found", message: "Saved query not found" });
+  const { ok, errors, normalized } = validateQuerySpec(saved.spec);
+  if (!ok) {
+    return res.status(422).json({ error: "Unprocessable Entity", message: "Stored query spec is invalid", details: errors });
+  }
+  const result = await executeCustomQuery(req.tenant_id, normalized);
+  res.json({ ...result, saved_query: { id: saved.id, name: saved.name } });
+});
+
+/**
+ * DELETE /analytics/saved-queries/:id — remove a saved query (tenant-scoped).
+ * Requires a WRITE-scoped key. 404 if absent.
+ */
+app.delete("/analytics/saved-queries/:id", requireApiKey("write"), validatePathParams, async (req, res) => {
+  const removed = await db.deleteSavedQuery(req.params.id, req.tenant_id);
+  if (!removed) return res.status(404).json({ error: "Not Found", message: "Saved query not found" });
+  res.status(204).end();
 });
 
 /**

@@ -4,6 +4,40 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Custom analytics — user-defined queries (Phase 15-B) — 2026-06-12
+
+Phase 15 (Advanced Dashboard) PR-B: "Custom analytics: user-defined queries over
+event streams" (PRD §Phase 15), as a **safe, structured query model — never SQL**.
+
+- **Query spec**: a JSON object — `filters` (AND-combined predicates with operators
+  `eq`/`ne`/`in`/`nin`/`exists`/`not_exists`/`prefix`/`contains`/`gt`/`gte`/`lt`/`lte`),
+  `group_by`, `aggregations` (`count` + `count_distinct`), optional `time_bucket`
+  (hour/day/month), `since`/`until`, and `limit`. Field references are whitelist-
+  validated: a top-level event field, or a `payload.*` / `labels.*` / `extensions.*`
+  dot-path. The segments `__proto__`/`prototype`/`constructor` are rejected
+  (prototype-pollution guard).
+- **Pure `src/customQuery.js`** (`validateQuerySpec` + `runQuery`, injected `now`,
+  no I/O): the DB does a trivial, dialect-identical tenant+window `SELECT` and ALL
+  filtering/grouping/aggregation happens in JS — **zero injection surface**, no
+  SQLite-vs-Postgres divergence. Unit-tested with zero database.
+- **Saved-query library** (persistence): new `saved_queries` table (SQLite migration
+  `006` + Postgres `SCHEMA_DDL` mirror; `(tenant_id, name)` UNIQUE) with dual-backend
+  `createSavedQuery`/`getSavedQuery`/`listSavedQueries`/`deleteSavedQuery` +
+  `getEventsForQuery`.
+- **Routes** (all tenant-scoped): `POST /analytics/query` (ad-hoc, read),
+  `POST /analytics/saved-queries` (create, **write**), `GET /analytics/saved-queries`
+  (list, read), `GET /analytics/saved-queries/:id` (read), `POST
+  /analytics/saved-queries/:id/run` (read), `DELETE /analytics/saved-queries/:id`
+  (**write**). 400 invalid spec, 409 duplicate name, 404 cross-tenant/unknown.
+- **`aep analytics query`** CLI (`--file`/`--spec`/`--save`/`--list`/`--run`/
+  `--delete`), a **Custom Analytics** dashboard tab (filter/group/aggregate builder +
+  results table + saved-query library), and OpenAPI under the Analytics tag
+  (`QuerySpec`/`QueryResult`/`SavedQuery` schemas).
+- New SQLite migration + Postgres mirror (covered by the existing `Postgres parity
+  tests` job); no new CI job. Server suite: 258 unit + 156 integration.
+
+---
+
 ## Performance profiling analytics (Phase 15-A) — 2026-06-12
 
 Phase 15 (Advanced Dashboard) PR-A: latency/performance profiling — "latency

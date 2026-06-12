@@ -46,7 +46,8 @@ const {
   decodeCursor,
   encodeCursor,
   applyTextFilter,
-  formatAccessLogRow
+  formatAccessLogRow,
+  formatSavedQueryRow
 } = require("./_helpers");
 
 // ---------------------------------------------------------------------------
@@ -167,6 +168,21 @@ const SCHEMA_DDL = `
 
   CREATE INDEX IF NOT EXISTS idx_access_log_key_ts ON api_key_access_log (api_key_id, ts DESC);
   CREATE INDEX IF NOT EXISTS idx_access_log_ts     ON api_key_access_log (ts);
+
+  -- ----- saved_queries (Phase 15-B) ----------------------------------------
+  -- Mirrors src/db/migrations/006_saved_queries.js.  Per-tenant library of named
+  -- custom-analytics query specs (JSON text; data only, never executed as SQL).
+  CREATE TABLE IF NOT EXISTS saved_queries (
+    id          TEXT NOT NULL PRIMARY KEY,
+    tenant_id   TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    spec        TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    UNIQUE (tenant_id, name)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_saved_queries_tenant ON saved_queries (tenant_id, created_at DESC);
 `;
 
 // Standard projection of a sessions row (column order matches SqliteBackend).
@@ -771,6 +787,86 @@ class PostgresBackend extends StorageBackend {
     );
 
     return { total, entries: listRes.rows.map(formatAccessLogRow) };
+  }
+
+  // ----- saved queries (Phase 15-B) -----
+
+  async createSavedQuery(record) {
+    try {
+      await this._pool.query(
+        `INSERT INTO saved_queries
+           (id, tenant_id, name, spec, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          record.id,
+          record.tenantId,
+          record.name,
+          JSON.stringify(record.spec),
+          record.createdAt,
+          record.updatedAt
+        ]
+      );
+    } catch (err) {
+      // unique_violation → typed conflict for the route (mirrors SQLite).
+      if (err && err.code === "23505") {
+        const e = new Error("saved query name already exists for this tenant");
+        e.code = "SAVED_QUERY_CONFLICT";
+        throw e;
+      }
+      throw err;
+    }
+    return this.getSavedQuery(record.id, record.tenantId);
+  }
+
+  async getSavedQuery(id, tenantId) {
+    const { rows } = await this._pool.query(
+      `SELECT id, tenant_id, name, spec, created_at, updated_at
+       FROM saved_queries WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId]
+    );
+    return rows[0] ? formatSavedQueryRow(rows[0]) : null;
+  }
+
+  async listSavedQueries(tenantId) {
+    const { rows } = await this._pool.query(
+      `SELECT id, tenant_id, name, spec, created_at, updated_at
+       FROM saved_queries WHERE tenant_id = $1 ORDER BY created_at DESC`,
+      [tenantId]
+    );
+    return rows.map(formatSavedQueryRow);
+  }
+
+  async deleteSavedQuery(id, tenantId) {
+    const res = await this._pool.query(
+      `DELETE FROM saved_queries WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId]
+    );
+    return res.rowCount > 0;
+  }
+
+  // ----- custom-analytics event fetch (Phase 15-B) -----
+
+  async getEventsForQuery(tenantId = null, { since = null, until = null } = {}) {
+    // Same shape as getPerformanceEvents but without the type constraint: filtering
+    // is done in pure JS (src/customQuery.js), so this stays dialect-identical.
+    let sql = "SELECT raw_payload FROM events WHERE 1=1";
+    const params = [];
+    if (tenantId) {
+      params.push(tenantId);
+      sql += ` AND tenant_id = $${params.length}`;
+    }
+    if (since) {
+      params.push(since);
+      sql += ` AND time >= $${params.length}`;
+    }
+    if (until) {
+      params.push(until);
+      sql += ` AND time < $${params.length}`;
+    }
+    sql += " ORDER BY time ASC";
+
+    const { rows } = await this._pool.query(sql, params);
+    return rows.map(r => JSON.parse(r.raw_payload));
   }
 
   // ----- pagination -----

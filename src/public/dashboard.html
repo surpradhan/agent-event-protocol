@@ -497,6 +497,23 @@
     .pf-table tr:last-child td { border-bottom: none; }
     .pf-slow-dur { color: var(--accent2); font-weight: 600; }
 
+    /* Custom analytics builder */
+    .cq-builder { display: flex; flex-direction: column; gap: 16px; }
+    .cq-section { display: flex; flex-direction: column; gap: 8px; }
+    .cq-grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+    .cq-grid2 label, .cq-filter-row label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
+    .cq-builder input, .cq-builder select { background: var(--line2); border: 1px solid var(--line); color: var(--ink); border-radius: 7px; padding: 7px 9px; font-size: 12px; font-family: inherit; }
+    .cq-filter-row { display: grid; grid-template-columns: 1.4fr 0.9fr 1.4fr auto; gap: 8px; align-items: end; margin-bottom: 8px; }
+    .cq-mini { padding: 5px 10px; font-size: 11px; align-self: flex-start; }
+    .cq-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .cq-actions input { flex: 0 1 220px; }
+    .cq-x { background: rgba(220,38,38,0.14); color: #fca5a5; border: 1px solid rgba(220,38,38,0.38); border-radius: 7px; padding: 7px 11px; cursor: pointer; font-size: 12px; }
+    .cq-msg { margin-top: 12px; font-size: 12px; }
+    .cq-msg.err { color: #fca5a5; }
+    .cq-msg.ok  { color: #6ee7b7; }
+    .cq-saved-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+    .cq-saved-item .cq-name { font-weight: 600; color: var(--ink); }
+
     /* ── Responsive ── */
     @media (max-width: 980px) {
       .metric-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
@@ -537,6 +554,7 @@
     <button class="tab-btn"        id="tab-rejected"   onclick="switchMain('rejected')">Rejected<span id="rejected-badge" class="tab-badge" style="display:none">0</span></button>
     <button class="tab-btn"        id="tab-analytics"  onclick="switchMain('analytics')">Policy Analytics</button>
     <button class="tab-btn"        id="tab-performance" onclick="switchMain('performance')">Performance</button>
+    <button class="tab-btn"        id="tab-custom"     onclick="switchMain('custom')">Custom Analytics</button>
   </div>
 
   <!-- ═══ Sessions view ═══ -->
@@ -692,6 +710,67 @@
       </div>
       <div id="pf-body">
         <div class="empty">No completed operations recorded for this tenant.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Custom analytics view ═══ -->
+  <div id="view-custom" style="display:none">
+    <div class="card reject-panel">
+      <div class="panel-header" style="margin-bottom:12px">
+        <div>
+          <div class="panel-title">Custom Analytics</div>
+          <div class="hint" style="font-size:11px;margin-top:2px">Safe, structured user-defined queries over the event stream — filter, group &amp; aggregate. Whitelisted fields only (top-level, or <code>payload.*</code> / <code>labels.*</code> / <code>extensions.*</code>); no SQL.</div>
+        </div>
+      </div>
+
+      <div class="cq-builder">
+        <!-- Filters -->
+        <div class="cq-section">
+          <div class="an-section-title">Filters <span class="hint">(all must match)</span></div>
+          <div id="cq-filters"></div>
+          <button class="btn secondary cq-mini" onclick="cqAddFilter()">+ Add filter</button>
+        </div>
+
+        <!-- Group / aggregate -->
+        <div class="cq-section cq-grid2">
+          <label>Group by <span class="hint">(comma-separated fields)</span>
+            <input id="cq-groupby" type="text" placeholder="e.g. type, payload.tool" autocomplete="off" />
+          </label>
+          <label>Count distinct of <span class="hint">(optional field)</span>
+            <input id="cq-distinct" type="text" placeholder="e.g. session_id" autocomplete="off" />
+          </label>
+          <label>Time bucket
+            <select id="cq-bucket">
+              <option value="">none</option>
+              <option value="hour">hour</option>
+              <option value="day">day</option>
+              <option value="month">month</option>
+            </select>
+          </label>
+          <label>Limit
+            <input id="cq-limit" type="number" min="1" max="1000" value="100" />
+          </label>
+          <label>Since <span class="hint">(ISO-8601)</span>
+            <input id="cq-since" type="text" placeholder="optional" autocomplete="off" />
+          </label>
+          <label>Until <span class="hint">(ISO-8601)</span>
+            <input id="cq-until" type="text" placeholder="optional" autocomplete="off" />
+          </label>
+        </div>
+
+        <div class="cq-actions">
+          <button class="btn" onclick="cqRun()">Run query</button>
+          <input id="cq-savename" type="text" placeholder="Save as… (name)" autocomplete="off" />
+          <button class="btn secondary" onclick="cqSave()">Save</button>
+        </div>
+      </div>
+
+      <div id="cq-result"></div>
+
+      <div class="cq-section" style="margin-top:18px">
+        <div class="an-section-title">Saved queries</div>
+        <div id="cq-saved"><div class="empty">No saved queries yet.</div></div>
       </div>
     </div>
   </div>
@@ -918,14 +997,17 @@ function switchMain(v) {
   document.getElementById('view-rejected').style.display  = v === 'rejected'  ? '' : 'none';
   document.getElementById('view-analytics').style.display = v === 'analytics' ? '' : 'none';
   document.getElementById('view-performance').style.display = v === 'performance' ? '' : 'none';
+  document.getElementById('view-custom').style.display = v === 'custom' ? '' : 'none';
   document.getElementById('tab-sessions').className   = 'tab-btn' + (v === 'sessions'  ? ' active' : '');
   document.getElementById('tab-workflows').className  = 'tab-btn' + (v === 'workflows' ? ' active' : '');
   document.getElementById('tab-rejected').className   = 'tab-btn' + (v === 'rejected'  ? ' active' : '');
   document.getElementById('tab-analytics').className  = 'tab-btn' + (v === 'analytics' ? ' active' : '');
   document.getElementById('tab-performance').className = 'tab-btn' + (v === 'performance' ? ' active' : '');
+  document.getElementById('tab-custom').className = 'tab-btn' + (v === 'custom' ? ' active' : '');
   if (v === 'rejected') loadRejections();
   if (v === 'analytics') loadAnalytics();
   if (v === 'performance') loadPerformance();
+  if (v === 'custom') initCustom();
 }
 function switchSub(v) {
   subView = v;
@@ -1670,6 +1752,165 @@ function renderPerformance(a) {
       <div class="an-section-title">Slowest operations (${a.slowest.length})</div>
       <div class="item-list">${slowHtml}</div>
     </div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom analytics — safe user-defined queries (Phase 15-B)
+// ─────────────────────────────────────────────────────────────────────────────
+let cqInitialized = false;
+
+// JSON request helper (the read-only fetchJson only does GET). Returns
+// { status, body }. Body may be null for 204.
+async function cqSend(url, method, body) {
+  const tok = getToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (tok) headers['Authorization'] = 'Bearer ' + tok;
+  const r = await fetch(url, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+  let parsed = null;
+  try { parsed = await r.json(); } catch (_) { parsed = null; }
+  return { status: r.status, body: parsed };
+}
+
+function initCustom() {
+  if (!cqInitialized) {
+    cqInitialized = true;
+    if (!document.querySelector('#cq-filters .cq-filter-row')) cqAddFilter();
+  }
+  loadSavedQueries();
+}
+
+const CQ_OPS = ['eq','ne','in','nin','exists','not_exists','prefix','contains','gt','gte','lt','lte'];
+
+function cqAddFilter(field = '', op = 'eq', value = '') {
+  const wrap = document.getElementById('cq-filters');
+  const row = document.createElement('div');
+  row.className = 'cq-filter-row';
+  row.innerHTML = `
+    <label>Field<input type="text" class="cq-f-field" placeholder="type / payload.tool / labels.env" value="${esc(field)}"></label>
+    <label>Op<select class="cq-f-op">${CQ_OPS.map(o => `<option value="${o}"${o===op?' selected':''}>${o}</option>`).join('')}</select></label>
+    <label>Value<input type="text" class="cq-f-value" placeholder="value (or a,b,c for in/nin)" value="${esc(value)}"></label>
+    <button class="cq-x" title="Remove filter" onclick="this.closest('.cq-filter-row').remove()">✕</button>`;
+  wrap.appendChild(row);
+}
+
+// Build a query spec object from the form controls.
+function cqBuildSpec() {
+  const filters = [];
+  for (const row of document.querySelectorAll('#cq-filters .cq-filter-row')) {
+    const field = row.querySelector('.cq-f-field').value.trim();
+    const op = row.querySelector('.cq-f-op').value;
+    const rawVal = row.querySelector('.cq-f-value').value;
+    if (!field) continue;
+    if (op === 'exists' || op === 'not_exists') {
+      filters.push({ field, op });
+    } else if (op === 'in' || op === 'nin') {
+      filters.push({ field, op, value: rawVal.split(',').map(s => s.trim()).filter(Boolean) });
+    } else {
+      filters.push({ field, op, value: rawVal });
+    }
+  }
+  const spec = {};
+  if (filters.length) spec.filters = filters;
+  const gb = document.getElementById('cq-groupby').value.split(',').map(s => s.trim()).filter(Boolean);
+  if (gb.length) spec.group_by = gb;
+  const distinct = document.getElementById('cq-distinct').value.trim();
+  if (distinct) spec.aggregations = [{ op: 'count' }, { op: 'count_distinct', field: distinct }];
+  const bucket = document.getElementById('cq-bucket').value;
+  if (bucket) spec.time_bucket = bucket;
+  const since = document.getElementById('cq-since').value.trim();
+  const until = document.getElementById('cq-until').value.trim();
+  if (since) spec.since = since;
+  if (until) spec.until = until;
+  const limit = parseInt(document.getElementById('cq-limit').value, 10);
+  if (Number.isFinite(limit)) spec.limit = limit;
+  return spec;
+}
+
+function cqShowMsg(msg, kind) {
+  return `<div class="cq-msg ${kind}">${esc(msg)}</div>`;
+}
+
+async function cqRun() {
+  const out = document.getElementById('cq-result');
+  out.innerHTML = '<div class="hint" style="margin-top:12px">Running…</div>';
+  const res = await cqSend('/analytics/query', 'POST', cqBuildSpec());
+  if (res.status !== 200) {
+    const detail = res.body && res.body.details ? ': ' + res.body.details.join('; ') : (res.body && res.body.message ? ': ' + res.body.message : '');
+    out.innerHTML = cqShowMsg(`Query failed (HTTP ${res.status})${detail}`, 'err');
+    return;
+  }
+  renderQueryResult(res.body);
+}
+
+function renderQueryResult(r) {
+  const out = document.getElementById('cq-result');
+  const groupCols = (r.rows[0] && r.rows[0].group) ? Object.keys(r.rows[0].group) : [];
+  const distinctCols = (r.rows[0] && r.rows[0].distinct) ? Object.keys(r.rows[0].distinct) : [];
+  let head = `<div class="an-section-title" style="margin-top:14px">Result <span class="hint">(${r.total_matched} event${r.total_matched===1?'':'s'} matched, ${r.rows.length} group${r.rows.length===1?'':'s'}${r.truncated ? ', truncated' : ''})</span></div>`;
+  if (!r.rows.length) { out.innerHTML = head + '<div class="empty">No matching events.</div>'; return; }
+  const th = [...groupCols.map(c => `<th>${esc(c)}</th>`), '<th>count</th>', ...distinctCols.map(c => `<th>distinct ${esc(c)}</th>`)].join('');
+  const trs = r.rows.map(row => {
+    const tds = [
+      ...groupCols.map(c => `<td title="${esc(row.group[c])}">${esc(row.group[c])}</td>`),
+      `<td>${row.count.toLocaleString()}</td>`,
+      ...distinctCols.map(c => `<td>${(row.distinct[c] ?? 0).toLocaleString()}</td>`)
+    ].join('');
+    return `<tr>${tds}</tr>`;
+  }).join('');
+  out.innerHTML = head + `<table class="pf-table"><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`;
+}
+
+async function cqSave() {
+  const name = document.getElementById('cq-savename').value.trim();
+  const out = document.getElementById('cq-result');
+  if (!name) { out.innerHTML = cqShowMsg('Enter a name to save this query.', 'err'); return; }
+  const res = await cqSend('/analytics/saved-queries', 'POST', { name, spec: cqBuildSpec() });
+  if (res.status === 201) {
+    document.getElementById('cq-savename').value = '';
+    out.innerHTML = cqShowMsg(`Saved as “${name}”.`, 'ok');
+    loadSavedQueries();
+  } else if (res.status === 403) {
+    out.innerHTML = cqShowMsg('Saving needs a write-scoped API key.', 'err');
+  } else if (res.status === 409) {
+    out.innerHTML = cqShowMsg(`A saved query named “${name}” already exists.`, 'err');
+  } else {
+    const detail = res.body && res.body.details ? ': ' + res.body.details.join('; ') : '';
+    out.innerHTML = cqShowMsg(`Save failed (HTTP ${res.status})${detail}`, 'err');
+  }
+}
+
+async function loadSavedQueries() {
+  const wrap = document.getElementById('cq-saved');
+  try {
+    const data = await fetchJson('/analytics/saved-queries');
+    const rows = data.saved_queries || [];
+    if (!rows.length) { wrap.innerHTML = '<div class="empty">No saved queries yet.</div>'; return; }
+    wrap.innerHTML = rows.map(q => `
+      <div class="cq-saved-item">
+        <span class="cq-name">${esc(q.name)}</span>
+        <span class="hint">${esc(q.id)}</span>
+        <span class="hint" style="margin-left:auto">${esc(ago(q.created_at))}</span>
+        <button class="btn secondary cq-mini" onclick="runSavedQuery('${esc(q.id)}')">Run</button>
+        <button class="cq-x" title="Delete" onclick="deleteSavedQuery('${esc(q.id)}')">✕</button>
+      </div>`).join('');
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty">Could not load saved queries (${esc(e.message)}).</div>`;
+  }
+}
+
+async function runSavedQuery(id) {
+  const res = await cqSend('/analytics/saved-queries/' + encodeURIComponent(id) + '/run', 'POST', {});
+  const out = document.getElementById('cq-result');
+  if (res.status !== 200) { out.innerHTML = cqShowMsg(`Run failed (HTTP ${res.status}).`, 'err'); return; }
+  renderQueryResult(res.body);
+}
+
+async function deleteSavedQuery(id) {
+  const res = await cqSend('/analytics/saved-queries/' + encodeURIComponent(id), 'DELETE');
+  const out = document.getElementById('cq-result');
+  if (res.status === 204) { loadSavedQueries(); }
+  else if (res.status === 403) { out.innerHTML = cqShowMsg('Deleting needs a write-scoped API key.', 'err'); }
+  else { out.innerHTML = cqShowMsg(`Delete failed (HTTP ${res.status}).`, 'err'); }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
