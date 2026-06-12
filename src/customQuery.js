@@ -409,7 +409,7 @@ function runQuery(events, spec, { now = new Date() } = {}) {
       groupObj._bucket = b;
       keyParts.push(`_bucket=${b}`);
     }
-    const key = keyParts.join(" ");
+    const key = JSON.stringify(keyParts);
 
     let g = groups.get(key);
     if (!g) {
