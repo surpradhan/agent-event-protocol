@@ -222,6 +222,23 @@ class StorageBackend {
     throw new Error("StorageBackend.getPolicyBlockedEvents() not implemented");
   }
 
+  // ----- performance profiling (Phase 15-A) -----
+
+  /**
+   * Fetch the lifecycle events (task.created/completed/failed,
+   * tool.called/result) used to compute latency profiling, tenant-scoped and
+   * optionally time-windowed. Aggregation is done by the pure
+   * src/performance.js summarizer, so this returns raw envelopes.
+   * @param {string|null} tenantId
+   * @param {{ since?: string|null, until?: string|null }} [opts]
+   *        since — inclusive ISO-8601 lower bound (`time >= since`)
+   *        until — exclusive ISO-8601 upper bound (`time < until`)
+   * @returns {Promise<Array<object>>} parsed event envelopes
+   */
+  async getPerformanceEvents(tenantId, opts) {
+    throw new Error("StorageBackend.getPerformanceEvents() not implemented");
+  }
+
   // ----- API-key access log (Phase 14 PR-E) -----
 
   /**

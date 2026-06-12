@@ -2471,3 +2471,137 @@ describe("data-residency region labels", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// GET /analytics/performance — latency / performance profiling (Phase 15-A)
+// ---------------------------------------------------------------------------
+
+describe("GET /analytics/performance", () => {
+  // Seed lifecycle events in a far-future window (2030-01) that no other test
+  // touches, so a since/until bound isolates exactly these operations even
+  // though the endpoint is tenant-scoped (other tests emit task/tool events too).
+  const PERF_SINCE = "2030-01-01T00:00:00Z";
+  const PERF_UNTIL = "2030-02-01T00:00:00Z";
+
+  before(async () => {
+    const seed = [
+      // web_search ×2 on agent://a / ses_perf_1 (2000ms, 5000ms)
+      { id: "evt_pf_c1", time: "2030-01-01T00:00:00Z", source: "agent://a", type: "tool.called", session_id: "ses_perf_1", payload: { tool: "web_search" } },
+      { id: "evt_pf_r1", time: "2030-01-01T00:00:02Z", source: "agent://a", type: "tool.result", session_id: "ses_perf_1", causation_id: "evt_pf_c1", payload: { tool: "web_search", status: "success" } },
+      { id: "evt_pf_c2", time: "2030-01-01T00:01:00Z", source: "agent://a", type: "tool.called", session_id: "ses_perf_1", payload: { tool: "web_search" } },
+      { id: "evt_pf_r2", time: "2030-01-01T00:01:05Z", source: "agent://a", type: "tool.result", session_id: "ses_perf_1", causation_id: "evt_pf_c2", payload: { tool: "web_search", status: "success" } },
+      // db_query ×1 on agent://b / ses_perf_2 (1000ms)
+      { id: "evt_pf_c3", time: "2030-01-01T00:02:00Z", source: "agent://b", type: "tool.called", session_id: "ses_perf_2", payload: { tool: "db_query" } },
+      { id: "evt_pf_r3", time: "2030-01-01T00:02:01Z", source: "agent://b", type: "tool.result", session_id: "ses_perf_2", causation_id: "evt_pf_c3", payload: { tool: "db_query", status: "success" } },
+      // task completed (10000ms) and task failed (3000ms) on agent://orch
+      { id: "evt_pf_t1", time: "2030-01-01T00:03:00Z", source: "agent://orch", type: "task.created", session_id: "ses_perf_1", payload: { task: "summarize" } },
+      { id: "evt_pf_tc1", time: "2030-01-01T00:03:10Z", source: "agent://orch", type: "task.completed", session_id: "ses_perf_1", causation_id: "evt_pf_t1", payload: { result: "done" } },
+      { id: "evt_pf_t2", time: "2030-01-01T00:04:00Z", source: "agent://orch", type: "task.created", session_id: "ses_perf_2", payload: { task: "fetch" } },
+      { id: "evt_pf_tf1", time: "2030-01-01T00:04:03Z", source: "agent://orch", type: "task.failed", session_id: "ses_perf_2", causation_id: "evt_pf_t2", payload: { reason: "timeout" } },
+      // an unmatched end: tool.result whose causation_id points at nothing
+      { id: "evt_pf_orphan", time: "2030-01-01T00:05:00Z", source: "agent://a", type: "tool.result", session_id: "ses_perf_1", causation_id: "evt_pf_missing", payload: { tool: "web_search", status: "success" } },
+    ];
+    for (const s of seed) {
+      const res = await ingest(makeEvent({ trace_id: "trc_perf", agent_role: "subagent", ...s }));
+      assert.equal(res.status, 202);
+    }
+  });
+
+  test("requires authentication (401 without a key)", async () => {
+    const res = await fetch(`${baseUrl}/analytics/performance`);
+    assert.equal(res.status, 401);
+  });
+
+  test("computes percentile latency and the grouped breakdowns", async () => {
+    const res = await fetch(
+      `${baseUrl}/analytics/performance?since=${PERF_SINCE}&until=${PERF_UNTIL}`,
+      { headers: { Authorization: `Bearer ${readKey}` } }
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+
+    // 5 matched operations; 1 unmatched end (the orphan tool.result).
+    assert.equal(body.total_operations, 5);
+    assert.equal(body.unmatched_ends, 1);
+
+    // durations sorted: [1000, 2000, 3000, 5000, 10000]
+    assert.equal(body.overall.p50, 3000); // nearest-rank
+    assert.equal(body.overall.p95, 10000);
+    assert.equal(body.overall.p99, 10000);
+    assert.equal(body.overall.min, 1000);
+    assert.equal(body.overall.max, 10000);
+    assert.equal(body.overall.mean, 4200);
+
+    // by_tool excludes task ops; ranked by count desc
+    assert.deepEqual(body.by_tool.map((t) => [t.key, t.count]), [
+      ["web_search", 2],
+      ["db_query", 1],
+    ]);
+    const ws = body.by_tool.find((t) => t.key === "web_search");
+    assert.equal(ws.max, 5000);
+
+    // by_operation: tool pair (3) then the two task pairs (1 each), tie alpha
+    assert.deepEqual(body.by_operation.map((o) => [o.key, o.count]), [
+      ["tool.called→tool.result", 3],
+      ["task.created→task.completed", 1],
+      ["task.created→task.failed", 1],
+    ]);
+
+    // by_agent: agent://a (2) & agent://orch (2) tie → alpha; then agent://b (1)
+    assert.deepEqual(body.by_agent.map((a) => [a.key, a.count]), [
+      ["agent://a", 2],
+      ["agent://orch", 2],
+      ["agent://b", 1],
+    ]);
+
+    // slowest is the 10s task.completed, descending
+    assert.equal(body.slowest[0].duration_ms, 10000);
+    assert.equal(body.slowest[0].op_type, "task.created→task.completed");
+    assert.equal(body.slowest[0].status, "completed");
+    assert.ok(typeof body.generated_at === "string");
+    assert.deepEqual(body.window, { since: PERF_SINCE, until: PERF_UNTIL });
+  });
+
+  test("?limit caps the slowest list without changing totals", async () => {
+    const res = await fetch(
+      `${baseUrl}/analytics/performance?since=${PERF_SINCE}&until=${PERF_UNTIL}&limit=2`,
+      { headers: { Authorization: `Bearer ${readKey}` } }
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.total_operations, 5);
+    assert.equal(body.slowest.length, 2);
+    assert.deepEqual(body.slowest.map((s) => s.duration_ms), [10000, 5000]);
+  });
+
+  test("a narrowed ?until window drops later operations", async () => {
+    // Up to 00:02:30 → only the three tool operations (both web_search pairs +
+    // the db_query pair, all of whose events end before 00:02:30); the two task
+    // pairs (00:03+) and the orphan (00:05) fall outside the window.
+    const res = await fetch(
+      `${baseUrl}/analytics/performance?since=${PERF_SINCE}&until=2030-01-01T00:02:30Z`,
+      { headers: { Authorization: `Bearer ${readKey}` } }
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    // c1/r1 (2000ms) and c3/r3 (1000ms) fully inside; c2 started 00:01:00 but
+    // its result r2 ends 00:01:05 — also inside. So 3 tool ops, no tasks.
+    assert.equal(body.total_operations, 3);
+    assert.equal(body.by_tool.reduce((n, t) => n + t.count, 0), 3);
+    assert.deepEqual(body.by_operation.map((o) => o.key), ["tool.called→tool.result"]);
+  });
+
+  test("rejects a non-ISO ?since with 400", async () => {
+    const res = await fetch(`${baseUrl}/analytics/performance?since=not-a-date`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("rejects ?limit outside [1,1000] with 400 (shared query validation)", async () => {
+    const res = await fetch(`${baseUrl}/analytics/performance?limit=0`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
+  });
+});

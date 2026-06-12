@@ -212,6 +212,10 @@ async function getPolicyBlockedEvents(tenantId, opts) {
   return getBackend().getPolicyBlockedEvents(tenantId, opts);
 }
 
+async function getPerformanceEvents(tenantId, opts) {
+  return getBackend().getPerformanceEvents(tenantId, opts);
+}
+
 async function recordApiKeyAccess(entry) {
   return getBackend().recordApiKeyAccess(entry);
 }
@@ -262,6 +266,8 @@ module.exports = {
   pruneEventsBefore,
   // Analytics (Phase 14 PR-D)
   getPolicyBlockedEvents,
+  // Performance profiling (Phase 15-A)
+  getPerformanceEvents,
   // API-key access log (Phase 14 PR-E)
   recordApiKeyAccess,
   getApiKeyAccessLog

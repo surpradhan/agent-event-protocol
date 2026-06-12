@@ -44,6 +44,25 @@
       }
     },
     "schemas": {
+      "LatencyStats": {
+        "type": "object",
+        "description": "Latency percentile statistics over a set of operation durations (milliseconds). Percentiles use the nearest-rank method, so each is an actually-observed sample.",
+        "properties": {
+          "count": { "type": "integer", "description": "Number of operations in the group" },
+          "p50": { "type": "integer", "description": "Median duration (ms)" },
+          "p95": { "type": "integer", "description": "95th-percentile duration (ms)" },
+          "p99": { "type": "integer", "description": "99th-percentile duration (ms)" },
+          "min": { "type": "integer", "description": "Fastest duration (ms)" },
+          "max": { "type": "integer", "description": "Slowest duration (ms)" },
+          "mean": { "type": "integer", "description": "Mean duration (ms), rounded" }
+        }
+      },
+      "LatencyGroup": {
+        "allOf": [
+          { "type": "object", "properties": { "key": { "type": "string", "description": "The group key (tool name / source / session / operation type)" } } },
+          { "$ref": "#/components/schemas/LatencyStats" }
+        ]
+      },
       "AuditBundle": {
         "type": "object",
         "description": "Tamper-evident, HMAC-signed audit bundle (Phase 14). Verify offline with the `aep audit verify` CLI or the SDK verifier.",
@@ -820,6 +839,107 @@
                           "policy": { "type": "string" },
                           "reason": { "type": "string" },
                           "action_blocked": { "type": "string" }
+                        }
+                      }
+                    },
+                    "generated_at": { "type": "string", "format": "date-time" },
+                    "window": {
+                      "type": "object",
+                      "properties": {
+                        "since": { "type": "string", "format": "date-time", "nullable": true },
+                        "until": { "type": "string", "format": "date-time", "nullable": true }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameter (e.g. a non-ISO `since`/`until`, or `limit` outside 1-1000)"
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/analytics/performance": {
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "Latency / performance profiling",
+        "description": "Pairs lifecycle events into operations (`tool.called`→`tool.result`, `task.created`→`task.completed`|`task.failed`, matched by the end event's `causation_id`) and reports p50/p95/p99 latency — computed from event `time` fields — sliced by tool, agent (`source`), session, and operation type. Results are tenant-scoped from the API key. An operation is counted only when both its start and end events fall inside the window; end events whose start is missing/out-of-window are reported in `unmatched_ends`.",
+        "operationId": "getPerformanceAnalytics",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Inclusive lower bound on event time (`time >= since`). ISO-8601.",
+            "schema": { "type": "string", "format": "date-time" }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "description": "Exclusive upper bound on event time (`time < until`). ISO-8601.",
+            "schema": { "type": "string", "format": "date-time" }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum entries in the `slowest` list (1-1000, default 20).",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 20 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Performance profiling summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total_operations": { "type": "integer", "description": "Matched start→end operations in scope" },
+                    "unmatched_ends": { "type": "integer", "description": "End events with no locatable in-window start (or a negative duration), skipped" },
+                    "overall": {
+                      "nullable": true,
+                      "allOf": [{ "$ref": "#/components/schemas/LatencyStats" }],
+                      "description": "Latency stats over all operations; null when there are none."
+                    },
+                    "by_tool": {
+                      "type": "array",
+                      "description": "Latency stats for tool operations grouped by tool name, ranked by count descending.",
+                      "items": { "$ref": "#/components/schemas/LatencyGroup" }
+                    },
+                    "by_agent": {
+                      "type": "array",
+                      "description": "Latency stats grouped by agent `source`, ranked by count descending.",
+                      "items": { "$ref": "#/components/schemas/LatencyGroup" }
+                    },
+                    "by_session": {
+                      "type": "array",
+                      "description": "Latency stats grouped by `session_id`, ranked by count descending.",
+                      "items": { "$ref": "#/components/schemas/LatencyGroup" }
+                    },
+                    "by_operation": {
+                      "type": "array",
+                      "description": "Latency stats grouped by operation type (e.g. `tool.called→tool.result`), ranked by count descending.",
+                      "items": { "$ref": "#/components/schemas/LatencyGroup" }
+                    },
+                    "slowest": {
+                      "type": "array",
+                      "description": "The slowest operations, descending by duration (capped at `limit`).",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": { "type": "string", "enum": ["tool", "task"] },
+                          "op_type": { "type": "string", "example": "tool.called→tool.result" },
+                          "name": { "type": "string", "nullable": true, "description": "Tool name for tool operations; null for task operations." },
+                          "source": { "type": "string" },
+                          "session_id": { "type": "string" },
+                          "trace_id": { "type": "string", "nullable": true },
+                          "status": { "type": "string", "enum": ["completed", "failed"] },
+                          "duration_ms": { "type": "integer" },
+                          "started_at": { "type": "string", "format": "date-time" },
+                          "ended_at": { "type": "string", "format": "date-time" }
                         }
                       }
                     },
