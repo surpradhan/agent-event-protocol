@@ -147,9 +147,14 @@ func VerifyAuditBundle(bundle map[string]any, secret string) AuditVerification {
 	for i, e := range rawEvents {
 		pe := AuditPerEvent{Index: i}
 		if m, ok := e.(map[string]any); ok {
+			// ID is advisory; a non-string id leaves it "" (Go's static type).
 			pe.ID, _ = m["id"].(string)
-			_, sigPresent := m["signature"].(map[string]any)
-			pe.SignaturePresent = sigPresent
+			// Match the server's `typeof e.signature === "object"`: true for a
+			// JSON object OR array.
+			switch m["signature"].(type) {
+			case map[string]any, []any:
+				pe.SignaturePresent = true
+			}
 		}
 		perEvent[i] = pe
 	}

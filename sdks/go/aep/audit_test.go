@@ -154,6 +154,17 @@ func TestVerifyAuditBundle_UnsupportedSigAlg(t *testing.T) {
 	}
 }
 
+func TestVerifyAuditBundle_ArraySignaturePresentLikeServer(t *testing.T) {
+	// per_event.signature_present mirrors the server's typeof==="object", which
+	// is true for a JSON array too.
+	m := katBundleMap(t)
+	m["events"].([]any)[0].(map[string]any)["signature"] = []any{}
+	res := VerifyAuditBundle(m, katSecret)
+	if !res.PerEvent[0].SignaturePresent {
+		t.Error("array-typed signature should report present (server parity)")
+	}
+}
+
 func TestVerifyAuditBundle_GracefulOnBadInput(t *testing.T) {
 	if VerifyAuditBundle(nil, katSecret).Valid {
 		t.Error("nil bundle should be invalid")

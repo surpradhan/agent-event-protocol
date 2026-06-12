@@ -93,6 +93,13 @@ describe("verifyAuditBundle", () => {
     expect(result.errors.some((e) => e.includes("Unsupported signature algorithm"))).toBe(true);
   });
 
+  it("reports an array-typed signature as present (server parity)", () => {
+    const bundle = loadBundle();
+    ((bundle.events as unknown[])[0] as Record<string, unknown>).signature = [];
+    const result = verifyAuditBundle(bundle, KAT_SECRET);
+    expect(result.per_event[0].signature_present).toBe(true);
+  });
+
   it("fails gracefully on bad input", () => {
     for (const bad of [null, undefined, 42, "string", []]) {
       expect(verifyAuditBundle(bad, KAT_SECRET).valid).toBe(false);

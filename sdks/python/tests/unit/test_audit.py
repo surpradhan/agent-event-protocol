@@ -108,6 +108,15 @@ def test_non_dict_bundle_fails_gracefully(bad):
     assert result["errors"]
 
 
+def test_array_signature_reported_present_like_server():
+    # The advisory per_event.signature_present mirrors the server's
+    # `typeof e.signature === "object"`, which is true for a JSON array too.
+    bundle = _load_bundle()
+    bundle["events"][0]["signature"] = []
+    result = verify_audit_bundle(bundle, _KAT_SECRET)
+    assert result["per_event"][0]["signature_present"] is True
+
+
 def test_empty_secret_fails_gracefully():
     result = verify_audit_bundle(_load_bundle(), "")
     assert result["valid"] is False

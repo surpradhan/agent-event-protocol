@@ -149,11 +149,14 @@ def verify_audit_bundle(bundle: Any, secret: str) -> dict[str, Any]:
             f"vs signed manifest {manifest.get('aep_audit_version')!r}"
         )
 
+    # `signature_present` matches the server's `typeof e.signature === "object"`,
+    # which is true for a JSON object OR array (dict/list here). `id` is passed
+    # through raw (advisory field; not part of `valid`).
     per_event = [
         {
             "index": i,
             "id": e.get("id") if isinstance(e, dict) else None,
-            "signature_present": isinstance(e, dict) and isinstance(e.get("signature"), dict),
+            "signature_present": isinstance(e, dict) and isinstance(e.get("signature"), (dict, list)),
         }
         for i, e in enumerate(event_list)
     ]

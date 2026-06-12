@@ -165,11 +165,17 @@ export function verifyAuditBundle(bundle: unknown, secret: string): AuditVerific
     );
   }
 
-  const per_event: AuditPerEvent[] = eventList.map((e, index) => ({
-    index,
-    id: isObject(e) && typeof e.id === "string" ? e.id : undefined,
-    signature_present: isObject(e) && isObject(e.signature),
-  }));
+  const per_event: AuditPerEvent[] = eventList.map((e, index) => {
+    const ev = isObject(e) ? e : undefined;
+    const sig = ev?.signature;
+    return {
+      index,
+      // advisory: surfaced only when the id is a string (the schema-required case)
+      id: typeof ev?.id === "string" ? ev.id : undefined,
+      // match the server's `typeof e.signature === "object"`: object OR array
+      signature_present: typeof sig === "object" && sig !== null,
+    };
+  });
 
   return {
     valid: errors.length === 0 && contentDigestMatch && manifestSignatureValid,
