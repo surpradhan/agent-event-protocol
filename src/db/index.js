@@ -216,6 +216,26 @@ async function getPerformanceEvents(tenantId, opts) {
   return getBackend().getPerformanceEvents(tenantId, opts);
 }
 
+async function createSavedQuery(record) {
+  return getBackend().createSavedQuery(record);
+}
+
+async function getSavedQuery(id, tenantId) {
+  return getBackend().getSavedQuery(id, tenantId);
+}
+
+async function listSavedQueries(tenantId) {
+  return getBackend().listSavedQueries(tenantId);
+}
+
+async function deleteSavedQuery(id, tenantId) {
+  return getBackend().deleteSavedQuery(id, tenantId);
+}
+
+async function getEventsForQuery(tenantId, opts) {
+  return getBackend().getEventsForQuery(tenantId, opts);
+}
+
 async function recordApiKeyAccess(entry) {
   return getBackend().recordApiKeyAccess(entry);
 }
@@ -268,6 +288,12 @@ module.exports = {
   getPolicyBlockedEvents,
   // Performance profiling (Phase 15-A)
   getPerformanceEvents,
+  // Saved custom-analytics queries (Phase 15-B)
+  createSavedQuery,
+  getSavedQuery,
+  listSavedQueries,
+  deleteSavedQuery,
+  getEventsForQuery,
   // API-key access log (Phase 14 PR-E)
   recordApiKeyAccess,
   getApiKeyAccessLog

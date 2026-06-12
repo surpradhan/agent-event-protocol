@@ -10,7 +10,7 @@
  *   aep export   — Export session events as JSON or CSV
  *   aep audit    — Build / verify / render a tamper-evident audit bundle
  *   aep workflow — Query a full workflow tree by trace_id
- *   aep analytics — Policy-enforcement & performance analytics
+ *   aep analytics — Policy-enforcement, performance & custom analytics
  *   aep compliance — Compliance report templates (SOC2/HIPAA/GDPR/EU AI Act)
  *   aep validate — Validate a local event JSON file (existing)
  *
@@ -124,7 +124,7 @@ Commands:
   export     Export session events as JSON or CSV
   audit      Build / verify / render a tamper-evident audit bundle
   workflow   Query a full workflow tree by trace_id
-  analytics  Policy-enforcement & performance analytics
+  analytics  Policy-enforcement, performance & custom analytics
   compliance Compliance report templates (SOC2/HIPAA/GDPR/EU AI Act)
   validate   Validate a local event JSON file
 
@@ -647,21 +647,32 @@ async function cmdWorkflow(positional, flags, serverUrl, apiKey) {
 
 function analyticsHelp() {
   console.log(`
-\x1b[1maep analytics\x1b[0m — Policy-enforcement & performance analytics
+\x1b[1maep analytics\x1b[0m — Policy-enforcement, performance & custom analytics
 
 Usage:
   aep analytics policy-blocked [flags]
   aep analytics performance    [flags]
+  aep analytics query          [flags]
 
 Subcommands:
   policy-blocked   Aggregate policy.blocked events (what the agent refused, and when)
   performance      Latency profiling: p50/p95/p99 per tool / agent / session / operation
+  query            Run / save / list user-defined custom-analytics queries (safe, structured)
 
-Flags:
+Flags (policy-blocked / performance):
   --since  <iso>    Inclusive lower bound on event time (ISO-8601)
   --until  <iso>    Exclusive upper bound on event time (ISO-8601)
   --limit  <n>      Max entries in the recent / slowest list (1-1000, default 20)
   --json            Print the raw JSON response instead of a summary
+
+Flags (query):
+  --file <path>     Read a JSON query spec from a file (use '-' for stdin)
+  --spec <json>     Inline JSON query spec (alternative to --file)
+  --save <name>     Save the --file/--spec query to the tenant library (needs a write key)
+  --list            List saved queries for the tenant
+  --run  <id>       Run a saved query by id
+  --delete <id>     Delete a saved query by id (needs a write key)
+  --json            Print the raw JSON response
 `);
 }
 
@@ -782,6 +793,71 @@ async function cmdAnalyticsPerformance(flags, serverUrl, apiKey) {
   }
 }
 
+/** Load a JSON query spec from --file (path or '-' for stdin) or --spec (inline). */
+function loadQuerySpec(flags) {
+  let raw;
+  if (flags.spec) {
+    raw = String(flags.spec);
+  } else if (flags.file) {
+    const fs = require("fs");
+    raw =
+      flags.file === "-"
+        ? fs.readFileSync(0, "utf8")
+        : fs.readFileSync(require("path").resolve(String(flags.file)), "utf8");
+    raw = raw.replace(/^\uFEFF/, "");
+  } else {
+    die("Provide a query spec with --file <path> or --spec '<json>'.");
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    die(`Could not parse query spec JSON: ${e.message}`);
+  }
+}
+
+async function cmdAnalyticsQuery(flags, serverUrl, apiKey) {
+  if (!apiKey) die("API key required. Set --key or AEP_API_KEY env var.");
+  const auth = { Authorization: `Bearer ${apiKey}` };
+  const show = (body) => console.log(JSON.stringify(body, null, 2));
+
+  // --list / --run / --delete operate on the saved-query library.
+  if (flags.list) {
+    const res = await request("GET", `${serverUrl}/analytics/saved-queries`, null, auth);
+    if (res.status !== 200) die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+    const rows = res.body.saved_queries || [];
+    if (flags.json) return show(res.body);
+    if (rows.length === 0) { console.log("(no saved queries)"); return; }
+    for (const q of rows) console.log(`  \x1b[36m${q.id}\x1b[0m  \x1b[1m${q.name}\x1b[0m  (${q.created_at})`);
+    return;
+  }
+
+  if (flags.run) {
+    const res = await request("POST", `${serverUrl}/analytics/saved-queries/${encodeURIComponent(flags.run)}/run`, {}, auth);
+    if (res.status !== 200) die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+    return show(res.body);
+  }
+
+  if (flags.delete) {
+    const res = await request("DELETE", `${serverUrl}/analytics/saved-queries/${encodeURIComponent(flags.delete)}`, null, auth);
+    if (res.status === 204) { console.log("Deleted."); return; }
+    die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+  }
+
+  // Otherwise we need a spec (from --file/--spec): either save it or run it ad-hoc.
+  const spec = loadQuerySpec(flags);
+
+  if (flags.save) {
+    const res = await request("POST", `${serverUrl}/analytics/saved-queries`, { name: String(flags.save), spec }, auth);
+    if (res.status !== 201) die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+    console.log(`Saved query \x1b[1m${res.body.name}\x1b[0m as \x1b[36m${res.body.id}\x1b[0m`);
+    return;
+  }
+
+  const res = await request("POST", `${serverUrl}/analytics/query`, spec, auth);
+  if (res.status !== 200) die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+  show(res.body);
+}
+
 async function cmdAnalytics(positional, flags, serverUrl, apiKey) {
   // `--help` prints usage for the group OR any subcommand (e.g.
   // `analytics performance --help`) before the per-subcommand key check.
@@ -791,6 +867,7 @@ async function cmdAnalytics(positional, flags, serverUrl, apiKey) {
   switch (sub) {
     case "policy-blocked": return cmdAnalyticsPolicyBlocked(flags, serverUrl, apiKey);
     case "performance": return cmdAnalyticsPerformance(flags, serverUrl, apiKey);
+    case "query": return cmdAnalyticsQuery(flags, serverUrl, apiKey);
     default:
       analyticsHelp();
       if (sub) die(`Unknown analytics subcommand: '${sub}'`);

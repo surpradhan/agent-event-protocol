@@ -33,7 +33,8 @@ const {
   decodeCursor,
   encodeCursor,
   applyTextFilter,
-  formatAccessLogRow
+  formatAccessLogRow,
+  formatSavedQueryRow
 } = require("./_helpers");
 
 const DEFAULT_DB_PATH = path.join(__dirname, "..", "..", "..", "data", "aep.db");
@@ -366,6 +367,31 @@ class SqliteBackend extends StorageBackend {
           (id, api_key_id, tenant_id, method, path, status, ts)
         VALUES
           (@id, @api_key_id, @tenant_id, @method, @path, @status, @ts)
+      `),
+
+      // ----- saved queries (Phase 15-B) -----
+      insertSavedQuery: db.prepare(`
+        INSERT INTO saved_queries
+          (id, tenant_id, name, spec, created_at, updated_at)
+        VALUES
+          (@id, @tenant_id, @name, @spec, @created_at, @updated_at)
+      `),
+
+      getSavedQuery: db.prepare(`
+        SELECT id, tenant_id, name, spec, created_at, updated_at
+        FROM   saved_queries
+        WHERE  id = ? AND tenant_id = ?
+      `),
+
+      listSavedQueries: db.prepare(`
+        SELECT id, tenant_id, name, spec, created_at, updated_at
+        FROM   saved_queries
+        WHERE  tenant_id = ?
+        ORDER  BY created_at DESC
+      `),
+
+      deleteSavedQuery: db.prepare(`
+        DELETE FROM saved_queries WHERE id = ? AND tenant_id = ?
       `)
     };
 
@@ -764,6 +790,61 @@ class SqliteBackend extends StorageBackend {
       .all(...whereParams, pageSize);
 
     return { total, entries: rows.map(formatAccessLogRow) };
+  }
+
+  // ----- saved queries (Phase 15-B) -----
+
+  async createSavedQuery(record) {
+    try {
+      this._stmts.insertSavedQuery.run({
+        id:         record.id,
+        tenant_id:  record.tenantId,
+        name:       record.name,
+        spec:       JSON.stringify(record.spec),
+        created_at: record.createdAt,
+        updated_at: record.updatedAt
+      });
+    } catch (err) {
+      // Surface a duplicate (tenant_id, name) as a typed conflict for the route.
+      if (err && /UNIQUE constraint failed/.test(err.message)) {
+        const e = new Error("saved query name already exists for this tenant");
+        e.code = "SAVED_QUERY_CONFLICT";
+        throw e;
+      }
+      throw err;
+    }
+    return this.getSavedQuery(record.id, record.tenantId);
+  }
+
+  async getSavedQuery(id, tenantId) {
+    const row = this._stmts.getSavedQuery.get(id, tenantId);
+    return row ? formatSavedQueryRow(row) : null;
+  }
+
+  async listSavedQueries(tenantId) {
+    return this._stmts.listSavedQueries.all(tenantId).map(formatSavedQueryRow);
+  }
+
+  async deleteSavedQuery(id, tenantId) {
+    return this._stmts.deleteSavedQuery.run(id, tenantId).changes > 0;
+  }
+
+  // ----- custom-analytics event fetch (Phase 15-B) -----
+
+  async getEventsForQuery(tenantId = null, { since = null, until = null } = {}) {
+    // Fetch the tenant-scoped, time-windowed raw envelopes for a custom query.
+    // All filtering / grouping / aggregation happens in pure JS (src/customQuery.js)
+    // so this SELECT stays trivial and dialect-identical to the Postgres backend.
+    const sql = `
+      SELECT raw_payload
+      FROM   events
+      WHERE  (? IS NULL OR tenant_id = ?)
+        AND  (? IS NULL OR time >= ?)
+        AND  (? IS NULL OR time <  ?)
+      ORDER  BY time ASC
+    `;
+    const params = [tenantId, tenantId, since, since, until, until];
+    return this._db.prepare(sql).all(...params).map(r => JSON.parse(r.raw_payload));
   }
 
   // ----- pagination -----

@@ -239,6 +239,45 @@ class StorageBackend {
     throw new Error("StorageBackend.getPerformanceEvents() not implemented");
   }
 
+  // ----- saved queries (Phase 15-B) -----
+
+  /**
+   * Persist a saved custom-analytics query. Throws an Error with
+   * `code === "SAVED_QUERY_CONFLICT"` when (tenant_id, name) already exists.
+   * @param {{ id: string, tenantId: string, name: string, spec: object,
+   *           createdAt: string, updatedAt: string }} record
+   * @returns {Promise<object>} the stored row (spec parsed)
+   */
+  async createSavedQuery(record) {
+    throw new Error("StorageBackend.createSavedQuery() not implemented");
+  }
+
+  /** Fetch one tenant-scoped saved query by id, or null. */
+  async getSavedQuery(id, tenantId) {
+    throw new Error("StorageBackend.getSavedQuery() not implemented");
+  }
+
+  /** List a tenant's saved queries (newest first). */
+  async listSavedQueries(tenantId) {
+    throw new Error("StorageBackend.listSavedQueries() not implemented");
+  }
+
+  /** Delete one tenant-scoped saved query by id; resolves true if a row was removed. */
+  async deleteSavedQuery(id, tenantId) {
+    throw new Error("StorageBackend.deleteSavedQuery() not implemented");
+  }
+
+  /**
+   * Fetch tenant-scoped, time-windowed raw event envelopes for a custom query.
+   * All filtering/grouping/aggregation is done by src/customQuery.js in pure JS.
+   * @param {string|null} tenantId
+   * @param {{ since?: string|null, until?: string|null }} [opts]
+   * @returns {Promise<Array<object>>}
+   */
+  async getEventsForQuery(tenantId, opts) {
+    throw new Error("StorageBackend.getEventsForQuery() not implemented");
+  }
+
   // ----- API-key access log (Phase 14 PR-E) -----
 
   /**

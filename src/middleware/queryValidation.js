@@ -178,6 +178,17 @@ function validatePathParams(req, res, next) {
     }
   }
 
+  // Validate a generic resource id in path (e.g. /analytics/saved-queries/:id).
+  if (req.params.id !== undefined) {
+    const id = String(req.params.id);
+    if (!isSafePathParam(id)) {
+      return res.status(400).json({
+        error: "Bad Request",
+        message: "Invalid id format. IDs must not contain special characters like .. or /."
+      });
+    }
+  }
+
   next();
 }
 

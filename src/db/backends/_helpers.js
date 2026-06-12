@@ -173,6 +173,30 @@ function formatAccessLogRow(row) {
   };
 }
 
+/**
+ * Normalise a saved_queries row (both backends store `spec` as JSON TEXT) into the
+ * public shape, parsing the spec back into an object.
+ * @param {object} row
+ * @returns {{ id: string, tenant_id: string, name: string, spec: object,
+ *             created_at: string, updated_at: string }}
+ */
+function formatSavedQueryRow(row) {
+  let spec = null;
+  try {
+    spec = JSON.parse(row.spec);
+  } catch {
+    spec = null; // defensively tolerate a corrupt stored spec rather than throw
+  }
+  return {
+    id:         row.id,
+    tenant_id:  row.tenant_id,
+    name:       row.name,
+    spec,
+    created_at: row.created_at,
+    updated_at: row.updated_at
+  };
+}
+
 module.exports = {
   formatSession,
   buildTree,
@@ -180,5 +204,6 @@ module.exports = {
   decodeCursor,
   encodeCursor,
   applyTextFilter,
-  formatAccessLogRow
+  formatAccessLogRow,
+  formatSavedQueryRow
 };

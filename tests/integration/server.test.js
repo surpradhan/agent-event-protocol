@@ -2605,3 +2605,236 @@ describe("GET /analytics/performance", () => {
     assert.equal(res.status, 400);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Custom analytics — user-defined queries + saved-query library (Phase 15-B)
+// ---------------------------------------------------------------------------
+
+describe("Custom analytics — POST /analytics/query", () => {
+  // Seed events in a far-future window (2031-01) that no other test touches, so
+  // a since/until bound isolates exactly these even though queries are tenant-scoped.
+  const Q_SINCE = "2031-01-01T00:00:00Z";
+  const Q_UNTIL = "2031-02-01T00:00:00Z";
+
+  before(async () => {
+    const seed = [
+      { id: "evt_q1", time: "2031-01-01T00:00:00Z", source: "agent://a", type: "tool.called", session_id: "ses_q1", payload: { tool: "web_search" }, labels: { env: "prod" } },
+      { id: "evt_q2", time: "2031-01-01T01:00:00Z", source: "agent://a", type: "tool.called", session_id: "ses_q1", payload: { tool: "web_search" }, labels: { env: "prod" } },
+      { id: "evt_q3", time: "2031-01-02T00:00:00Z", source: "agent://b", type: "tool.called", session_id: "ses_q2", payload: { tool: "db_query" }, labels: { env: "dev" } },
+      { id: "evt_q4", time: "2031-01-02T00:00:00Z", source: "agent://a", type: "task.created", session_id: "ses_q1", payload: { priority: "high" } },
+    ];
+    for (const s of seed) {
+      const res = await ingest(makeEvent({ trace_id: "trc_q", agent_role: "subagent", ...s }));
+      assert.equal(res.status, 202);
+    }
+  });
+
+  test("requires authentication (401 without a key)", async () => {
+    const res = await fetch(`${baseUrl}/analytics/query`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ since: Q_SINCE, until: Q_UNTIL }),
+    });
+    assert.equal(res.status, 401);
+  });
+
+  test("runs an ad-hoc grouped query", async () => {
+    const res = await fetch(`${baseUrl}/analytics/query`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${readKey}` },
+      body: JSON.stringify({
+        since: Q_SINCE,
+        until: Q_UNTIL,
+        filters: [{ field: "type", op: "eq", value: "tool.called" }],
+        group_by: ["payload.tool"],
+        aggregations: [{ op: "count" }, { op: "count_distinct", field: "session_id" }],
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.total_matched, 3);
+    assert.deepEqual(body.rows.map((r) => [r.group["payload.tool"], r.count]), [
+      ["web_search", 2],
+      ["db_query", 1],
+    ]);
+    const ws = body.rows.find((r) => r.group["payload.tool"] === "web_search");
+    assert.equal(ws.distinct.session_id, 1);
+  });
+
+  test("rejects an invalid spec with 400 + details", async () => {
+    const res = await fetch(`${baseUrl}/analytics/query`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${readKey}` },
+      body: JSON.stringify({ group_by: ["payload.__proto__"] }),
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.ok(Array.isArray(body.details) && /forbidden segment/.test(body.details.join(" ")));
+  });
+
+  test("rejects a non-whitelisted field with 400", async () => {
+    const res = await fetch(`${baseUrl}/analytics/query`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${readKey}` },
+      body: JSON.stringify({ filters: [{ field: "raw_payload", op: "exists" }] }),
+    });
+    assert.equal(res.status, 400);
+  });
+});
+
+describe("Custom analytics — saved-query library", () => {
+  const Q_SINCE = "2031-01-01T00:00:00Z";
+  const Q_UNTIL = "2031-02-01T00:00:00Z";
+  const SAMPLE_SPEC = {
+    since: Q_SINCE,
+    until: Q_UNTIL,
+    filters: [{ field: "type", op: "eq", value: "tool.called" }],
+    group_by: ["payload.tool"],
+  };
+  let savedId;
+  let otherKey; // a second tenant's read+write key (for isolation tests)
+
+  before(async () => {
+    const res = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: "tenant-other-15b", label: "other", scopes: ["read", "write"] }),
+    });
+    otherKey = (await res.json()).key;
+  });
+
+  test("create requires a write-scoped key (read key → 403)", async () => {
+    const res = await fetch(`${baseUrl}/analytics/saved-queries`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${readKey}` },
+      body: JSON.stringify({ name: "should-fail", spec: SAMPLE_SPEC }),
+    });
+    assert.equal(res.status, 403);
+  });
+
+  test("create with a write key returns 201 and the stored record", async () => {
+    const res = await fetch(`${baseUrl}/analytics/saved-queries`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ name: "tools-by-name", spec: SAMPLE_SPEC }),
+    });
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.ok(body.id.startsWith("sq_"));
+    assert.equal(body.name, "tools-by-name");
+    assert.equal(body.spec.group_by[0], "payload.tool");
+    savedId = body.id;
+  });
+
+  test("a duplicate name for the same tenant → 409", async () => {
+    const res = await fetch(`${baseUrl}/analytics/saved-queries`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ name: "tools-by-name", spec: SAMPLE_SPEC }),
+    });
+    assert.equal(res.status, 409);
+  });
+
+  test("create rejects an invalid spec with 400", async () => {
+    const res = await fetch(`${baseUrl}/analytics/saved-queries`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ name: "bad", spec: { limit: 99999 } }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("create rejects a missing name with 400", async () => {
+    const res = await fetch(`${baseUrl}/analytics/saved-queries`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ spec: SAMPLE_SPEC }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("list returns the tenant's saved queries (read scope)", async () => {
+    const res = await fetch(`${baseUrl}/analytics/saved-queries`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.saved_queries.some((q) => q.id === savedId));
+  });
+
+  test("rejects a malformed saved-query id with 400 (path-param validation)", async () => {
+    const res = await fetch(`${baseUrl}/analytics/saved-queries/bad..id`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("get one by id (read scope), 404 for unknown", async () => {
+    const ok = await fetch(`${baseUrl}/analytics/saved-queries/${savedId}`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(ok.status, 200);
+    const miss = await fetch(`${baseUrl}/analytics/saved-queries/sq_nonexistent`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(miss.status, 404);
+  });
+
+  test("run a saved query by id returns results + the saved_query ref", async () => {
+    const res = await fetch(`${baseUrl}/analytics/saved-queries/${savedId}/run`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.total_matched, 3);
+    assert.equal(body.saved_query.id, savedId);
+    assert.equal(body.saved_query.name, "tools-by-name");
+  });
+
+  test("tenant isolation: another tenant cannot see, run, or delete the query", async () => {
+    const list = await fetch(`${baseUrl}/analytics/saved-queries`, {
+      headers: { Authorization: `Bearer ${otherKey}` },
+    });
+    const listBody = await list.json();
+    assert.equal(listBody.saved_queries.some((q) => q.id === savedId), false);
+
+    const get = await fetch(`${baseUrl}/analytics/saved-queries/${savedId}`, {
+      headers: { Authorization: `Bearer ${otherKey}` },
+    });
+    assert.equal(get.status, 404);
+
+    const run = await fetch(`${baseUrl}/analytics/saved-queries/${savedId}/run`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${otherKey}` },
+    });
+    assert.equal(run.status, 404);
+
+    const del = await fetch(`${baseUrl}/analytics/saved-queries/${savedId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${otherKey}` },
+    });
+    assert.equal(del.status, 404);
+  });
+
+  test("delete requires a write key (read key → 403)", async () => {
+    const res = await fetch(`${baseUrl}/analytics/saved-queries/${savedId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 403);
+  });
+
+  test("delete with a write key returns 204; a second delete → 404", async () => {
+    const first = await fetch(`${baseUrl}/analytics/saved-queries/${savedId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${writeKey}` },
+    });
+    assert.equal(first.status, 204);
+    const second = await fetch(`${baseUrl}/analytics/saved-queries/${savedId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${writeKey}` },
+    });
+    assert.equal(second.status, 404);
+  });
+});
