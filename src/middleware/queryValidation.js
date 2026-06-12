@@ -66,7 +66,11 @@ function isSafePathParam(str) {
  * a query object, returns a NEW normalized object; never mutates its input.
  *
  * The Express 5 default query parser is "simple" (querystring-based), so values
- * are only ever `string | string[]` — no nested objects to recurse into.
+ * are only ever `string | string[]` — no nested objects to recurse into, and a
+ * key like `a[b]` arrives as the literal string `"a[b]"`. A `?__proto__=…` param
+ * is therefore a plain own key here; `out[key] = …` cannot pollute Object.prototype
+ * (the simple parser never builds a nested `__proto__` object), so a normal object
+ * accumulator is safe — locked by a prototype-pollution integration test.
  *
  * @param {object} query  req.query (string | string[] values)
  * @returns {object} a new object with every array reduced to its last element
@@ -90,6 +94,8 @@ function validateQueryParams(req, res, next) {
   // Express 5 is a getter-only accessor that re-parses on each access (in-place
   // mutation and reassignment are silently lost), so install the coerced object
   // as an own data property that shadows the prototype getter.
+  // `configurable: true` is the load-bearing flag: it lets this run idempotently
+  // if a route ever stacks the middleware twice (redefining is then allowed).
   Object.defineProperty(req, "query", {
     value: coerceArrayParams(req.query),
     writable: true,

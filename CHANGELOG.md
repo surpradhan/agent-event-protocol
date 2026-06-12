@@ -27,19 +27,21 @@ route that uses it is protected by default, and removes the per-route guards.
   value** rather than #93's "treat as absent / no filter" — e.g.
   `?format=json&format=csv` exports CSV, `?type=x&type=task.created` filters by
   `task.created`. Routing `/export` through the middleware also gives it the same
-  query-length **400** DoS guards `/events` already had (the inert cursor/limit
-  checks don't affect `/export`'s behaviour).
+  query-length **400** DoS guards `/events` already had; `/export` ignores
+  cursor/limit, so a *valid* one is a no-op, but an *invalid* `?cursor=`/`?limit=`
+  now 400s instead of being silently ignored.
 - **Out of scope:** the audit-bundle routes (`/sessions/:id/audit-bundle`,
   `/workflows/:traceId/audit-bundle`) keep their inline `format` guard in
   `sendAuditBundle` — they don't take `validateQueryParams`, and `format` there is
   already array-safe. A future option (an app-level custom query parser to protect
   routes that don't use the middleware) is noted in #94 but not done here.
-- **Tests:** new `tests/unit/queryValidation.test.js` (8 cases for
+- **Tests:** new `tests/unit/queryValidation.test.js` (11 cases for
   `coerceArrayParams`); the #93 integration tests are reworked to last-wins
   semantics; new integration cases for `/export` last-wins CSV, the new `/export`
-  query-length 400, and a `/sessions` repeated-`cursor` case proving a route with
-  no inline guard is covered by the central mechanism. Suite 161 unit / 96
-  integration green; lint clean. No new CI jobs.
+  query-length + invalid-cursor/limit 400s, a `/sessions` repeated-`cursor` case
+  (proving a route with no inline guard is covered centrally, and that coercion
+  runs before validation), and a prototype-pollution probe. Lint clean. No new CI
+  jobs.
 
 ## Phase 14 PR-C — Audit bundle PDF rendering — 2026-06-11
 

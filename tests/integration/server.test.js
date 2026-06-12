@@ -305,17 +305,39 @@ describe("GET /sessions", () => {
     assert.ok(after.sessions.length > before.sessions.length);
   });
 
-  test("a repeated ?cursor param (array) is coerced (last wins), not 500", async () => {
+  test("a repeated ?cursor param (array) is coerced to its last value (last wins)", async () => {
     // /sessions has no inline param guard — it relies entirely on the central
-    // coercion in validateQueryParams. A repeated cursor used to reach the
-    // pagination layer as an array; now it is reduced to its last value and
-    // validated like any single cursor (here a harmless first-page read).
+    // coercion in validateQueryParams. Before this change, ?cursor=a&cursor=b
+    // stringified to "a,b" and FAILED the base64url check → 400; now the array is
+    // reduced to its last value ("b") and validated like any single cursor (here a
+    // harmless first-page read). Proves a guard-less route is covered centrally.
     const res = await fetch(`${baseUrl}/sessions?cursor=a&cursor=b`, {
       headers: { Authorization: `Bearer ${readKey}` },
     });
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.ok(Array.isArray(body.sessions));
+  });
+
+  test("a repeated ?cursor whose LAST value is invalid still 400s (coercion runs before validation)", async () => {
+    // Confirms ordering: coercion picks the last value ("!!!"), which then fails
+    // the existing base64url check → 400. (If the OLD value won, this would differ.)
+    const res = await fetch(`${baseUrl}/sessions?cursor=AAAA&cursor=!!!`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("a prototype-polluting query key (?__proto__[x]=1) is handled safely, no 500, no pollution", async () => {
+    // coerceArrayParams uses Object.keys + plain own-property assignment, and the
+    // Express 5 "simple" parser never builds a nested __proto__ object — so this
+    // cannot pollute Object.prototype or crash.
+    const res = await fetch(`${baseUrl}/sessions?__proto__[x]=1&constructor[prototype][y]=2`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    assert.equal({}.x, undefined, "Object.prototype not polluted");
+    assert.equal({}.y, undefined, "Object.prototype not polluted");
   });
 });
 
@@ -562,6 +584,20 @@ describe("GET /sessions/:sessionId/export", () => {
       headers: { Authorization: `Bearer ${readKey}` },
     });
     assert.equal(res.status, 400);
+  });
+
+  test("now 400s on an INVALID ?limit / ?cursor it previously ignored (intentional)", async () => {
+    // The surprising side-effect of routing /export through validateQueryParams:
+    // /export ignores limit/cursor, so a VALID one is a no-op, but an INVALID one
+    // now 400s instead of being silently dropped. Locks that documented change.
+    const limitRes = await fetch(`${baseUrl}/sessions/${SID}/export?limit=abc`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(limitRes.status, 400);
+    const cursorRes = await fetch(`${baseUrl}/sessions/${SID}/export?cursor=!!!`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(cursorRes.status, 400);
   });
 });
 

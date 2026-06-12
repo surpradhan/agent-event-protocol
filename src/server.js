@@ -421,8 +421,9 @@ app.get("/sessions/:sessionId/export", requireReadAccess, validatePathParams, va
   // validateQueryParams coerces any repeated param (?format=csv&format=json) to a
   // single value (last wins) before this handler, so format/type/q are scalars.
   // Routing through it also newly applies the shared q/type length + cursor/limit
-  // 400s to /export (parity with /events; the cursor/limit checks are inert here
-  // since /export ignores those params).
+  // 400s to /export (parity with /events). /export ignores cursor/limit, so a
+  // VALID one is a no-op — but an INVALID ?cursor=/?limit= now 400s instead of
+  // being silently ignored. Intentional (no legitimate export client sends them).
   const format = (req.query.format || "json").toLowerCase();
   const { type = "", q = "" } = req.query;
   const events = await db.getSessionEvents(sessionId, { type, q, tenantId: req.tenant_id });
