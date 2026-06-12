@@ -29,6 +29,18 @@
  * operation is only counted when BOTH its start and end events fall inside the
  * fetched window, since pairing happens within the fetched set. End events whose
  * start is outside the window (or missing) are reported in `unmatched_ends`.
+ *
+ * Per-record (stateless) pairing: each END event is counted independently and a
+ * START is never "consumed". `causation_id` is not uniqueness-constrained in the
+ * schema (only event `id` is a primary key), so if a producer emits two ends for
+ * one start (e.g. both a `task.completed` and a `task.failed`, or a duplicated
+ * `tool.result`), BOTH pair against that start and yield two operations. This is
+ * intentional — each end is a distinct observation — and keeps the summarizer
+ * stateless like src/analytics.js.
+ *
+ * The returned object is deliberately a *superset* of what the dashboard/CLI
+ * render: `by_session`, plus `min`/`mean` on every group, are exposed for API
+ * consumers even though the built-in clients only surface a subset.
  */
 
 // Bucket label for a missing/blank grouping key (tool name / source / session),

@@ -114,6 +114,23 @@ describe("summarizePerformance — operation pairing", () => {
     assert.equal(s.unmatched_ends, 1);
   });
 
+  test("a start may close more than once: two ends sharing a causation_id each pair (stateless, per-record)", () => {
+    // One task.created closed by BOTH a task.completed and a task.failed
+    // (causation_id is not uniqueness-constrained). Each end is its own operation.
+    const events = [
+      taskCreated({ id: "t1", time: "2026-06-01T00:00:00Z" }),
+      taskCompleted({ id: "tc1", causation_id: "t1", time: "2026-06-01T00:00:04Z" }),
+      { specversion: "0.2.0", id: "tf1", time: "2026-06-01T00:00:09Z", source: "agent://orch", type: "task.failed", session_id: "ses_2", trace_id: "trc_1", causation_id: "t1", payload: {} },
+    ];
+    const s = summarizePerformance(events, { now: NOW });
+    assert.equal(s.total_operations, 2);
+    assert.equal(s.unmatched_ends, 0);
+    assert.deepEqual(s.by_operation.map((o) => [o.key, o.count]).sort(), [
+      ["task.created→task.completed", 1],
+      ["task.created→task.failed", 1],
+    ]);
+  });
+
   test("negative duration (end before start) is unmatched, not negative latency", () => {
     const events = [
       toolCalled({ id: "c1", time: "2026-06-01T00:00:10Z" }),

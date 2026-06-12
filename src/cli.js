@@ -769,6 +769,8 @@ async function cmdAnalyticsPerformance(flags, serverUrl, apiKey) {
       );
     }
   };
+  // by_session is intentionally omitted from the terminal summary for brevity
+  // (it's in the JSON response / `--json` for API consumers that want it).
   printStats("By tool", a.by_tool);
   printStats("By agent", a.by_agent);
   printStats("By operation", a.by_operation);
@@ -781,7 +783,9 @@ async function cmdAnalyticsPerformance(flags, serverUrl, apiKey) {
 }
 
 async function cmdAnalytics(positional, flags, serverUrl, apiKey) {
-  if (flags.help && !positional[1]) { analyticsHelp(); return; }
+  // `--help` prints usage for the group OR any subcommand (e.g.
+  // `analytics performance --help`) before the per-subcommand key check.
+  if (flags.help) { analyticsHelp(); return; }
 
   const sub = positional[1];
   switch (sub) {
