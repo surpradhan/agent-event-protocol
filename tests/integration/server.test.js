@@ -385,10 +385,16 @@ describe("GET /sessions/:sessionId/events", () => {
     assert.equal(res.status, 401);
   });
 
-  test("repeated ?type / ?q params (arrays) degrade to no-filter instead of 500", async () => {
+  test("repeated ?type / ?q params (arrays) degrade to the unfiltered result, not 500", async () => {
     // validateQueryParams only length-checks a String() copy; the raw array still
     // reaches the DB, where an array binding throws → 500. The guard coerces a
-    // non-string filter to "" (no filter), so the full event set comes back.
+    // non-string filter to "" (no filter), so the result must equal the
+    // unfiltered timeline exactly (not 500, and not a silent filter-to-empty).
+    const baseRes = await fetch(`${baseUrl}/sessions/${SESSION_ID}/events`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    const baseBody = await baseRes.json();
+
     const res = await fetch(
       `${baseUrl}/sessions/${SESSION_ID}/events?type=a&type=b&q=x&q=y`,
       { headers: { Authorization: `Bearer ${readKey}` } }
@@ -396,7 +402,8 @@ describe("GET /sessions/:sessionId/events", () => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.session_id, SESSION_ID);
-    assert.ok(body.events.length >= 3, "array type/q degrades to the unfiltered result");
+    assert.equal(body.events.length, baseBody.events.length,
+      "array type/q degrades to the unfiltered timeline, not an empty/filtered one");
   });
 });
 
@@ -513,6 +520,24 @@ describe("GET /sessions/:sessionId/export", () => {
     assert.equal(body.session_id, SID);
     assert.equal(body.events.length, baseBody.events.length,
       "array type/q degrades to the unfiltered export, not an empty/filtered one");
+  });
+
+  test("a mixed array ?type + scalar ?q keeps the valid scalar filter (no 500)", async () => {
+    // The guards are independent: an array `type` degrades to no-filter, while a
+    // scalar `q` is still honoured as a string. So this must match a q-only
+    // request exactly — one bad param does not nuke a valid sibling filter.
+    const scalarRes = await fetch(`${baseUrl}/sessions/${SID}/export?q=created`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    const scalarBody = await scalarRes.json();
+
+    const mixedRes = await fetch(`${baseUrl}/sessions/${SID}/export?type=a&type=b&q=created`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(mixedRes.status, 200);
+    const mixedBody = await mixedRes.json();
+    assert.equal(mixedBody.events.length, scalarBody.events.length,
+      "array type is ignored, scalar q is applied — same as a q-only request");
   });
 });
 
