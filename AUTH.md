@@ -30,8 +30,28 @@ If `DASHBOARD_TOKEN` is not set, the dashboard and all read endpoints are **open
 | `LOG_PRETTY` | No (default: `false`) | Set to `true` for human-readable logs (requires `pino-pretty`; dev only) |
 | `RATE_LIMIT_RPM` | No (default: `300`) | Max `POST /events` requests per API key per 60-second window. `0` disables. |
 | `AUDIT_SIGNING_SECRET` | For audit export/verify | Server-side HMAC secret that signs/verifies tamper-evident audit bundles (`aep audit`). Distinct from per-API-key HMAC secrets. When unset, audit export/verify fail with a clear error. |
+| `ACCESS_LOG_ENABLED` | No (default: off) | When truthy, records an API-key usage audit trail (key id, method, path, status, time) for every key-authenticated request, queryable via `GET /admin/keys/:id/access-log`. Off by default to keep the ingest hot path write-free. |
 
 See `.env.example` for the full annotated template.
+
+### API-key access logs
+
+When `ACCESS_LOG_ENABLED` is set, the server records one row per
+key-authenticated request — the **full API-key usage audit trail** (Phase 14).
+Each record stores the API key id, HTTP method, the URL **path only** (never the
+query string, so query-param secrets are not persisted), the response status, and
+a timestamp. Admin-token requests and keyless dev reads are not recorded (they
+have no API key). Query a key's trail:
+
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8787/admin/keys/<key-id>/access-log?limit=100"
+# → { api_key_id, key_prefix, enabled, total, entries: [...], window }
+```
+
+Supports `?since=` (inclusive) / `?until=` (exclusive) ISO-8601 bounds and
+`?limit=` (1–1000, default 100). Records are not auto-pruned — on a high-volume
+deployment, manage growth at the storage layer.
 
 > **Note (issue #65 Phase E):** the server now accepts **only** payload-covering
 > `canon:"v2"` per-event signatures. The legacy v1 form, the transition mode, the

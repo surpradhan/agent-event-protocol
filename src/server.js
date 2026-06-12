@@ -30,6 +30,7 @@ const { ingestRateLimit }      = require("./middleware/rateLimit");
 const { enforceQuota, recordAccepted } = require("./middleware/quota");
 const { TIER_NAMES, DEFAULT_TIER, getTierPolicy, isValidTier } = require("./tiers");
 const { validateQueryParams, validatePathParams } = require("./middleware/queryValidation");
+const { accessLog, isAccessLogEnabled } = require("./middleware/accessLog");
 
 // ============================================================================
 // Security helpers
@@ -124,6 +125,12 @@ app.use((req, res, next) => {
   });
   next();
 });
+
+// API-key usage audit trail (Phase 14 PR-E) — opt-in via ACCESS_LOG_ENABLED.
+// Registered after the request-log middleware so its own finish hook attaches
+// early; it records only requests that resolve to an API key (set later by the
+// per-route auth middleware, available by the time `finish` fires).
+app.use(accessLog);
 
 // ---------------------------------------------------------------------------
 // Server-Sent Events — real-time push to dashboard clients
@@ -1040,6 +1047,46 @@ app.delete("/admin/keys/:id", requireAdminAuth, async (req, res) => {
   await db.revokeApiKey(req.params.id);
   logger.info({ key_id: req.params.id }, "API key revoked");
   res.json({ ok: true, message: "API key revoked", id: req.params.id });
+});
+
+/**
+ * GET /admin/keys/:id/access-log — API-key usage audit trail (Phase 14 PR-E).
+ *
+ * Admin-scoped. Returns the most-recent-first access records for one key, with an
+ * optional `since`/`until` ISO-8601 window and `limit` (1–1000, default 100).
+ * `enabled` reflects whether ACCESS_LOG_ENABLED is on — an empty log with
+ * `enabled:false` means recording is simply off, not that the key was unused.
+ */
+app.get("/admin/keys/:id/access-log", requireAdminAuth, validateQueryParams, async (req, res) => {
+  const key = await db.getApiKeyById(req.params.id);
+  if (!key) {
+    return res.status(404).json({ error: "API key not found" });
+  }
+
+  const since = parseIsoBound(req.query.since);
+  const until = parseIsoBound(req.query.until);
+  if (!since.ok || !until.ok) {
+    return res.status(400).json({
+      error: "Bad Request",
+      message: "Query parameters 'since' and 'until' must be ISO-8601 timestamps"
+    });
+  }
+
+  const limit = req.query.limit !== undefined ? parseInt(req.query.limit, 10) : 100;
+  const { total, entries } = await db.getApiKeyAccessLog(req.params.id, {
+    since: since.value,
+    until: until.value,
+    limit
+  });
+
+  res.json({
+    api_key_id: req.params.id,
+    key_prefix: key.key_prefix,
+    enabled: isAccessLogEnabled(),
+    total,
+    entries,
+    window: { since: since.value, until: until.value }
+  });
 });
 
 // ---------------------------------------------------------------------------
