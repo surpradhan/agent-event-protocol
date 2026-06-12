@@ -2169,8 +2169,10 @@ describe("GET /admin/keys/:id/access-log", () => {
     const res = await getLog(keyOffId);
     assert.equal(res.status, 200);
     const body = await res.json();
+    // keyOff's only request ran while ACCESS_LOG_ENABLED was unset → not recorded.
+    // (total === 0 is the proof; `enabled` just reflects the env at *read* time,
+    // which is now on, so it does not itself prove the opt-in behaviour.)
     assert.equal(body.total, 0);
-    assert.equal(body.enabled, true); // reflects current env (now on), proving the 0 is from opt-in-off-at-the-time
   });
 
   test("requires admin auth (401 without the admin token)", async () => {
@@ -2234,5 +2236,22 @@ describe("GET /admin/keys/:id/access-log", () => {
     const body = await res.json();
     // every entry belongs to keyOn
     assert.ok(body.entries.every(e => e.api_key_id === keyOnId));
+  });
+
+  test("never persists query-string secrets (headline security guarantee)", async () => {
+    // Mint a fresh key so the assertion is scoped to exactly this request.
+    const secretKey = await mintKey(["read"]);
+    const SECRET = "SUPERSECRET-do-not-store";
+    await fetch(`${baseUrl}/sessions?limit=5&token=${SECRET}`, {
+      headers: { Authorization: `Bearer ${secretKey.key}` },
+    });
+    const body = await waitForTotal(secretKey.id, 1);
+
+    assert.ok(body.total >= 1);
+    // The stored path is the pathname only — no query string, no secret anywhere.
+    const entry = body.entries.find(e => e.path.startsWith("/sessions"));
+    assert.ok(entry, "expected a /sessions entry");
+    assert.equal(entry.path, "/sessions");
+    assert.ok(!JSON.stringify(body).includes(SECRET), "the secret query param must never appear in the access log");
   });
 });
