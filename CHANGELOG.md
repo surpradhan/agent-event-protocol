@@ -26,7 +26,7 @@ breakdown per agent, per tool, per event type" (PRD §Phase 15).
   (`src/public/dashboard.html`) with overall stats + per-tool/agent/operation
   latency tables + a slowest-operations list, and an OpenAPI path under the
   **Analytics** tag (`LatencyStats`/`LatencyGroup` schemas).
-- No schema change, no new CI job. Server suite: 228 unit + 141 integration.
+- No schema change, no new CI job. Server suite: 229 unit + 141 integration.
 
 ---
 
