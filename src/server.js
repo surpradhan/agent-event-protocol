@@ -10,6 +10,7 @@ const db                       = require("./db");
 const { verifySignature } = require("./signature");
 const { buildAuditBundle, verifyAuditBundle } = require("./audit");
 const { renderAuditBundlePdf } = require("./audit-pdf");
+const { summarizePolicyBlocked } = require("./analytics");
 const {
   requireApiKey,
   requireReadAccess,
@@ -586,6 +587,63 @@ app.get("/metrics", requireReadAccess, async (req, res) => {
   // Signature-form telemetry (issue #65) is process-wide / server-scoped, not
   // tenant-filtered — surfaced alongside the DB counters for convenience.
   res.json({ ...dbStats, signatures: getSignatureMetrics() });
+});
+
+// ---------------------------------------------------------------------------
+// Route — policy-enforcement analytics (Phase 14 PR-D)
+//
+// Aggregates `policy.blocked` events into the compliance view "what did the
+// agent refuse to do, and when?" (PRD §Phase 14).  Read-scoped + tenant-scoped
+// exactly like /metrics and the sibling read endpoints.  The DB returns the raw
+// (tenant-scoped, time-windowed) envelopes; the pure summarizePolicyBlocked
+// (src/analytics.js) shapes them, so the SQL stays trivial on both backends.
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse an optional ISO-8601 ?since / ?until bound.
+ * @param {*} raw  req.query value (already coerced to a scalar by validateQueryParams)
+ * @returns {{ ok: boolean, value: string|null }}
+ */
+function parseIsoBound(raw) {
+  if (raw === undefined) return { ok: true, value: null };
+  const s = String(raw);
+  // Date.parse accepts ISO-8601; reject anything it can't parse so a typo is a
+  // 400 rather than a silently-ignored filter.
+  if (Number.isNaN(Date.parse(s))) return { ok: false, value: null };
+  return { ok: true, value: s };
+}
+
+/**
+ * GET /analytics/policy-blocked — policy.blocked event analytics.
+ *
+ * Query params (all optional):
+ *   since — ISO-8601 inclusive lower bound on event time (time >= since)
+ *   until — ISO-8601 exclusive upper bound on event time (time <  until)
+ *   limit — max entries in the `recent` list (1–1000, default 20)
+ *
+ * Tenant-scoped from the API key; no cross-tenant leakage.
+ */
+app.get("/analytics/policy-blocked", requireReadAccess, validateQueryParams, async (req, res) => {
+  const since = parseIsoBound(req.query.since);
+  const until = parseIsoBound(req.query.until);
+  if (!since.ok || !until.ok) {
+    return res.status(400).json({
+      error: "Bad Request",
+      message: "Query parameters 'since' and 'until' must be ISO-8601 timestamps"
+    });
+  }
+
+  const events = await db.getPolicyBlockedEvents(req.tenant_id, {
+    since: since.value,
+    until: until.value
+  });
+
+  // validateQueryParams already bounds ?limit to [1,1000]; default the recent
+  // list to 20 when the caller omits it.
+  const limit = req.query.limit !== undefined ? parseInt(req.query.limit, 10) : 20;
+  const summary = summarizePolicyBlocked(events, { now: new Date(), limit });
+
+  res.json({ ...summary, window: { since: since.value, until: until.value } });
 });
 
 /**

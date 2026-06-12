@@ -28,7 +28,7 @@
  * getPaginatedSessions, getPaginatedEvents,
  * createApiKey, getApiKeyByHash, getApiKeyById, listApiKeys, revokeApiKey,
  * createProject, getProject, listProjects, getProjectEventCount,
- * countEventsBefore, pruneEventsBefore
+ * countEventsBefore, pruneEventsBefore, getPolicyBlockedEvents
  *
  * Environment variables
  * ---------------------
@@ -207,6 +207,10 @@ async function pruneEventsBefore(tenantId, cutoff) {
   return getBackend().pruneEventsBefore(tenantId, cutoff);
 }
 
+async function getPolicyBlockedEvents(tenantId, opts) {
+  return getBackend().getPolicyBlockedEvents(tenantId, opts);
+}
+
 // ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
@@ -246,5 +250,7 @@ module.exports = {
   getProjectEventCount,
   // Retention / pruning (Phase 13 PR-D)
   countEventsBefore,
-  pruneEventsBefore
+  pruneEventsBefore,
+  // Analytics (Phase 14 PR-D)
+  getPolicyBlockedEvents
 };

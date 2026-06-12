@@ -24,6 +24,7 @@
     { "name": "Sessions", "description": "Query and export session data" },
     { "name": "Workflows", "description": "Cross-session workflow queries" },
     { "name": "Metrics", "description": "Aggregate counters and statistics" },
+    { "name": "Analytics", "description": "Compliance / policy-enforcement analytics" },
     { "name": "Stream", "description": "Real-time Server-Sent Events feed" },
     { "name": "Admin", "description": "API key management (requires ADMIN_TOKEN)" }
   ],
@@ -716,6 +717,124 @@
                 }
               }
             }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/analytics/policy-blocked": {
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "Policy-enforcement analytics",
+        "description": "Aggregates `policy.blocked` events for the authenticated tenant — what the agent refused to do, and when. Results are tenant-scoped from the API key.",
+        "operationId": "getPolicyBlockedAnalytics",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Inclusive lower bound on event time (`time >= since`). ISO-8601.",
+            "schema": { "type": "string", "format": "date-time" }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "description": "Exclusive upper bound on event time (`time < until`). ISO-8601.",
+            "schema": { "type": "string", "format": "date-time" }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum entries in the `recent` list (1-1000, default 20).",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 20 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Policy-blocked analytics summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total": { "type": "integer", "description": "Total policy.blocked events in scope" },
+                    "by_policy": {
+                      "type": "array",
+                      "description": "Counts grouped by `payload.policy`, ranked descending.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": { "type": "string" },
+                          "count": { "type": "integer" }
+                        }
+                      }
+                    },
+                    "by_action": {
+                      "type": "array",
+                      "description": "Counts grouped by `payload.action_blocked`, ranked descending.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": { "type": "string" },
+                          "count": { "type": "integer" }
+                        }
+                      }
+                    },
+                    "by_source": {
+                      "type": "array",
+                      "description": "Counts grouped by event `source`, ranked descending.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": { "type": "string" },
+                          "count": { "type": "integer" }
+                        }
+                      }
+                    },
+                    "by_day": {
+                      "type": "array",
+                      "description": "Counts per UTC calendar day, ascending.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "date": { "type": "string", "example": "2026-03-01" },
+                          "count": { "type": "integer" }
+                        }
+                      }
+                    },
+                    "recent": {
+                      "type": "array",
+                      "description": "Most-recent-first projection of the matching events.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "time": { "type": "string", "format": "date-time" },
+                          "source": { "type": "string" },
+                          "session_id": { "type": "string" },
+                          "trace_id": { "type": "string" },
+                          "agent_role": { "type": "string" },
+                          "policy": { "type": "string" },
+                          "reason": { "type": "string" },
+                          "action_blocked": { "type": "string" }
+                        }
+                      }
+                    },
+                    "generated_at": { "type": "string", "format": "date-time" },
+                    "window": {
+                      "type": "object",
+                      "properties": {
+                        "since": { "type": "string", "format": "date-time", "nullable": true },
+                        "until": { "type": "string", "format": "date-time", "nullable": true }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameter (e.g. a non-ISO `since`/`until`, or `limit` outside 1-1000)"
           },
           "401": { "$ref": "#/components/responses/Unauthorized" }
         }

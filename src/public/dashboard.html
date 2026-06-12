@@ -471,6 +471,19 @@
     .reject-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
     .reject-toolbar input { flex: 1; }
 
+    /* Policy analytics panel */
+    .an-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 14px; }
+    .an-section-title { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; color: var(--ink); margin: 0 0 10px; text-transform: uppercase; }
+    .an-bar-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; margin-bottom: 7px; }
+    .an-bar-label { font-size: 12px; color: var(--ink); font-family: 'Inter', sans-serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .an-bar-count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .an-bar-track { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--line2); overflow: hidden; }
+    .an-bar-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+    .an-day { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; min-width: 30px; }
+    .an-day-bar { width: 16px; background: linear-gradient(180deg, var(--accent), var(--accent2)); border-radius: 3px 3px 0 0; }
+    .an-day-label { font-size: 9px; color: var(--muted); }
+    .an-days { display: flex; align-items: flex-end; gap: 6px; height: 120px; overflow-x: auto; padding-top: 6px; }
+
     /* ── Responsive ── */
     @media (max-width: 980px) {
       .metric-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
@@ -509,6 +522,7 @@
     <button class="tab-btn active" id="tab-sessions"   onclick="switchMain('sessions')">Sessions</button>
     <button class="tab-btn"        id="tab-workflows"  onclick="switchMain('workflows')">Workflows</button>
     <button class="tab-btn"        id="tab-rejected"   onclick="switchMain('rejected')">Rejected<span id="rejected-badge" class="tab-badge" style="display:none">0</span></button>
+    <button class="tab-btn"        id="tab-analytics"  onclick="switchMain('analytics')">Policy Analytics</button>
   </div>
 
   <!-- ═══ Sessions view ═══ -->
@@ -622,6 +636,27 @@
       </div>
       <div id="rejections-list" class="item-list">
         <div class="empty">No rejections recorded in this server session.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Policy analytics view ═══ -->
+  <div id="view-analytics" style="display:none">
+    <div class="card reject-panel">
+      <div class="panel-header" style="margin-bottom:12px">
+        <div>
+          <div class="panel-title">Policy Enforcement <span id="an-total" class="hint"></span></div>
+          <div class="hint" style="font-size:11px;margin-top:2px">What did the agent refuse to do, and when? Aggregates <code>policy.blocked</code> events.</div>
+        </div>
+        <button class="btn secondary" onclick="loadAnalytics()">Refresh</button>
+      </div>
+      <div class="reject-toolbar">
+        <input id="an-since" type="text" placeholder="Since (ISO-8601, optional)" autocomplete="off" />
+        <input id="an-until" type="text" placeholder="Until (ISO-8601, optional)" autocomplete="off" />
+        <button class="btn secondary" onclick="loadAnalytics()">Apply</button>
+      </div>
+      <div id="an-body">
+        <div class="empty">No policy.blocked events recorded for this tenant.</div>
       </div>
     </div>
   </div>
@@ -846,10 +881,13 @@ function switchMain(v) {
   document.getElementById('view-sessions').style.display  = v === 'sessions'  ? '' : 'none';
   document.getElementById('view-workflows').style.display = v === 'workflows' ? '' : 'none';
   document.getElementById('view-rejected').style.display  = v === 'rejected'  ? '' : 'none';
+  document.getElementById('view-analytics').style.display = v === 'analytics' ? '' : 'none';
   document.getElementById('tab-sessions').className   = 'tab-btn' + (v === 'sessions'  ? ' active' : '');
   document.getElementById('tab-workflows').className  = 'tab-btn' + (v === 'workflows' ? ' active' : '');
   document.getElementById('tab-rejected').className   = 'tab-btn' + (v === 'rejected'  ? ' active' : '');
+  document.getElementById('tab-analytics').className  = 'tab-btn' + (v === 'analytics' ? ' active' : '');
   if (v === 'rejected') loadRejections();
+  if (v === 'analytics') loadAnalytics();
 }
 function switchSub(v) {
   subView = v;
@@ -1425,6 +1463,85 @@ function renderRejections() {
     }
     box.appendChild(el);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Policy analytics panel (Phase 14 PR-D)
+// ─────────────────────────────────────────────────────────────────────────────
+async function loadAnalytics() {
+  const body  = document.getElementById('an-body');
+  const since = document.getElementById('an-since').value.trim();
+  const until = document.getElementById('an-until').value.trim();
+  const qs = new URLSearchParams();
+  if (since) qs.set('since', since);
+  if (until) qs.set('until', until);
+  const url = '/analytics/policy-blocked' + (qs.toString() ? '?' + qs : '');
+  try {
+    const data = await fetchJson(url);
+    renderAnalytics(data);
+  } catch (e) {
+    // 400 (bad since/until) or other error — surface it without wiping the panel state.
+    body.innerHTML = `<div class="empty">Could not load analytics (${esc(e.message)}). Check the date filters.</div>`;
+    document.getElementById('an-total').textContent = '';
+  }
+}
+
+function renderAnalytics(a) {
+  document.getElementById('an-total').textContent = `(${a.total} total)`;
+  const body = document.getElementById('an-body');
+
+  if (!a.total) {
+    body.innerHTML = '<div class="empty">No policy.blocked events for this tenant in the selected window.</div>';
+    return;
+  }
+
+  // Horizontal ranked bars, scaled to the largest count in the breakdown.
+  const barList = (rows) => {
+    const max = rows.reduce((m, r) => Math.max(m, r.count), 0) || 1;
+    return rows.map(r => `
+      <div class="an-bar-row">
+        <span class="an-bar-label" title="${esc(r.key)}">${esc(r.key)}</span>
+        <span class="an-bar-count">${r.count}</span>
+        <span class="an-bar-track"><span class="an-bar-fill" style="width:${(r.count / max * 100).toFixed(1)}%"></span></span>
+      </div>`).join('');
+  };
+
+  // Per-day vertical bars, scaled to the busiest day.
+  const dayMax = a.by_day.reduce((m, d) => Math.max(m, d.count), 0) || 1;
+  const daysHtml = a.by_day.map(d => `
+    <div class="an-day" title="${esc(d.date)}: ${d.count}">
+      <div class="an-day-bar" style="height:${Math.max(4, d.count / dayMax * 100)}px"></div>
+      <span class="an-day-label">${esc(d.date.slice(5))}</span>
+    </div>`).join('');
+
+  const recentHtml = a.recent.map(r => `
+    <div class="reject-item">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="badge">${esc(r.policy ?? '—')}</span>
+        ${r.action_blocked ? `<span class="hint">blocked: ${esc(r.action_blocked)}</span>` : ''}
+        <span class="hint" style="margin-left:auto">${r.time ? esc(ago(r.time)) : ''}</span>
+      </div>
+      ${r.reason ? `<div class="hint" style="margin-top:4px">${esc(r.reason)}</div>` : ''}
+      <div class="hint" style="margin-top:4px">
+        ${r.source ? `source: ${esc(short(r.source, 28))}` : ''}
+        ${r.session_id ? ` · session: ${esc(short(r.session_id, 20))}` : ''}
+      </div>
+    </div>`).join('');
+
+  body.innerHTML = `
+    <div class="an-grid">
+      <div><div class="an-section-title">By policy</div>${barList(a.by_policy)}</div>
+      <div><div class="an-section-title">By blocked action</div>${barList(a.by_action)}</div>
+      <div><div class="an-section-title">By source</div>${barList(a.by_source)}</div>
+    </div>
+    <div style="margin-top:18px">
+      <div class="an-section-title">Blocks per day</div>
+      <div class="an-days">${daysHtml}</div>
+    </div>
+    <div style="margin-top:18px">
+      <div class="an-section-title">Most recent (${a.recent.length})</div>
+      <div class="item-list">${recentHtml}</div>
+    </div>`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
