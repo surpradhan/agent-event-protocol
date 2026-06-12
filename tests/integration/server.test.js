@@ -304,6 +304,42 @@ describe("GET /sessions", () => {
 
     assert.ok(after.sessions.length > before.sessions.length);
   });
+
+  test("a repeated ?cursor param (array) is coerced to its last value (last wins)", async () => {
+    // /sessions has no inline param guard — it relies entirely on the central
+    // coercion in validateQueryParams. Before this change, ?cursor=a&cursor=b
+    // stringified to "a,b" and FAILED the base64url check → 400; now the array is
+    // reduced to its last value ("b") and validated like any single cursor (here a
+    // harmless first-page read). Proves a guard-less route is covered centrally.
+    const res = await fetch(`${baseUrl}/sessions?cursor=a&cursor=b`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body.sessions));
+  });
+
+  test("a repeated ?cursor whose LAST value is invalid still 400s", async () => {
+    // The last value ("!!!") is what gets validated → 400. (The sibling
+    // ?cursor=a&cursor=b → 200 test is what uniquely locks coerce-before-validate
+    // ordering; this case asserts an invalid last value is not let through.)
+    const res = await fetch(`${baseUrl}/sessions?cursor=AAAA&cursor=!!!`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("a prototype-polluting query key (?__proto__[x]=1) is handled safely, no 500, no pollution", async () => {
+    // coerceArrayParams uses Object.keys + plain own-property assignment, and the
+    // Express 5 "simple" parser never builds a nested __proto__ object — so this
+    // cannot pollute Object.prototype or crash.
+    const res = await fetch(`${baseUrl}/sessions?__proto__[x]=1&constructor[prototype][y]=2`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    assert.equal({}.x, undefined, "Object.prototype not polluted");
+    assert.equal({}.y, undefined, "Object.prototype not polluted");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -384,6 +420,27 @@ describe("GET /sessions/:sessionId/events", () => {
     const res = await fetch(`${baseUrl}/sessions/${SESSION_ID}/events`);
     assert.equal(res.status, 401);
   });
+
+  test("repeated ?type param (array) coerces to the last value (last wins), not 500", async () => {
+    // validateQueryParams coerces a repeated param to its last value before the
+    // DB binding (which would otherwise throw on an array → 500). So a request
+    // whose LAST type is a real type behaves exactly like that single-type query.
+    const lastWinsRes = await fetch(
+      `${baseUrl}/sessions/${SESSION_ID}/events?type=nope&type=task.created`,
+      { headers: { Authorization: `Bearer ${readKey}` } }
+    );
+    const singleRes = await fetch(
+      `${baseUrl}/sessions/${SESSION_ID}/events?type=task.created`,
+      { headers: { Authorization: `Bearer ${readKey}` } }
+    );
+    assert.equal(lastWinsRes.status, 200);
+    const lastWins = await lastWinsRes.json();
+    const single = await singleRes.json();
+    assert.ok(lastWins.events.length >= 1, "last value (task.created) matches real events");
+    assert.equal(lastWins.events.length, single.events.length,
+      "?type=nope&type=task.created === ?type=task.created (last wins)");
+    assert.ok(lastWins.events.every(e => e.type === "task.created"));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -457,6 +514,91 @@ describe("GET /sessions/:sessionId/export", () => {
     const text = await res.text();
     assert.ok(text.includes("session_id"), "CSV should have header row");
     assert.ok(text.includes(SID));
+  });
+
+  test("a repeated ?format param (array) coerces to the LAST value, not 500", async () => {
+    // validateQueryParams coerces ?format=csv&format=json to "json" (last wins)
+    // before the handler — an array reaching .toLowerCase() used to throw → 500.
+    const res = await fetch(`${baseUrl}/sessions/${SID}/export?format=csv&format=json`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") || "", /application\/json/,
+      "last value 'json' wins");
+    const body = await res.json();
+    assert.equal(body.session_id, SID);
+    assert.ok(Array.isArray(body.events));
+  });
+
+  test("a repeated ?format=json&format=csv coerces to CSV (last value wins)", async () => {
+    // Confirms last-wins is the rule (not a blanket JSON fallback): the last
+    // value is the string "csv", so the response is CSV.
+    const res = await fetch(`${baseUrl}/sessions/${SID}/export?format=json&format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") || "", /text\/csv/,
+      "last value 'csv' wins");
+  });
+
+  test("repeated ?type param (array) coerces to the last value (last wins), not 500", async () => {
+    // type/q used to reach the DB as a raw array → binding throws → 500. Now the
+    // array is coerced to its last value, so a request whose LAST type is real
+    // behaves exactly like that single-type export.
+    const lastWinsRes = await fetch(`${baseUrl}/sessions/${SID}/export?type=nope&type=task.created`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    const singleRes = await fetch(`${baseUrl}/sessions/${SID}/export?type=task.created`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(lastWinsRes.status, 200);
+    const lastWins = await lastWinsRes.json();
+    const single = await singleRes.json();
+    assert.ok(lastWins.events.length >= 1, "last value (task.created) matches real events");
+    assert.equal(lastWins.events.length, single.events.length,
+      "?type=nope&type=task.created === ?type=task.created (last wins)");
+  });
+
+  test("a mixed array ?type + scalar ?q applies last-wins type AND the scalar q", async () => {
+    // The params are independent: an array `type` coerces to its last value, a
+    // scalar `q` is honoured as-is. So this must equal the equivalent
+    // single-type + same-q request — neither param nukes the other.
+    const refRes = await fetch(`${baseUrl}/sessions/${SID}/export?type=task.created&q=created`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    const refBody = await refRes.json();
+
+    const mixedRes = await fetch(`${baseUrl}/sessions/${SID}/export?type=nope&type=task.created&q=created`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(mixedRes.status, 200);
+    const mixedBody = await mixedRes.json();
+    assert.ok(mixedBody.events.length >= 1, "task.created matches and contains 'created'");
+    assert.equal(mixedBody.events.length, refBody.events.length,
+      "last-wins type + scalar q === ?type=task.created&q=created");
+  });
+
+  test("now inherits the shared query-length 400 (q > 200 chars) via validateQueryParams", async () => {
+    // /export now runs validateQueryParams, so it gains the same DoS-guard 400s
+    // /events has. Locks the intentional behaviour change (see PR notes).
+    const res = await fetch(`${baseUrl}/sessions/${SID}/export?q=${"x".repeat(201)}`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("now 400s on an INVALID ?limit / ?cursor it previously ignored (intentional)", async () => {
+    // The surprising side-effect of routing /export through validateQueryParams:
+    // /export ignores limit/cursor, so a VALID one is a no-op, but an INVALID one
+    // now 400s instead of being silently dropped. Locks that documented change.
+    const limitRes = await fetch(`${baseUrl}/sessions/${SID}/export?limit=abc`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(limitRes.status, 400);
+    const cursorRes = await fetch(`${baseUrl}/sessions/${SID}/export?cursor=!!!`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(cursorRes.status, 400);
   });
 });
 
@@ -1617,5 +1759,214 @@ describe("Retention / pruning", () => {
     // Nothing was actually deleted.
     assert.equal(await db.getProjectEventCount(tenant), 2, "dry-run left events intact");
     assert.ok(await db.getSession(sid), "dry-run left the session intact");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /sessions/:id/audit-bundle  +  GET /workflows/:traceId/audit-bundle
+// Phase 14 PR-B — tamper-evident, HMAC-signed audit bundles over HTTP.
+// ---------------------------------------------------------------------------
+
+describe("audit-bundle endpoints", () => {
+  const { verifyAuditBundle } = require("../../src/audit");
+  const AUDIT_SECRET = "audit-test-secret-" + crypto.randomUUID();
+
+  // Scope ids unique to this block so other suites' data can't bleed in.
+  const SESSION_ID = "ses_audit_solo";
+  const WF_TRACE   = "trc_audit_wf";
+  const WF_ROOT    = "ses_audit_root";
+  const WF_CHILD   = "ses_audit_child";
+
+  let savedSecret;
+  let otherTenantKey;   // read key bound to a DIFFERENT tenant (isolation test)
+
+  before(async () => {
+    savedSecret = process.env.AUDIT_SIGNING_SECRET;
+    process.env.AUDIT_SIGNING_SECRET = AUDIT_SECRET;
+
+    // Explicit, strictly-increasing timestamps so the bundled event order is
+    // deterministic regardless of ingest timing (makeEvent otherwise stamps
+    // `new Date()` for each, which can collide in rapid succession).
+    const t = n => `2026-06-11T00:00:0${n}.000Z`;
+
+    // Seed a single-session scope (2 events).
+    await ingest(makeEvent({ session_id: SESSION_ID, trace_id: "trc_audit_solo", time: t(0) }));
+    await ingest(makeEvent({ session_id: SESSION_ID, trace_id: "trc_audit_solo", type: "task.completed", time: t(1) }));
+
+    // Seed a multi-session workflow trace: orchestrator root + one subagent child.
+    await ingest(makeEvent({ session_id: WF_ROOT, trace_id: WF_TRACE, agent_role: "orchestrator", time: t(2) }));
+    await ingest(makeEvent({
+      session_id: WF_CHILD, trace_id: WF_TRACE, type: "handoff.started",
+      parent_session_id: WF_ROOT, agent_role: "subagent", time: t(3),
+    }));
+
+    // A read key for a second tenant — used to prove tenant isolation: it must
+    // NOT be able to pull tenant-test's bundles (scope-nonexistent → 404).
+    const oRes = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: "tenant-other", label: "audit-other", scopes: ["read"] }),
+    });
+    otherTenantKey = (await oRes.json()).key;
+  });
+
+  after(() => {
+    if (savedSecret === undefined) delete process.env.AUDIT_SIGNING_SECRET;
+    else process.env.AUDIT_SIGNING_SECRET = savedSecret;
+  });
+
+  async function getBundle(pathSuffix, key = readKey) {
+    return fetch(`${baseUrl}${pathSuffix}`, {
+      headers: key ? { Authorization: `Bearer ${key}` } : {},
+    });
+  }
+
+  test("session bundle: 200, verifiable round-trip, count + headers", async () => {
+    const res = await getBundle(`/sessions/${SESSION_ID}/audit-bundle`);
+    assert.equal(res.status, 200);
+    assert.match(
+      res.headers.get("content-disposition") || "",
+      /attachment; filename="ses_audit_solo-audit-bundle\.json"/
+    );
+
+    const bundle = await res.json();
+    assert.equal(bundle.manifest.event_count, bundle.events.length);
+    assert.equal(bundle.events.length, 2);
+    assert.equal(bundle.manifest.scope.session_id, SESSION_ID);
+    assert.equal(bundle.manifest.scope.trace_id, "trc_audit_solo");
+
+    const result = verifyAuditBundle(bundle, AUDIT_SECRET);
+    assert.equal(result.valid, true, JSON.stringify(result.errors));
+    assert.equal(result.content_digest_match, true);
+    assert.equal(result.manifest_signature_valid, true);
+  });
+
+  test("workflow bundle: 200, spans all sessions in the trace, verifiable", async () => {
+    const res = await getBundle(`/workflows/${WF_TRACE}/audit-bundle`);
+    assert.equal(res.status, 200);
+    assert.match(
+      res.headers.get("content-disposition") || "",
+      /attachment; filename="trc_audit_wf-audit-bundle\.json"/
+    );
+
+    const bundle = await res.json();
+    // Both the root and child session's events are present.
+    assert.equal(bundle.events.length, 2);
+    assert.equal(bundle.manifest.event_count, 2);
+    assert.equal(bundle.manifest.scope.trace_id, WF_TRACE);
+    const sessions = new Set(bundle.events.map(e => e.session_id));
+    assert.ok(sessions.has(WF_ROOT) && sessions.has(WF_CHILD));
+    // Events from both sessions are merged in ascending time order (root @t2
+    // before child @t3) — deterministic thanks to the seeded timestamps.
+    assert.deepEqual(bundle.events.map(e => e.session_id), [WF_ROOT, WF_CHILD]);
+
+    const result = verifyAuditBundle(bundle, AUDIT_SECRET);
+    assert.equal(result.valid, true, JSON.stringify(result.errors));
+  });
+
+  test("tamper test: mutating a bundled event payload fails verification", async () => {
+    const res = await getBundle(`/sessions/${SESSION_ID}/audit-bundle`);
+    const bundle = await res.json();
+
+    bundle.events[0].payload = { task: "TAMPERED" };
+
+    const result = verifyAuditBundle(bundle, AUDIT_SECRET);
+    assert.equal(result.valid, false);
+    assert.equal(result.content_digest_match, false);
+  });
+
+  test("returns 401 when no API key is provided", async () => {
+    const res = await fetch(`${baseUrl}/sessions/${SESSION_ID}/audit-bundle`);
+    assert.equal(res.status, 401);
+  });
+
+  test("returns 404 for an unknown session", async () => {
+    const res = await getBundle(`/sessions/ses_does_not_exist/audit-bundle`);
+    assert.equal(res.status, 404);
+  });
+
+  test("returns 404 for an unknown workflow trace", async () => {
+    const res = await getBundle(`/workflows/trc_does_not_exist/audit-bundle`);
+    assert.equal(res.status, 404);
+  });
+
+  test("tenant isolation: another tenant cannot pull this tenant's bundles", async () => {
+    // tenant-other's read key sees neither the session nor the trace owned by
+    // tenant-test, so both scopes are nonexistent for it → 404 (no leak).
+    const sRes = await getBundle(`/sessions/${SESSION_ID}/audit-bundle`, otherTenantKey);
+    assert.equal(sRes.status, 404);
+    const wRes = await getBundle(`/workflows/${WF_TRACE}/audit-bundle`, otherTenantKey);
+    assert.equal(wRes.status, 404);
+  });
+
+  test("returns 503 when AUDIT_SIGNING_SECRET is unset", async () => {
+    const prev = process.env.AUDIT_SIGNING_SECRET;
+    delete process.env.AUDIT_SIGNING_SECRET;
+    try {
+      const res = await getBundle(`/sessions/${SESSION_ID}/audit-bundle`);
+      assert.equal(res.status, 503);
+      const body = await res.json();
+      assert.match(body.hint || "", /AUDIT_SIGNING_SECRET/);
+    } finally {
+      process.env.AUDIT_SIGNING_SECRET = prev;
+    }
+  });
+
+  // --- ?format=pdf (Phase 14 PR-C) -----------------------------------------
+  // The PDF is a human-readable rendering; all auth/tenant/404/503 guards sit
+  // BEFORE the format branch, so only the happy-path representation changes.
+
+  test("session bundle ?format=pdf: 200, application/pdf, PDF magic, .pdf filename", async () => {
+    const res = await getBundle(`/sessions/${SESSION_ID}/audit-bundle?format=pdf`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") || "", /application\/pdf/);
+    assert.match(
+      res.headers.get("content-disposition") || "",
+      /attachment; filename="ses_audit_solo-audit-bundle\.pdf"/
+    );
+    const body = Buffer.from(await res.arrayBuffer());
+    assert.equal(body.subarray(0, 5).toString(), "%PDF-");
+    assert.match(body.subarray(-32).toString(), /%%EOF\s*$/);
+  });
+
+  test("workflow bundle ?format=pdf: 200, application/pdf, PDF magic, .pdf filename", async () => {
+    const res = await getBundle(`/workflows/${WF_TRACE}/audit-bundle?format=pdf`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") || "", /application\/pdf/);
+    assert.match(
+      res.headers.get("content-disposition") || "",
+      /attachment; filename="trc_audit_wf-audit-bundle\.pdf"/
+    );
+    const body = Buffer.from(await res.arrayBuffer());
+    assert.equal(body.subarray(0, 5).toString(), "%PDF-");
+    assert.match(body.subarray(-32).toString(), /%%EOF\s*$/);
+  });
+
+  test("unrecognized format value falls back to the JSON bundle (parity with /export)", async () => {
+    const res = await getBundle(`/sessions/${SESSION_ID}/audit-bundle?format=bogus`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") || "", /application\/json/);
+    assert.match(
+      res.headers.get("content-disposition") || "",
+      /attachment; filename="ses_audit_solo-audit-bundle\.json"/
+    );
+    const bundle = await res.json();
+    assert.equal(verifyAuditBundle(bundle, AUDIT_SECRET).valid, true);
+  });
+
+  test("?format=pdf does not bypass the 404 guard for an unknown session", async () => {
+    const res = await getBundle(`/sessions/ses_does_not_exist/audit-bundle?format=pdf`);
+    assert.equal(res.status, 404);
+  });
+
+  test("?format=pdf returns 503 when AUDIT_SIGNING_SECRET is unset", async () => {
+    const prev = process.env.AUDIT_SIGNING_SECRET;
+    delete process.env.AUDIT_SIGNING_SECRET;
+    try {
+      const res = await getBundle(`/sessions/${SESSION_ID}/audit-bundle?format=pdf`);
+      assert.equal(res.status, 503);
+    } finally {
+      process.env.AUDIT_SIGNING_SECRET = prev;
+    }
   });
 });

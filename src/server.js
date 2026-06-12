@@ -8,6 +8,8 @@ const { version: SERVER_VERSION } = require("../package.json");
 const { validateEvent, sanitizeInput }        = require("./validator");
 const db                       = require("./db");
 const { verifySignature } = require("./signature");
+const { buildAuditBundle, verifyAuditBundle } = require("./audit");
+const { renderAuditBundlePdf } = require("./audit-pdf");
 const {
   requireApiKey,
   requireReadAccess,
@@ -155,6 +157,63 @@ function toCsv(events) {
     JSON.stringify(e.payload || {})
   ]);
   return [headers.join(","), ...rows.map(r => r.map(escapeCsv).join(","))].join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Audit-bundle helpers (Phase 14 PR-B)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the audit signing secret at request time, or send a 503 and return
+ * null.  The audit-bundle endpoints sign every response, so they require
+ * AUDIT_SIGNING_SECRET.  This mirrors how requireAdminAuth 503s when ADMIN_TOKEN
+ * is unset (see src/auth.js) and the CLI's readAuditSecret (src/cli.js).
+ *
+ * @param {import('express').Response} res
+ * @returns {string|null} the secret, or null after a 503 was already sent.
+ */
+function auditSecretOr503(res) {
+  const secret = process.env.AUDIT_SIGNING_SECRET;
+  if (!secret) {
+    res.status(503).json({
+      error: "Audit export not configured",
+      hint:  "Set the AUDIT_SIGNING_SECRET environment variable to enable audit-bundle endpoints"
+    });
+    return null;
+  }
+  return secret;
+}
+
+/**
+ * Flatten a workflow tree (array of root nodes from db.getWorkflow) into the
+ * flat list of session_ids it contains.  Each node is { session, children }.
+ *
+ * @param {Array<{session: {session_id: string}, children: any[]}>} nodes
+ * @returns {string[]}
+ */
+function collectSessionIds(nodes) {
+  const ids = [];
+  const walk = (node) => {
+    if (!node || !node.session) return;
+    ids.push(node.session.session_id);
+    (node.children || []).forEach(walk);
+  };
+  (nodes || []).forEach(walk);
+  return ids;
+}
+
+/**
+ * Derive a single distinct trace_id from an event sequence, or null if the
+ * events span zero or multiple traces.  Events carry a top-level trace_id;
+ * tenant is intentionally NOT derived here (stored events don't reliably carry
+ * it — the bundle's tenant scope comes from the authenticated req.tenant_id).
+ *
+ * @param {object[]} events
+ * @returns {string|null}
+ */
+function singleTraceId(events) {
+  const traces = new Set(events.map(e => e && e.trace_id).filter(Boolean));
+  return traces.size === 1 ? [...traces][0] : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -322,6 +381,8 @@ app.get("/sessions/:sessionId", requireReadAccess, validatePathParams, async (re
  * items; iterate until next_cursor is null.
  */
 app.get("/sessions/:sessionId/events", requireReadAccess, validatePathParams, validateQueryParams, async (req, res) => {
+  // validateQueryParams coerces any repeated param (?type=a&type=b) to a single
+  // value (last wins) before this handler runs, so type/q/limit/cursor are scalars.
   const { type = "", q = "", limit, cursor } = req.query;
   const result = await db.getPaginatedEvents(req.params.sessionId, {
     type, q, tenantId: req.tenant_id, limit, cursor
@@ -355,9 +416,15 @@ app.get("/sessions/:sessionId/tree", requireReadAccess, validatePathParams, asyn
 });
 
 // GET /sessions/:sessionId/export — download as JSON or CSV
-app.get("/sessions/:sessionId/export", requireReadAccess, validatePathParams, async (req, res) => {
+app.get("/sessions/:sessionId/export", requireReadAccess, validatePathParams, validateQueryParams, async (req, res) => {
   const sessionId = req.params.sessionId;
-  const format    = (req.query.format || "json").toLowerCase();
+  // validateQueryParams coerces any repeated param (?format=csv&format=json) to a
+  // single value (last wins) before this handler, so format/type/q are scalars.
+  // Routing through it also newly applies the shared q/type length + cursor/limit
+  // 400s to /export (parity with /events). /export ignores cursor/limit, so a
+  // VALID one is a no-op — but an INVALID ?cursor=/?limit= now 400s instead of
+  // being silently ignored. Intentional (no legitimate export client sends them).
+  const format = (req.query.format || "json").toLowerCase();
   const { type = "", q = "" } = req.query;
   const events = await db.getSessionEvents(sessionId, { type, q, tenantId: req.tenant_id });
 
@@ -389,6 +456,128 @@ app.get("/workflows/:traceId", requireReadAccess, validatePathParams, async (req
   }
 
   res.json(workflow);
+});
+
+// ---------------------------------------------------------------------------
+// Routes — audit bundles (Phase 14 PR-B; ?format=pdf added in PR-C)
+//
+// Tamper-evident, HMAC-signed JSON bundles built from the read API's events via
+// buildAuditBundle (src/audit.js).  Read-scoped + tenant-scoped exactly like the
+// sibling /export and /workflows/:traceId endpoints.  `now` is injected here so
+// audit.js stays pure.  Both sign their response, so both require
+// AUDIT_SIGNING_SECRET (→ 503 when unset).
+// ---------------------------------------------------------------------------
+
+/**
+ * Send a freshly built audit bundle in the requested representation.
+ * `?format=pdf` → human-readable PDF report (the JSON bundle remains the
+ * verifiable artifact; the PDF prints the digest to tie back to it).  Any other
+ * value — including absent — falls back to JSON, mirroring /export's format
+ * handling (unrecognized values are not a 400 there either).
+ */
+function sendAuditBundle(req, res, bundle, secret, baseName) {
+  const format = (typeof req.query.format === "string" ? req.query.format : "json").toLowerCase();
+  if (format === "pdf") {
+    // Freshly built → expected valid; verified for real (cheap) so the PDF's
+    // verification section reports an actual check, not an assertion.  One
+    // clock read shared by both calls, so rendered_at matches the verify
+    // instant.  Like the JSON path, rendering is unpaginated and in-memory
+    // (~0.4ms/event, linear) — a bundle must be complete to be meaningful, and
+    // the endpoint is read-key-gated; same trade-off as the workflow handler.
+    const now = new Date();
+    const verification = verifyAuditBundle(bundle, secret, { now });
+    return renderAuditBundlePdf(bundle, { verification, now }).then((pdf) => {
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${baseName}-audit-bundle.pdf"`);
+      res.send(pdf);
+    });
+  }
+  res.setHeader("Content-Disposition", `attachment; filename="${baseName}-audit-bundle.json"`);
+  return res.json(bundle);
+}
+
+// GET /sessions/:sessionId/audit-bundle — signed audit bundle for one session
+app.get("/sessions/:sessionId/audit-bundle", requireReadAccess, validatePathParams, async (req, res) => {
+  const secret = auditSecretOr503(res);
+  if (!secret) return;
+
+  const sessionId = req.params.sessionId;
+
+  // 404 iff the session does not exist for this tenant (scope-nonexistent rule).
+  // A real session with zero events still yields an empty — but signed — bundle.
+  const session = await db.getSession(sessionId, req.tenant_id);
+  if (!session) {
+    return res.status(404).json({ error: "Session not found", session_id: sessionId });
+  }
+
+  const events = await db.getSessionEvents(sessionId, { tenantId: req.tenant_id });
+
+  // Defense-in-depth: never bundle events belonging to another tenant.
+  if (!validateTenantOwnership(events, req.tenant_id, "session_events")) {
+    return res.status(403).json({ error: "Forbidden", message: "You do not have access to this session" });
+  }
+
+  const derivedTraceId = singleTraceId(events);
+  const bundle = buildAuditBundle({
+    events,
+    meta: {
+      session_id: sessionId,
+      ...(derivedTraceId ? { trace_id: derivedTraceId } : {}),
+      tenant_id: req.tenant_id ?? null
+    },
+    secret,
+    now: new Date()
+  });
+
+  return sendAuditBundle(req, res, bundle, secret, sessionId);
+});
+
+// GET /workflows/:traceId/audit-bundle — signed audit bundle for a whole trace
+app.get("/workflows/:traceId/audit-bundle", requireReadAccess, validatePathParams, async (req, res) => {
+  const secret = auditSecretOr503(res);
+  if (!secret) return;
+
+  const traceId = req.params.traceId;
+
+  // 404 iff the trace does not exist for this tenant — same as /workflows/:traceId.
+  const workflow = await db.getWorkflow(traceId, req.tenant_id);
+  if (!workflow) {
+    return res.status(404).json({ error: "Workflow not found", trace_id: traceId });
+  }
+
+  // Collect every session in the trace, fetch each session's (tenant-scoped)
+  // events, then order the combined sequence by time. A bundle must hold ALL
+  // events for the trace to be verifiable, so there is no pagination here; if any
+  // per-session fetch rejects, the whole request fails rather than emit a partial
+  // bundle. Sort by the ISO `time` string with a plain comparator — the same
+  // codepoint ordering the DB uses (ORDER BY time ASC), not locale-sensitive.
+  //
+  // The bundle covers exactly the session set of the `/workflows/:traceId` tree.
+  // getWorkflow derives roots as sessions whose parent is absent or outside the
+  // trace; a pathological all-in-trace parent cycle would leave those sessions
+  // unrooted and thus out of the tree (and the bundle) — the same blind spot the
+  // /workflows view has. Acceptable: such a bundle is incomplete, never wrong.
+  const sessionIds = collectSessionIds(workflow.tree);
+  const perSession = await Promise.all(
+    sessionIds.map(sid => db.getSessionEvents(sid, { tenantId: req.tenant_id }))
+  );
+  const events = perSession
+    .flat()
+    .sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+
+  // Defense-in-depth: never bundle events belonging to another tenant.
+  if (!validateTenantOwnership(events, req.tenant_id, "workflow_events")) {
+    return res.status(403).json({ error: "Forbidden", message: "You do not have access to this workflow" });
+  }
+
+  const bundle = buildAuditBundle({
+    events,
+    meta: { trace_id: traceId, tenant_id: req.tenant_id ?? null },
+    secret,
+    now: new Date()
+  });
+
+  return sendAuditBundle(req, res, bundle, secret, traceId);
 });
 
 // GET /metrics — counters + session count + workflow metrics (JSON)

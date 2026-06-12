@@ -4,6 +4,131 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Centralized array-valued query-param handling — 2026-06-11
+
+Follow-up to #93 (closes #94). Repeated query params (`?type=a&type=b`) are
+parsed by Express as arrays; passed to a string method or a DB binding they throw
+→ HTTP 500. #93 patched the two affected routes with inline `typeof` guards; this
+change moves the handling into the shared `validateQueryParams` middleware so any
+route that uses it is protected by default, and removes the per-route guards.
+
+- **`src/middleware/queryValidation.js`:** new `coerceArrayParams(query)` —
+  reduces every array-valued param to its **last** value (last wins), pure (returns
+  a new object). `validateQueryParams` applies it **first**, before the existing
+  length/format checks, so they (and the route handlers) only ever see scalars.
+  Because Express 5's `req.query` is a getter-only accessor that re-parses on each
+  access (in-place mutation and reassignment are silently lost), the coerced object
+  is installed as an own data property via `Object.defineProperty`.
+- **`src/server.js`:** `/sessions/:sessionId/export` now runs `validateQueryParams`,
+  and the inline `typeof` guards added in #93 are removed from both `/export` and
+  `/sessions/:sessionId/events` (the middleware guarantees scalars). `format` on
+  `/export` reverts to `(req.query.format || "json").toLowerCase()`.
+- **Behaviour change (deliberate):** a repeated filter now resolves to its **last
+  value** rather than #93's "treat as absent / no filter" — e.g.
+  `?format=json&format=csv` exports CSV, `?type=x&type=task.created` filters by
+  `task.created`. Routing `/export` through the middleware also gives it the same
+  query-length **400** DoS guards `/events` already had; `/export` ignores
+  cursor/limit, so a *valid* one is a no-op, but an *invalid* `?cursor=`/`?limit=`
+  now 400s instead of being silently ignored.
+- **Out of scope:** the audit-bundle routes (`/sessions/:id/audit-bundle`,
+  `/workflows/:traceId/audit-bundle`) keep their inline `format` guard in
+  `sendAuditBundle` — they don't take `validateQueryParams`, and `format` there is
+  already array-safe. A future option (an app-level custom query parser to protect
+  routes that don't use the middleware) is noted in #94 but not done here.
+- **Tests:** new `tests/unit/queryValidation.test.js` (8 cases for
+  `coerceArrayParams`); the #93 integration tests are reworked to last-wins
+  semantics; new integration cases for `/export` last-wins CSV, the new `/export`
+  query-length + invalid-cursor/limit 400s, a `/sessions` repeated-`cursor` case
+  (proving a route with no inline guard is covered centrally, and that coercion
+  runs before validation), and a prototype-pollution probe. Lint clean. No new CI
+  jobs.
+
+## Phase 14 PR-C — Audit bundle PDF rendering — 2026-06-11
+
+Completes the PRD's "PDF + JSON" audit-export deliverable. A bundle built by
+PR-A/PR-B can now be rendered as a human-readable PDF report for legal /
+compliance review. The PDF is a *rendering only* — the JSON bundle remains the
+tamper-evident, offline-verifiable artifact — and the report keeps that honest
+by printing the bundle's `content_digest`, the manifest signature, and the
+verification result it was rendered with.
+
+- **New module [`src/audit-pdf.js`](./src/audit-pdf.js)** —
+  `renderAuditBundlePdf(bundle, { verification, now })` → `Promise<Buffer>`,
+  built on **pdfkit** (new runtime dependency; pure JS, no install scripts, no
+  new `npm audit` findings). Deterministic: `now` is injected (pdfkit's default
+  CreationDate is a clock read that perturbs the PDF trailer `/ID` — pinning it
+  makes identical inputs render **byte-identical PDFs**, which is regression-
+  locked by a unit test). The `verification` result (from `verifyAuditBundle`)
+  is an *input*, so the renderer never handles key material — the report states
+  VALID, INVALID - TAMPERING DETECTED, or NOT VERIFIED AT RENDER TIME, exactly
+  as given. Report sections: manifest summary (scope, tenant, counts, time
+  range, digest, signature), verification status, per-event blocks (envelope
+  fields, transport-signature presence/canon, deep-stable payload JSON
+  truncated at 2,000 chars with an explicit marker), and a how-to-verify
+  appendix. Content streams are uncompressed (diffable/inspectable); text is
+  sanitized to printable ASCII for legibility — lossy by design, the JSON
+  bundle is the record.
+- **CLI** ([`src/cli.js`](./src/cli.js)):
+  - `aep audit render <bundle.json> [--out report.pdf] [--force]` — verifies the
+    bundle first and **refuses to render an unverifiable bundle** unless
+    `--force` (the report then shows INVALID prominently and the command exits
+    non-zero). Output defaults to the bundle path with a `.pdf` extension; the
+    command refuses to overwrite the bundle itself.
+  - `aep audit export … --pdf [file]` — writes a PDF companion **alongside**
+    the JSON bundle (never instead of it). Filename derived from `--out`
+    (`bundle.json` → `bundle.pdf`) unless given explicitly; an explicit name is
+    required when the JSON goes to stdout. (Flag-parser note: place `--pdf`
+    after the session id or give it a value — documented in `aep audit --help`.)
+- **HTTP** ([`src/server.js`](./src/server.js)): `?format=pdf` on
+  `GET /sessions/:sessionId/audit-bundle` and
+  `GET /workflows/:traceId/audit-bundle` (shared `sendAuditBundle` helper).
+  Auth / tenant-scoping / 404 / 503 guards are untouched — the format branch
+  runs strictly after all of them. Unrecognized `format` values fall back to
+  JSON, mirroring `/export`. The server verifies the freshly built bundle for
+  real (cheap) rather than asserting validity, so the PDF's verification
+  section reports an actual check. `application/pdf` + `.pdf` attachment
+  filename.
+- **OpenAPI** ([`src/openapi.json`](./src/openapi.json)): `format` query param
+  (enum `json`/`pdf`, default `json`) + `application/pdf` response content on
+  both audit-bundle paths.
+- **Tests:** `tests/unit/audit-pdf.test.js` (17 tests: PDF structure,
+  verification honesty incl. tampered-bundle rendering, payload truncation /
+  ASCII sanitization, byte-determinism, no-mutation purity, input validation —
+  content assertions decode pdfkit's hex `TJ` text operators back to plain
+  text) and 5 integration tests appended to `tests/integration/server.test.js`
+  (PDF happy path for both endpoints, JSON fallback for unrecognized format,
+  404/503 guards unchanged under `?format=pdf`). No new CI jobs.
+- **Docs:** AUTH.md (render/`--pdf`/`?format=pdf` usage + rendering-vs-artifact
+  caveat), README.md, SECURITY.md (the PDF carries no integrity guarantee of
+  its own).
+
+## Phase 14 PR-B — Audit-bundle HTTP endpoints — 2026-06-11
+
+Builds on Phase 14 PR-A (tamper-evident audit bundles, `src/audit.js` + `aep
+audit` CLI). Exposes audit bundles over HTTP so operators and tooling can pull a
+signed bundle directly, without the CLI.
+
+- **New `GET /sessions/{sessionId}/audit-bundle`** — builds and returns an
+  HMAC-signed audit bundle of a session's events.
+- **New `GET /workflows/{traceId}/audit-bundle`** — same, scoped to every session
+  sharing a `trace_id` (events combined and ordered by time).
+- Both endpoints are **read-scoped** and **tenant-scoped**, mirroring the existing
+  `/sessions/{id}/export` and `/workflows/{traceId}` query endpoints. They reuse
+  `buildAuditBundle` from PR-A (no new bundle/signing logic) and inject `now` at
+  the request boundary so `src/audit.js` stays pure.
+- **Requires `AUDIT_SIGNING_SECRET`** (the server-side audit signing key, distinct
+  from per-API-key HMAC secrets). When unset, both endpoints return **503** with an
+  actionable hint — mirroring how `/admin/*` behaves when `ADMIN_TOKEN` is unset.
+- `404` when the scope (session or trace) does not exist for the caller's tenant;
+  an existing scope with zero events yields an empty — but still signed — bundle.
+- Responses are returned as a JSON download (`Content-Disposition: attachment`) and
+  verify offline via `aep audit verify` / `verifyAuditBundle`.
+- No schema changes, no new storage-layer methods, and **no new CI job** — the new
+  integration coverage runs under the existing test + Postgres-parity jobs.
+- OpenAPI spec updated with both paths and an `AuditBundle` schema.
+
+---
+
 ## Python SDK `agent-event-protocol` 0.4.1 — 2026-06-10
 
 Docs / source-comment patch. **No functional, signing, or API changes.**
