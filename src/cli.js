@@ -614,7 +614,12 @@ function workflowHelp() {
 \x1b[1maep workflow\x1b[0m — Query a full workflow tree by trace_id
 
 Usage:
-  aep workflow <trace_id>
+  aep workflow <trace_id> [flags]
+
+Flags:
+  --graph   Fetch the cross-session causation graph (nodes + edges) instead of
+            the session tree; cross-session causation edges are flagged.
+  --json    With --graph, print the raw JSON graph (default prints a summary)
 `);
 }
 
@@ -622,10 +627,30 @@ async function cmdWorkflow(positional, flags, serverUrl, apiKey) {
   if (flags.help) { workflowHelp(); return; }
 
   const traceId = positional[1];
-  if (!traceId) die("Usage: aep workflow <trace_id>");
+  if (!traceId) die("Usage: aep workflow <trace_id> [--graph]");
   if (!apiKey)  die("API key required. Set --key or AEP_API_KEY env var.");
 
-  const res = await request("GET", `${serverUrl}/workflows/${traceId}`, null, {
+  if (flags.graph) {
+    const res = await request("GET", `${serverUrl}/workflows/${encodeURIComponent(traceId)}/graph`, null, {
+      Authorization: `Bearer ${apiKey}`,
+    });
+    if (res.status === 404) die(`Workflow '${traceId}' not found`);
+    if (res.status !== 200) die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+
+    const g = res.body;
+    if (flags.json) { console.log(JSON.stringify(g, null, 2)); return; }
+    console.log(`Workflow graph: \x1b[1m${g.trace_id}\x1b[0m`);
+    console.log(`  ${g.event_count} event(s) across ${g.session_count} session(s)`);
+    console.log(`  ${g.edge_count} causation edge(s), \x1b[35m${g.cross_session_edge_count} cross-session\x1b[0m`);
+    console.log("\n\x1b[1mSessions\x1b[0m");
+    for (const s of g.sessions) {
+      const role = s.agent_role ? ` \x1b[36m[${s.agent_role}]\x1b[0m` : "";
+      console.log(`  ${String(s.event_count).padStart(4)}  ${s.session_id}${role}`);
+    }
+    return;
+  }
+
+  const res = await request("GET", `${serverUrl}/workflows/${encodeURIComponent(traceId)}`, null, {
     Authorization: `Bearer ${apiKey}`,
   });
 

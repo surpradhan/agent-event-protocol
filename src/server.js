@@ -13,6 +13,7 @@ const { renderAuditBundlePdf } = require("./audit-pdf");
 const { summarizePolicyBlocked } = require("./analytics");
 const { summarizePerformance } = require("./performance");
 const { validateQuerySpec, runQuery } = require("./customQuery");
+const { buildWorkflowGraph } = require("./workflowGraph");
 const { generateComplianceReport, isValidFramework, FRAMEWORK_IDS } = require("./compliance");
 const { renderComplianceReportPdf } = require("./compliance-pdf");
 const { isPrunable } = require("./retention");
@@ -470,6 +471,29 @@ app.get("/workflows/:traceId", requireReadAccess, validatePathParams, async (req
   }
 
   res.json(workflow);
+});
+
+// GET /workflows/:traceId/graph — cross-session causation graph (Phase 15-C).
+//
+// The dashboard's per-session DAG can only show cross-session causation as dangling
+// stubs.  This assembles the whole trace's event-level causation graph (every event
+// across every session), classifying edges as intra- vs cross-session, so the
+// dashboard can render one interactive DAG spanning the workflow.  Read- + tenant-
+// scoped exactly like /workflows/:traceId; the DB returns the raw (tenant-scoped)
+// envelopes and the pure buildWorkflowGraph (src/workflowGraph.js) shapes them.
+app.get("/workflows/:traceId/graph", requireReadAccess, validatePathParams, async (req, res) => {
+  const traceId = req.params.traceId;
+
+  // 404 iff the trace has no sessions for this tenant — same semantics as
+  // /workflows/:traceId (reuses the same tenant-scoped session lookup).
+  const workflow = await db.getWorkflow(traceId, req.tenant_id);
+  if (!workflow) {
+    return res.status(404).json({ error: "Workflow not found", trace_id: traceId });
+  }
+
+  const events = await db.getWorkflowEvents(traceId, req.tenant_id);
+  const graph = buildWorkflowGraph(events, { trace_id: traceId, now: new Date() });
+  res.json(graph);
 });
 
 // ---------------------------------------------------------------------------

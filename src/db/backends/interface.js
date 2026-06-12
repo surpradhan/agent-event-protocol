@@ -239,6 +239,19 @@ class StorageBackend {
     throw new Error("StorageBackend.getPerformanceEvents() not implemented");
   }
 
+  // ----- workflow causation graph (Phase 15-C) -----
+
+  /**
+   * Fetch all events of one trace (tenant-scoped) for the cross-session causation
+   * graph. Shaping is done by the pure src/workflowGraph.js builder.
+   * @param {string} traceId
+   * @param {string|null} tenantId
+   * @returns {Promise<Array<object>>} parsed event envelopes (time ASC)
+   */
+  async getWorkflowEvents(traceId, tenantId) {
+    throw new Error("StorageBackend.getWorkflowEvents() not implemented");
+  }
+
   // ----- saved queries (Phase 15-B) -----
 
   /**

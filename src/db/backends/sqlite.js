@@ -749,6 +749,23 @@ class SqliteBackend extends StorageBackend {
     return rows.map(r => JSON.parse(r.raw_payload));
   }
 
+  // ----- workflow causation graph (Phase 15-C) -----
+
+  async getWorkflowEvents(traceId, tenantId = null) {
+    // All events of one trace, tenant-scoped, for the cross-session causation
+    // graph. Pure fetch; src/workflowGraph.js shapes it, so this SELECT stays
+    // trivial and dialect-identical to Postgres.
+    const sql = `
+      SELECT raw_payload
+      FROM   events
+      WHERE  trace_id = ?
+        AND  (? IS NULL OR tenant_id = ?)
+      ORDER  BY time ASC
+    `;
+    const rows = this._db.prepare(sql).all(traceId, tenantId, tenantId);
+    return rows.map(r => JSON.parse(r.raw_payload));
+  }
+
   // ----- API-key access log (Phase 14 PR-E) -----
 
   async recordApiKeyAccess({ id, apiKeyId, tenantId, method, path, status, ts }) {

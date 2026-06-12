@@ -373,6 +373,11 @@
       border-radius: 10px; font-size: 12px; max-height: 140px; overflow-y: auto;
     }
 
+    /* ── Workflow cross-session causation graph (Phase 15-C) ── */
+    .wfg-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 10px; }
+    .wfg-leg { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--ink); }
+    .wfg-chip { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+
     /* ── Workflow tree ── */
     .workflow-tree { max-height: 65vh; overflow: auto; scrollbar-width: thin; scrollbar-color: rgba(0,255,200,0.18) transparent; }
     .tree-node { margin: 0; padding: 0; }
@@ -641,9 +646,22 @@
     </div>
 
     <div class="card">
-      <div class="panel-title" id="workflow-title">Select a workflow</div>
+      <div class="panel-header" style="margin-bottom:10px">
+        <div class="panel-title" id="workflow-title">Select a workflow</div>
+        <div class="sub-tabs" id="wf-subtabs" style="display:none">
+          <button class="sub-tab active" id="wst-tree"  onclick="switchWf('tree')">Session Tree</button>
+          <button class="sub-tab"        id="wst-graph" onclick="switchWf('graph')">Causation Graph</button>
+        </div>
+      </div>
       <div id="workflow-tree" class="workflow-tree">
         <div class="empty">Select a workflow to view the agent tree.</div>
+      </div>
+      <div id="workflow-graph" style="display:none">
+        <div class="hint" id="wfg-hint" style="margin-bottom:8px"></div>
+        <div class="dag-wrap" id="wfg-wrap">
+          <div class="empty">Select a workflow to view its cross-session causation graph.</div>
+        </div>
+        <div id="wfg-detail" class="dag-detail" style="display:none"></div>
       </div>
     </div>
   </div>
@@ -875,6 +893,8 @@ function submitAuthToken() {
 // ─────────────────────────────────────────────────────────────────────────────
 let mainView      = 'sessions';
 let subView       = 'timeline';
+let wfSubView     = 'tree';   // Workflows tab: 'tree' | 'graph'
+let wfGraph       = null;     // cached graph for the selected workflow
 let selSession    = null;
 let selTrace      = null;
 let allSessions   = [];
@@ -1105,13 +1125,193 @@ function buildWorkflowList(sessions) {
 
 async function loadWorkflow(traceId) {
   selTrace = traceId;
+  wfGraph = null; // invalidate cached graph for the previous workflow
   buildWorkflowList(allSessions); // refresh active state
+  document.getElementById('wf-subtabs').style.display = '';
   try {
     const data = await fetchJson('/workflows/' + encodeURIComponent(traceId));
     renderWorkflowTree(data);
   } catch(_) {
     document.getElementById('workflow-tree').innerHTML = '<div class="empty">Could not load workflow.</div>';
   }
+  if (wfSubView === 'graph') loadWorkflowGraph(traceId);
+}
+
+// Toggle the Workflows-tab right pane between the session tree and the
+// cross-session causation graph (Phase 15-C).
+function switchWf(v) {
+  wfSubView = v;
+  document.getElementById('workflow-tree').style.display  = v === 'tree'  ? '' : 'none';
+  document.getElementById('workflow-graph').style.display = v === 'graph' ? '' : 'none';
+  document.getElementById('wst-tree').className  = 'sub-tab' + (v === 'tree'  ? ' active' : '');
+  document.getElementById('wst-graph').className = 'sub-tab' + (v === 'graph' ? ' active' : '');
+  if (v === 'graph' && selTrace) {
+    if (wfGraph) renderWorkflowGraph(wfGraph);
+    else loadWorkflowGraph(selTrace);
+  }
+}
+
+async function loadWorkflowGraph(traceId) {
+  const wrap = document.getElementById('wfg-wrap');
+  wrap.innerHTML = '<div class="hint" style="padding:10px">Loading causation graph…</div>';
+  try {
+    wfGraph = await fetchJson('/workflows/' + encodeURIComponent(traceId) + '/graph');
+    renderWorkflowGraph(wfGraph);
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty">Could not load causation graph (${esc(e.message)}).</div>`;
+  }
+}
+
+// ── Cross-session causation graph renderer (Phase 15-C) ──
+// Per-session accent palette (cycled if a workflow has more sessions than colours).
+const WF_SESSION_COLORS = [
+  '#00ffc8', '#c062ff', '#ffb347', '#4f9dff', '#ff6b9d', '#7ee787', '#ffd166', '#56d4dd'
+];
+const WFG = { NW: 168, NH: 56, HG: 16, VD: 78, VS: 12, PAD: 22, MAX_COLS: 5, MAX_NODES: 120 };
+
+function wfgLayout(nodes, edges) {
+  const idSet = new Set(nodes.map(n => n.id));
+  const kids = new Map();
+  const indeg = new Map(nodes.map(n => [n.id, 0]));
+  for (const e of edges) {
+    if (!idSet.has(e.from) || !idSet.has(e.to)) continue;
+    if (!kids.has(e.from)) kids.set(e.from, []);
+    kids.get(e.from).push(e.to);
+    indeg.set(e.to, (indeg.get(e.to) || 0) + 1);
+  }
+  // Longest-path depth (Kahn-style relaxation).
+  const depths = new Map(nodes.map(n => [n.id, 0]));
+  const rem = new Map(indeg);
+  const q = [];
+  for (const [id, d] of rem) if (d === 0) q.push(id);
+  while (q.length) {
+    const id = q.shift();
+    const d = depths.get(id);
+    for (const kid of (kids.get(id) || [])) {
+      depths.set(kid, Math.max(depths.get(kid), d + 1));
+      rem.set(kid, rem.get(kid) - 1);
+      if (rem.get(kid) === 0) q.push(kid);
+    }
+  }
+  const byDepth = new Map();
+  // nodes arrive time-ordered from the server, so within a depth they stay chronological
+  for (const n of nodes) {
+    const d = depths.get(n.id) || 0;
+    if (!byDepth.has(d)) byDepth.set(d, []);
+    byDepth.get(d).push(n);
+  }
+  const pos = new Map();
+  let curY = WFG.PAD;
+  for (const depth of [...byDepth.keys()].sort((a, b) => a - b)) {
+    const arr = byDepth.get(depth);
+    const rows = Math.ceil(arr.length / WFG.MAX_COLS);
+    for (let i = 0; i < arr.length; i++) {
+      pos.set(arr[i].id, {
+        x: WFG.PAD + (i % WFG.MAX_COLS) * (WFG.NW + WFG.HG),
+        y: curY + Math.floor(i / WFG.MAX_COLS) * (WFG.NH + WFG.VS)
+      });
+    }
+    curY += rows * (WFG.NH + WFG.VS) - WFG.VS + WFG.VD;
+  }
+  let maxX = 0, maxY = 0;
+  for (const p of pos.values()) { maxX = Math.max(maxX, p.x + WFG.NW + WFG.PAD); maxY = Math.max(maxY, p.y + WFG.NH + WFG.PAD); }
+  return { pos, w: Math.max(maxX, WFG.NW + 2 * WFG.PAD), h: Math.max(maxY, WFG.NH + 2 * WFG.PAD) };
+}
+
+function renderWorkflowGraph(g) {
+  document.getElementById('workflow-title').textContent =
+    `Workflow: ${short(g.trace_id, 26)} · ${g.session_count} session${g.session_count !== 1 ? 's' : ''}`;
+  const wrap = document.getElementById('wfg-wrap');
+  const hintEl = document.getElementById('wfg-hint');
+  document.getElementById('wfg-detail').style.display = 'none';
+
+  if (!g.nodes.length) {
+    wrap.innerHTML = '<div class="empty">No events in this workflow.</div>';
+    hintEl.textContent = '';
+    return;
+  }
+
+  // Assign each session a colour (stable: g.sessions is ordered by first appearance).
+  const sessColor = new Map();
+  g.sessions.forEach((s, i) => sessColor.set(s.session_id, WF_SESSION_COLORS[i % WF_SESSION_COLORS.length]));
+  const colorFor = (sid) => sessColor.get(sid) || '#8b95a7';
+
+  const capped = g.nodes.length > WFG.MAX_NODES;
+  const show = capped ? g.nodes.slice(0, WFG.MAX_NODES) : g.nodes;
+  const shownIds = new Set(show.map(n => n.id));
+  const edges = g.edges.filter(e => shownIds.has(e.from) && shownIds.has(e.to));
+
+  hintEl.innerHTML = capped
+    ? `Showing first ${WFG.MAX_NODES} of ${g.event_count} events · <span style="color:#c062ff">${g.cross_session_edge_count} cross-session edge${g.cross_session_edge_count !== 1 ? 's' : ''}</span>`
+    : `${g.event_count} events · ${g.edge_count} causation edge${g.edge_count !== 1 ? 's' : ''} · <span style="color:#c062ff">${g.cross_session_edge_count} cross-session</span>. Click a node for details.`;
+
+  const { pos, w, h } = wfgLayout(show, edges);
+  const nodeById = new Map(show.map(n => [n.id, n]));
+
+  let edgeSvg = '';
+  for (const e of edges) {
+    const p = pos.get(e.from), c = pos.get(e.to);
+    if (!p || !c) continue;
+    const x1 = p.x + WFG.NW / 2, y1 = p.y + WFG.NH;
+    const x2 = c.x + WFG.NW / 2, y2 = c.y;
+    const my = (y1 + y2) / 2;
+    const stroke = e.cross_session ? 'rgba(192,98,255,0.7)' : 'rgba(0,255,200,0.32)';
+    const dash = e.cross_session ? ' stroke-dasharray="5 3"' : '';
+    const marker = e.cross_session ? 'url(#wfg-arr-x)' : 'url(#wfg-arr)';
+    edgeSvg += `<path d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}" fill="none" stroke="${stroke}" stroke-width="${e.cross_session ? 2 : 1.5}"${dash} marker-end="${marker}"/>`;
+  }
+
+  let nodeSvg = '';
+  for (const [id, p] of pos) {
+    const n = nodeById.get(id);
+    const col = colorFor(n.session_id);
+    const lbl = (n.type || '').length > 20 ? n.type.slice(0, 18) + '…' : (n.type || '');
+    const idl = id.length > 18 ? id.slice(0, 16) + '…' : id;
+    const sidl = short(n.session_id || '—', 16);
+    nodeSvg += `<g role="button" tabindex="0" data-eid="${esc(id)}" style="cursor:pointer;outline:none">
+      <rect x="${p.x}" y="${p.y}" width="${WFG.NW}" height="${WFG.NH}" rx="9" fill="rgba(255,255,255,0.03)" stroke="${col}" stroke-width="1.6"/>
+      <rect x="${p.x}" y="${p.y}" width="5" height="${WFG.NH}" rx="2" fill="${col}"/>
+      <text x="${p.x + 14}" y="${p.y + 20}" font-size="11" font-weight="700" fill="${col}" font-family="Inter,sans-serif">${esc(lbl)}</text>
+      <text x="${p.x + 14}" y="${p.y + 35}" font-size="9" fill="rgba(255,255,255,0.4)" font-family="JetBrains Mono,monospace">${esc(idl)}</text>
+      <text x="${p.x + 14}" y="${p.y + 48}" font-size="9" fill="rgba(255,255,255,0.3)" font-family="JetBrains Mono,monospace">⌗ ${esc(sidl)}</text>
+    </g>`;
+  }
+
+  // Legend: a colour chip per session.
+  const legend = g.sessions.map(s =>
+    `<span class="wfg-leg"><span class="wfg-chip" style="background:${colorFor(s.session_id)}"></span>${esc(short(s.session_id, 18))}${s.agent_role ? ` <span class="hint">(${esc(s.agent_role)})</span>` : ''}</span>`
+  ).join('');
+
+  const containerW = (wrap.clientWidth || 800) - 4;
+  const scale = w > containerW ? containerW / w : 1;
+  wrap.innerHTML = `
+    <div class="wfg-legend">${legend}<span class="wfg-leg"><span class="wfg-chip" style="background:#c062ff"></span>cross-session edge</span></div>
+    <svg width="${Math.round(w * scale)}" height="${Math.round(h * scale)}" viewBox="0 0 ${w} ${h}" style="display:block" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="wfg-arr" markerWidth="8" markerHeight="6" refX="4" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="rgba(0,255,200,0.5)"/></marker>
+        <marker id="wfg-arr-x" markerWidth="8" markerHeight="6" refX="4" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="rgba(192,98,255,0.8)"/></marker>
+      </defs>
+      ${edgeSvg}${nodeSvg}
+    </svg>`;
+
+  wrap.querySelectorAll('g[data-eid]').forEach(el => {
+    el.addEventListener('click', () => wfgClick(el.dataset.eid));
+  });
+}
+
+function wfgClick(id) {
+  const n = wfGraph && wfGraph.nodes.find(x => x.id === id);
+  if (!n) return;
+  const st = es(n.type);
+  const det = document.getElementById('wfg-detail');
+  det.style.display = '';
+  det.innerHTML = `
+    <span class="badge ${st.b}">${esc(n.type)}</span>
+    <span class="hint" style="margin-left:8px">${n.time ? new Date(n.time).toLocaleString() : ''}</span>
+    <div class="hint" style="margin-top:4px">id: ${esc(n.id)}</div>
+    <div class="hint">session: ${esc(n.session_id || '—')}${n.agent_role ? ` · ${esc(n.agent_role)}` : ''}</div>
+    ${n.causation_id ? `<div class="hint">causation: ${esc(n.causation_id)}</div>` : ''}
+    <pre style="max-height:90px;margin-top:6px">${esc(JSON.stringify(n.payload, null, 2))}</pre>`;
 }
 
 function renderWorkflowTree(wf) {
