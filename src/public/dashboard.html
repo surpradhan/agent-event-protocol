@@ -421,6 +421,9 @@
       position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
       font-size: 12px; color: var(--muted); pointer-events: none;
     }
+    .session-role-filter {
+      width: 100%; margin-top: 6px; margin-bottom: 2px;
+    }
 
     /* ── Rejection items ── */
     .reject-item {
@@ -518,6 +521,13 @@
         <label class="sr-only" for="session-search">Filter sessions</label>
         <input id="session-search" type="text" placeholder="Filter by ID or source…" autocomplete="off" />
       </div>
+      <label class="sr-only" for="session-role-filter">Filter by agent role</label>
+      <select id="session-role-filter" class="session-role-filter">
+        <option value="">All roles</option>
+        <option value="orchestrator">orchestrator</option>
+        <option value="subagent">subagent</option>
+        <option value="standalone">standalone</option>
+      </select>
       <div id="sessions-list" class="item-list">
         <div class="empty">No sessions yet.</div>
       </div>
@@ -725,6 +735,7 @@ let activeIdx     = -1;
 let playTimer     = null;
 let sseConn       = null;
 let sessionFilter = '';        // persists across tab switches — cleared only on explicit input clear
+let sessionRoleFilter = '';    // agent-role filter for sessions sidebar
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Event-type style config — dark-mode neon palette for DAG nodes
@@ -861,12 +872,18 @@ function renderSessions(sessions) {
 
   // Apply client-side filter
   const q = sessionFilter.toLowerCase();
-  const filtered = q
-    ? sessions.filter(s =>
-        s.session_id.toLowerCase().includes(q) ||
-        (s.source || '').toLowerCase().includes(q) ||
-        (s.agent_role || '').toLowerCase().includes(q))
-    : sessions;
+  const role = sessionRoleFilter;
+  const filtered = sessions.filter(s => {
+    // Text filter
+    if (q && !s.session_id.toLowerCase().includes(q) &&
+        !(s.source || '').toLowerCase().includes(q) &&
+        !(s.agent_role || '').toLowerCase().includes(q))
+      return false;
+    // Role filter
+    if (role && (s.agent_role || '') !== role)
+      return false;
+    return true;
+  });
 
   if (!filtered.length) {
     box.innerHTML = '<div class="empty">No sessions match the filter.</div>';
@@ -1464,6 +1481,8 @@ document.getElementById('role-filter').addEventListener('change',
 // Session list filter
 document.getElementById('session-search').addEventListener('input',
   debounce(e => { sessionFilter = e.target.value.trim(); renderSessions(allSessions); }, 200));
+document.getElementById('session-role-filter').addEventListener('change',
+  e => { sessionRoleFilter = e.target.value; renderSessions(allSessions); });
 
 // Rejection log filter
 rejectSearchEl.addEventListener('input', debounce(() => renderRejections(), 200));
