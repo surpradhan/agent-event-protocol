@@ -230,12 +230,13 @@ agent-event-protocol/
 │   ├── validator.js        # Event schema validation
 │   ├── signature.js        # HMAC signing
 │   ├── cli.js              # CLI entry point
-│   └── middleware/         # Middleware modules
+│   ├── middleware/         # Middleware modules
+│   └── public/
+│       └── dashboard.html  # Frontend dashboard (HTML/CSS/JS)
 ├── tests/
-│   ├── unit/               # 87 unit tests
-│   └── integration/        # 5 integration tests
-├── examples/               # Demo scenarios
-└── dashboard/              # Frontend (HTML/CSS/JS)
+│   ├── unit/               # Unit tests
+│   └── integration/        # Integration tests
+└── examples/               # Demo scenarios
 ```
 
 ### Key Concepts
