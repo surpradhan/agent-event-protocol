@@ -381,7 +381,14 @@ app.get("/sessions/:sessionId", requireReadAccess, validatePathParams, async (re
  * items; iterate until next_cursor is null.
  */
 app.get("/sessions/:sessionId/events", requireReadAccess, validatePathParams, validateQueryParams, async (req, res) => {
-  const { type = "", q = "", limit, cursor } = req.query;
+  // A repeated query param (?type=a&type=b) is parsed as an ARRAY. validateQueryParams
+  // only String()-coerces a throwaway copy for its length check — the raw array still
+  // flows to the DB here, where an array binding throws → 500. Guard to a string (a
+  // non-string filter degrades to "no filter"), same typeof guard /export and
+  // sendAuditBundle use. limit/cursor are already validated by validateQueryParams.
+  const { limit, cursor } = req.query;
+  const type = typeof req.query.type === "string" ? req.query.type : "";
+  const q    = typeof req.query.q === "string" ? req.query.q : "";
   const result = await db.getPaginatedEvents(req.params.sessionId, {
     type, q, tenantId: req.tenant_id, limit, cursor
   });
@@ -416,8 +423,14 @@ app.get("/sessions/:sessionId/tree", requireReadAccess, validatePathParams, asyn
 // GET /sessions/:sessionId/export — download as JSON or CSV
 app.get("/sessions/:sessionId/export", requireReadAccess, validatePathParams, async (req, res) => {
   const sessionId = req.params.sessionId;
-  const format    = (req.query.format || "json").toLowerCase();
-  const { type = "", q = "" } = req.query;
+  // Express parses a repeated query param (?format=csv&format=json) as an
+  // ARRAY, so guard the type before any string method or DB binding — an array
+  // would otherwise throw (.toLowerCase is not a function; array bindings throw
+  // in the driver) and surface as a 500 instead of a graceful fallback. Same
+  // typeof guard the audit-bundle helper uses (see sendAuditBundle).
+  const format = (typeof req.query.format === "string" ? req.query.format : "json").toLowerCase();
+  const type   = typeof req.query.type === "string" ? req.query.type : "";
+  const q      = typeof req.query.q === "string" ? req.query.q : "";
   const events = await db.getSessionEvents(sessionId, { type, q, tenantId: req.tenant_id });
 
   // Validate tenant ownership of events (defense-in-depth against SQL injection)
