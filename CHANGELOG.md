@@ -4,6 +4,39 @@ All notable changes to AEP are documented here.
 
 ---
 
+## API-key access logs (Phase 14 PR-E) — 2026-06-12
+
+Phase 14 (Compliance & Audit Suite) PR-E: a full **API-key usage audit trail**
+(PRD §Phase 14 "Access logs") — record what each key did, when, and the outcome.
+
+- **Opt-in via `ACCESS_LOG_ENABLED`** (truthy = on; OFF by default). When on, each
+  key-authenticated request is recorded: api_key_id, tenant, HTTP method, URL
+  **path only** (never the query string — so `/stream?token=…` secrets aren't
+  persisted), response status, timestamp. Off by default so the ingest hot path
+  takes no extra per-request write.
+- **`src/middleware/accessLog.js`:** records on `res.on("finish")`,
+  fire-and-forget with errors swallowed — never adds latency to, or fails, the
+  observed request. Only requests that resolved to an API key are logged
+  (admin-token and keyless dev reads are skipped).
+- **`GET /admin/keys/:id/access-log`** (admin-scoped): most-recent-first records
+  for a key with `since` (inclusive) / `until` (exclusive) ISO-8601 window +
+  `limit` (1–1000, default 100). Returns `{ api_key_id, key_prefix, enabled,
+  total, entries, window }`; `enabled` distinguishes "logging off" from "key
+  unused". 404 for an unknown key; non-ISO since/until → 400.
+- **Schema:** new `api_key_access_log` table — SQLite migration `004_access_logs.js`
+  + mirrored in the Postgres `SCHEMA_DDL`. Backend methods `recordApiKeyAccess` /
+  `getApiKeyAccessLog` on the interface + both backends; shared `formatAccessLogRow`
+  helper keeps the two byte-identical (covered by the Postgres parity CI job).
+- **Docs:** OpenAPI path; `AUTH.md` + `.env.example` document `ACCESS_LOG_ENABLED`.
+  Caveat: access-log rows are not pruned by the retention job (manage growth at
+  the storage layer) — a candidate for a later PR.
+- **Tests:** `tests/unit/accessLog.test.js` (env-gate parsing) + 8 integration
+  cases (opt-in off-by-default, ingest+read recording, ordering, path has no
+  query string, since/until/limit, 400/404, admin auth). No new CI job. 180 unit
+  + 115 integration green.
+
+---
+
 ## Policy-enforcement analytics (Phase 14 PR-D) — 2026-06-12
 
 Phase 14 (Compliance & Audit Suite) PR-D: `policy.blocked` event analytics — the

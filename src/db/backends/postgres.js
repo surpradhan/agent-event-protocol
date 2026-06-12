@@ -45,7 +45,8 @@ const {
   computeMaxDepth,
   decodeCursor,
   encodeCursor,
-  applyTextFilter
+  applyTextFilter,
+  formatAccessLogRow
 } = require("./_helpers");
 
 // ---------------------------------------------------------------------------
@@ -145,6 +146,22 @@ const SCHEMA_DDL = `
     ('default', 'Default Project', 'default', 'enterprise', NULL, NULL,
      '1970-01-01T00:00:00.000Z')
   ON CONFLICT (id) DO NOTHING;
+
+  -- ----- api_key_access_log (Phase 14 PR-E) --------------------------------
+  -- Mirrors src/db/migrations/004_access_logs.js.  One row per authenticated
+  -- request when ACCESS_LOG_ENABLED is set; empty otherwise.
+  CREATE TABLE IF NOT EXISTS api_key_access_log (
+    id          TEXT    NOT NULL PRIMARY KEY,
+    api_key_id  TEXT    NOT NULL,
+    tenant_id   TEXT,
+    method      TEXT    NOT NULL,
+    path        TEXT    NOT NULL,
+    status      INTEGER NOT NULL,
+    ts          TEXT    NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_access_log_key_ts ON api_key_access_log (api_key_id, ts DESC);
+  CREATE INDEX IF NOT EXISTS idx_access_log_ts     ON api_key_access_log (ts);
 `;
 
 // Standard projection of a sessions row (column order matches SqliteBackend).
@@ -674,6 +691,51 @@ class PostgresBackend extends StorageBackend {
 
     const { rows } = await this._pool.query(sql, params);
     return rows.map(r => JSON.parse(r.raw_payload));
+  }
+
+  // ----- API-key access log (Phase 14 PR-E) -----
+
+  async recordApiKeyAccess({ id, apiKeyId, tenantId, method, path, status, ts }) {
+    await this._pool.query(
+      `INSERT INTO api_key_access_log
+         (id, api_key_id, tenant_id, method, path, status, ts)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [id, apiKeyId, tenantId ?? null, method, path, status, ts]
+    );
+  }
+
+  async getApiKeyAccessLog(apiKeyId, { since = null, until = null, limit = 100 } = {}) {
+    const pageSize = Math.min(Math.max(1, parseInt(limit, 10) || 100), 1000);
+
+    // Built dynamically (same shape as getSessionEvents): conditions only
+    // appended when present, so no IS NULL params / ::text cast needed.
+    let where = "WHERE api_key_id = $1";
+    const params = [apiKeyId];
+    if (since) {
+      params.push(since);
+      where += ` AND ts >= $${params.length}`;
+    }
+    if (until) {
+      params.push(until);
+      where += ` AND ts < $${params.length}`;
+    }
+
+    const totalRes = await this._pool.query(
+      `SELECT COUNT(*) AS n FROM api_key_access_log ${where}`,
+      params
+    );
+    const total = Number(totalRes.rows[0].n);
+
+    const listRes = await this._pool.query(
+      `SELECT id, api_key_id, tenant_id, method, path, status, ts
+       FROM api_key_access_log
+       ${where}
+       ORDER BY ts DESC
+       LIMIT $${params.length + 1}`,
+      [...params, pageSize]
+    );
+
+    return { total, entries: listRes.rows.map(formatAccessLogRow) };
   }
 
   // ----- pagination -----

@@ -2101,3 +2101,138 @@ describe("GET /analytics/policy-blocked", () => {
     assert.equal(body.total, 3);
   });
 });
+
+// ---------------------------------------------------------------------------
+// API-key access log — full usage audit trail (Phase 14 PR-E)
+// ---------------------------------------------------------------------------
+
+describe("GET /admin/keys/:id/access-log", () => {
+  let keyOffId;            // a key whose traffic happens while logging is OFF
+  let keyOn, keyOnId;      // a read+write key whose traffic is logged
+
+  // Mint a key and return { id, key } (admin-scoped).
+  async function mintKey(scopes) {
+    const res = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: "tenant-test", label: "access-log", scopes }),
+    });
+    const body = await res.json();
+    return { id: body.id, key: body.key };
+  }
+
+  async function getLog(id, qs = "") {
+    return fetch(`${baseUrl}/admin/keys/${id}/access-log${qs}`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+  }
+
+  // Poll the access log until `total` reaches at least `want` (the recorder runs
+  // fire-and-forget on response finish), or time out.
+  async function waitForTotal(id, want) {
+    for (let i = 0; i < 40; i++) {
+      const res = await getLog(id);
+      const body = await res.json();
+      if (body.total >= want) return body;
+      await new Promise(r => setTimeout(r, 25));
+    }
+    const res = await getLog(id);
+    return res.json();
+  }
+
+  before(async () => {
+    // 1) Logging OFF (default): traffic for keyOff must NOT be recorded.
+    delete process.env.ACCESS_LOG_ENABLED;
+    const off = await mintKey(["read"]);
+    keyOffId = off.id;
+    await fetch(`${baseUrl}/sessions`, { headers: { Authorization: `Bearer ${off.key}` } });
+
+    // 2) Enable logging, then drive a known amount of traffic with keyOn.
+    process.env.ACCESS_LOG_ENABLED = "true";
+    const on = await mintKey(["read", "write"]);
+    keyOn = on.key;
+    keyOnId = on.id;
+
+    // 3 reads (200) + 1 ingest (202) = 4 logged requests for keyOn.
+    await fetch(`${baseUrl}/sessions`, { headers: { Authorization: `Bearer ${keyOn}` } });
+    await fetch(`${baseUrl}/sessions`, { headers: { Authorization: `Bearer ${keyOn}` } });
+    await fetch(`${baseUrl}/metrics`, { headers: { Authorization: `Bearer ${keyOn}` } });
+    await ingest(makeEvent({ session_id: "ses_acl", trace_id: "trc_acl" }), keyOn);
+    await waitForTotal(keyOnId, 4);
+  });
+
+  after(() => {
+    delete process.env.ACCESS_LOG_ENABLED;
+  });
+
+  test("does NOT record when ACCESS_LOG_ENABLED is unset (opt-in)", async () => {
+    const res = await getLog(keyOffId);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.total, 0);
+    assert.equal(body.enabled, true); // reflects current env (now on), proving the 0 is from opt-in-off-at-the-time
+  });
+
+  test("requires admin auth (401 without the admin token)", async () => {
+    const res = await fetch(`${baseUrl}/admin/keys/${keyOnId}/access-log`);
+    assert.equal(res.status, 401);
+  });
+
+  test("404 for an unknown key id", async () => {
+    const res = await getLog("nonexistent-key-id");
+    assert.equal(res.status, 404);
+  });
+
+  test("records each key-authenticated request (incl. ingest), most-recent-first", async () => {
+    const res = await getLog(keyOnId);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.api_key_id, keyOnId);
+    assert.equal(body.enabled, true);
+    assert.ok(body.total >= 4, `expected >=4 entries, got ${body.total}`);
+
+    // Entries are most-recent-first and carry the expected projected fields.
+    for (const e of body.entries) {
+      assert.ok(typeof e.method === "string");
+      assert.ok(e.path.startsWith("/"));
+      assert.ok(!e.path.includes("?"), "path must not contain a query string");
+      assert.ok(Number.isInteger(e.status));
+      assert.equal(e.tenant_id, "tenant-test");
+      assert.ok(typeof e.ts === "string");
+    }
+    const times = body.entries.map(e => e.ts);
+    const sortedDesc = [...times].sort((a, b) => b.localeCompare(a));
+    assert.deepEqual(times, sortedDesc);
+
+    // The ingest (POST /events) request was recorded with a 202.
+    assert.ok(body.entries.some(e => e.method === "POST" && e.path === "/events" && e.status === 202));
+    // A read was recorded with a 200.
+    assert.ok(body.entries.some(e => e.method === "GET" && e.path === "/sessions" && e.status === 200));
+  });
+
+  test("?limit caps entries but not total", async () => {
+    const res = await getLog(keyOnId, "?limit=2");
+    const body = await res.json();
+    assert.equal(body.entries.length, 2);
+    assert.ok(body.total >= 4);
+  });
+
+  test("rejects a non-ISO ?since with 400", async () => {
+    const res = await getLog(keyOnId, "?since=not-a-date");
+    assert.equal(res.status, 400);
+  });
+
+  test("?until=epoch-start excludes all of today's entries", async () => {
+    const res = await getLog(keyOnId, "?until=1970-01-01T00:00:00Z");
+    const body = await res.json();
+    assert.equal(body.total, 0);
+    assert.equal(body.window.until, "1970-01-01T00:00:00Z");
+  });
+
+  test("only logs the requesting key — keyOn's log excludes keyOff activity", async () => {
+    const res = await getLog(keyOnId);
+    const body = await res.json();
+    // every entry belongs to keyOn
+    assert.ok(body.entries.every(e => e.api_key_id === keyOnId));
+  });
+});

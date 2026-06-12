@@ -32,7 +32,8 @@ const {
   computeMaxDepth,
   decodeCursor,
   encodeCursor,
-  applyTextFilter
+  applyTextFilter,
+  formatAccessLogRow
 } = require("./_helpers");
 
 const DEFAULT_DB_PATH = path.join(__dirname, "..", "..", "..", "data", "aep.db");
@@ -357,6 +358,14 @@ class SqliteBackend extends StorageBackend {
       // Delete events older than a cutoff for a tenant.
       deleteEventsBefore: db.prepare(`
         DELETE FROM events WHERE tenant_id = ? AND time < ?
+      `),
+
+      // API-key access log (Phase 14 PR-E).
+      insertAccessLog: db.prepare(`
+        INSERT INTO api_key_access_log
+          (id, api_key_id, tenant_id, method, path, status, ts)
+        VALUES
+          (@id, @api_key_id, @tenant_id, @method, @path, @status, @ts)
       `)
     };
 
@@ -690,6 +699,49 @@ class SqliteBackend extends StorageBackend {
     const params = [tenantId, tenantId, since, since, until, until];
     const rows = this._db.prepare(sql).all(...params);
     return rows.map(r => JSON.parse(r.raw_payload));
+  }
+
+  // ----- API-key access log (Phase 14 PR-E) -----
+
+  async recordApiKeyAccess({ id, apiKeyId, tenantId, method, path, status, ts }) {
+    this._stmts.insertAccessLog.run({
+      id,
+      api_key_id: apiKeyId,
+      tenant_id:  tenantId ?? null,
+      method,
+      path,
+      status,
+      ts
+    });
+  }
+
+  async getApiKeyAccessLog(apiKeyId, { since = null, until = null, limit = 100 } = {}) {
+    const pageSize = Math.min(Math.max(1, parseInt(limit, 10) || 100), 1000);
+
+    // `(? IS NULL OR …)` guards keep the statement text constant for the plan
+    // cache while since/until each toggle on a bound NULL.
+    const where = `
+      WHERE api_key_id = ?
+        AND (? IS NULL OR ts >= ?)
+        AND (? IS NULL OR ts <  ?)
+    `;
+    const whereParams = [apiKeyId, since, since, until, until];
+
+    const total = this._db
+      .prepare(`SELECT COUNT(*) AS n FROM api_key_access_log ${where}`)
+      .get(...whereParams).n;
+
+    const rows = this._db
+      .prepare(`
+        SELECT id, api_key_id, tenant_id, method, path, status, ts
+        FROM api_key_access_log
+        ${where}
+        ORDER BY ts DESC
+        LIMIT ?
+      `)
+      .all(...whereParams, pageSize);
+
+    return { total, entries: rows.map(formatAccessLogRow) };
   }
 
   // ----- pagination -----

@@ -221,6 +221,37 @@ class StorageBackend {
   async getPolicyBlockedEvents(tenantId, opts) {
     throw new Error("StorageBackend.getPolicyBlockedEvents() not implemented");
   }
+
+  // ----- API-key access log (Phase 14 PR-E) -----
+
+  /**
+   * Append one API-key access record.  Called fire-and-forget from the access-log
+   * middleware (only when ACCESS_LOG_ENABLED) after a response finishes, so it must
+   * never throw into the request path — callers swallow rejections.
+   *
+   * @param {{ id: string, apiKeyId: string, tenantId: string|null,
+   *           method: string, path: string, status: number, ts: string }} entry
+   * @returns {Promise<void>}
+   */
+  async recordApiKeyAccess(entry) {
+    throw new Error("StorageBackend.recordApiKeyAccess() not implemented");
+  }
+
+  /**
+   * Read the access log for one API key, most-recent-first, optionally restricted
+   * to a time window.  Resolves `{ total, entries }` where `total` is the count of
+   * all matching rows (ignoring `limit`) and `entries` is at most `limit` rows.
+   *
+   * @param {string} apiKeyId
+   * @param {{ since?: string|null, until?: string|null, limit?: number }} [opts]
+   *        since — inclusive ISO-8601 lower bound (`ts >= since`)
+   *        until — exclusive ISO-8601 upper bound (`ts < until`)
+   *        limit — max rows returned (caller clamps; default 100)
+   * @returns {Promise<{ total: number, entries: Array<object> }>}
+   */
+  async getApiKeyAccessLog(apiKeyId, opts) {
+    throw new Error("StorageBackend.getApiKeyAccessLog() not implemented");
+  }
 }
 
 module.exports = { StorageBackend };

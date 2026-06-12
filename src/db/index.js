@@ -28,7 +28,8 @@
  * getPaginatedSessions, getPaginatedEvents,
  * createApiKey, getApiKeyByHash, getApiKeyById, listApiKeys, revokeApiKey,
  * createProject, getProject, listProjects, getProjectEventCount,
- * countEventsBefore, pruneEventsBefore, getPolicyBlockedEvents
+ * countEventsBefore, pruneEventsBefore, getPolicyBlockedEvents,
+ * recordApiKeyAccess, getApiKeyAccessLog
  *
  * Environment variables
  * ---------------------
@@ -211,6 +212,14 @@ async function getPolicyBlockedEvents(tenantId, opts) {
   return getBackend().getPolicyBlockedEvents(tenantId, opts);
 }
 
+async function recordApiKeyAccess(entry) {
+  return getBackend().recordApiKeyAccess(entry);
+}
+
+async function getApiKeyAccessLog(apiKeyId, opts) {
+  return getBackend().getApiKeyAccessLog(apiKeyId, opts);
+}
+
 // ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
@@ -252,5 +261,8 @@ module.exports = {
   countEventsBefore,
   pruneEventsBefore,
   // Analytics (Phase 14 PR-D)
-  getPolicyBlockedEvents
+  getPolicyBlockedEvents,
+  // API-key access log (Phase 14 PR-E)
+  recordApiKeyAccess,
+  getApiKeyAccessLog
 };

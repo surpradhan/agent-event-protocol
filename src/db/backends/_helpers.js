@@ -153,11 +153,32 @@ function applyTextFilter(events, q) {
   });
 }
 
+/**
+ * Normalize an api_key_access_log row to the API shape, coercing `status` to a
+ * Number (Postgres returns INTEGER columns as JS numbers already, but COUNT and
+ * some drivers can surface strings — this keeps both backends byte-identical).
+ * @param {object} row
+ * @returns {{ id: string, api_key_id: string, tenant_id: string|null,
+ *             method: string, path: string, status: number, ts: string }}
+ */
+function formatAccessLogRow(row) {
+  return {
+    id:         row.id,
+    api_key_id: row.api_key_id,
+    tenant_id:  row.tenant_id ?? null,
+    method:     row.method,
+    path:       row.path,
+    status:     Number(row.status),
+    ts:         row.ts
+  };
+}
+
 module.exports = {
   formatSession,
   buildTree,
   computeMaxDepth,
   decodeCursor,
   encodeCursor,
-  applyTextFilter
+  applyTextFilter,
+  formatAccessLogRow
 };
