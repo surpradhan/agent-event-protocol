@@ -793,7 +793,7 @@
                     },
                     "by_day": {
                       "type": "array",
-                      "description": "Counts per UTC calendar day, ascending.",
+                      "description": "Counts per calendar day (the date prefix of event time; the UTC day for Z-normalized timestamps), ascending.",
                       "items": {
                         "type": "object",
                         "properties": {

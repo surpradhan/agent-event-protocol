@@ -12,7 +12,8 @@ delivers the "policy.blocked analytics dashboard live" success criterion).
 
 - **`GET /analytics/policy-blocked`** (read-scoped + tenant-scoped, like `/metrics`):
   returns `total`, ranked breakdowns `by_policy` / `by_action` / `by_source`, a
-  per-UTC-day `by_day` series, and a `recent` list. Optional query params: `since`
+  per-day `by_day` series (the date prefix of `event.time`), and a `recent` list.
+  Optional query params: `since`
   (inclusive) / `until` (exclusive) ISO-8601 time window, and `limit` (1–1000,
   default 20) for the `recent` list. Non-ISO `since`/`until` → 400; repeated params
   are coerced last-wins by the shared `validateQueryParams` middleware.

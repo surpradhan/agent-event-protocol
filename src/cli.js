@@ -705,7 +705,11 @@ async function cmdAnalyticsPolicyBlocked(flags, serverUrl, apiKey) {
 
   console.log("\n\x1b[1mMost recent\x1b[0m");
   for (const r of a.recent) {
-    const ts = new Date(r.time).toISOString().replace("T", " ").replace("Z", "");
+    // Guard against a missing/malformed time (new Date(bad).toISOString() throws).
+    const d = r.time ? new Date(r.time) : null;
+    const ts = d && !Number.isNaN(d.getTime())
+      ? d.toISOString().replace("T", " ").replace("Z", "")
+      : "—";
     console.log(`  \x1b[36m${ts}\x1b[0m  \x1b[33m${r.policy ?? "—"}\x1b[0m  ${r.action_blocked ?? "—"}`);
   }
 }

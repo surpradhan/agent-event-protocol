@@ -86,8 +86,11 @@ function summarizePolicyBlocked(events, { now = new Date(), limit = 20 } = {}) {
     bump(policyMap, bucketKey(payload.policy));
     bump(actionMap, bucketKey(payload.action_blocked));
     bump(sourceMap, bucketKey(ev && ev.source));
-    // Bucket by UTC calendar day (event.time is an ISO-8601 string; its first 10
-    // chars are the YYYY-MM-DD date). Non-string / malformed times fold into one
+    // Bucket by the date prefix of event.time (its first 10 chars, YYYY-MM-DD).
+    // This is the true UTC day when the stored timestamp is Z-normalized (the
+    // common case); an offset-bearing timestamp buckets by its offset-local day
+    // — the same lexicographic-on-TEXT model the rest of the store uses (e.g.
+    // since/until windowing, pruning). Non-string / malformed times fold into one
     // explicit bucket rather than crashing or silently vanishing.
     const day =
       ev && typeof ev.time === "string" && ev.time.length >= 10
@@ -97,8 +100,11 @@ function summarizePolicyBlocked(events, { now = new Date(), limit = 20 } = {}) {
   }
 
   // Most-recent-first; lexicographic compare on ISO-8601 strings is chronological.
+  // A missing/non-string time normalizes to "" so such an event sorts LAST (for
+  // symmetry with the by_day (unspecified) bucket), not first.
+  const timeKey = (e) => (e && typeof e.time === "string" ? e.time : "");
   const recent = [...list]
-    .sort((a, b) => String(b && b.time).localeCompare(String(a && a.time)))
+    .sort((a, b) => timeKey(b).localeCompare(timeKey(a)))
     .slice(0, cap)
     .map((ev) => {
       const payload = ev && typeof ev.payload === "object" && ev.payload ? ev.payload : {};

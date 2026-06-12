@@ -184,6 +184,18 @@ describe("summarizePolicyBlocked — recent list", () => {
     assert.equal(s.total, 2);
   });
 
+  test("an event with a missing/non-string time sorts LAST, not first", () => {
+    const s = summarizePolicyBlocked(
+      [
+        { id: "no-time", type: "policy.blocked", source: "agent://a", payload: {} },
+        ev({ id: "has-time", time: "2026-06-10T00:00:00Z" })
+      ],
+      { now: NOW }
+    );
+    assert.equal(s.recent[0].id, "has-time");
+    assert.equal(s.recent[1].id, "no-time");
+  });
+
   test("non-finite limit falls back to the default of 20", () => {
     const many = Array.from({ length: 25 }, (_, i) => ev({ id: `e${i}`, time: `2026-06-${String((i % 28) + 1).padStart(2, "0")}T00:00:00Z` }));
     assert.equal(summarizePolicyBlocked(many, { now: NOW, limit: NaN }).recent.length, 20);
