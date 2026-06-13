@@ -3279,3 +3279,181 @@ describe("Webhooks — GET / PATCH / DELETE", () => {
     assert.equal((await stillThere.json()).enabled, true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Webhooks (Phase 16-B) — event delivery + retries
+//
+// Exercises the REAL outbound delivery path against a local http listener, gated
+// by WEBHOOKS_ENABLED + WEBHOOK_TARGET_ALLOWLIST (so 127.0.0.1 is permitted) with
+// tiny backoff so retries are fast. Delivery is fire-and-forget, so tests poll the
+// webhook_deliveries table (via the db module) until a terminal row appears.
+// ---------------------------------------------------------------------------
+
+describe("Webhooks — event delivery (Phase 16-B)", () => {
+  const http = require("http");
+  let listener;
+  let listenerPort;
+  let received;
+  let responder; // (hitCount, res) => void — set per test
+
+  before(async () => {
+    received = [];
+    responder = (n, res) => res.writeHead(200).end("ok");
+    listener = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        received.push({ method: req.method, url: req.url, headers: req.headers, body });
+        responder(received.length, res);
+      });
+    });
+    await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
+    listenerPort = listener.address().port;
+
+    process.env.WEBHOOKS_ENABLED = "1";
+    process.env.WEBHOOK_TARGET_ALLOWLIST = `127.0.0.1:${listenerPort}`;
+    process.env.WEBHOOK_MAX_RETRIES = "3";
+    process.env.WEBHOOK_BACKOFF_BASE_MS = "1";
+    process.env.WEBHOOK_BACKOFF_MAX_MS = "5";
+    process.env.WEBHOOK_TIMEOUT_MS = "2000";
+  });
+
+  after(async () => {
+    await new Promise((resolve) => listener.close(resolve));
+    delete process.env.WEBHOOKS_ENABLED;
+    delete process.env.WEBHOOK_TARGET_ALLOWLIST;
+    delete process.env.WEBHOOK_MAX_RETRIES;
+    delete process.env.WEBHOOK_BACKOFF_BASE_MS;
+    delete process.env.WEBHOOK_BACKOFF_MAX_MS;
+    delete process.env.WEBHOOK_TIMEOUT_MS;
+  });
+
+  async function registerWebhook(body) {
+    const res = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: `http://127.0.0.1:${listenerPort}/hook`, ...body }),
+    });
+    assert.equal(res.status, 201);
+    return res.json();
+  }
+
+  async function waitForTerminalDelivery(webhookId, timeoutMs = 4000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const rows = await db.listWebhookDeliveries(webhookId, "tenant-test", { limit: 10 });
+      const terminal = rows.find((r) => r.status === "success" || r.status === "failed");
+      if (terminal) return { rows, terminal };
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const rows = await db.listWebhookDeliveries(webhookId, "tenant-test", { limit: 10 });
+    return { rows, terminal: null };
+  }
+
+  test("delivers a matching event and records a success row", async () => {
+    const before = received.length;
+    const wh = await registerWebhook({ event_types: ["task.created"] });
+    const event = makeEvent({ id: `evt_${crypto.randomUUID().replace(/-/g, "")}`, type: "task.created" });
+    const ing = await ingest(event);
+    assert.equal(ing.status, 202);
+
+    const { terminal } = await waitForTerminalDelivery(wh.id);
+    assert.ok(terminal, "expected a terminal delivery row");
+    assert.equal(terminal.status, "success");
+    assert.equal(terminal.attempts, 1);
+    assert.equal(terminal.last_status_code, 200);
+    assert.equal(terminal.event_id, event.id);
+    assert.equal(terminal.event_type, "task.created");
+
+    // The listener actually received the POST with the event in the body.
+    assert.ok(received.length > before);
+    const last = received[received.length - 1];
+    assert.equal(last.method, "POST");
+    const payload = JSON.parse(last.body);
+    assert.equal(payload.event.id, event.id);
+    assert.equal(payload.webhook_id, wh.id);
+  });
+
+  test("retries on 5xx then succeeds (records attempts > 1)", async () => {
+    const wh = await registerWebhook({ event_types: ["task.failed"] });
+    // Fail the first hit for THIS webhook's path, succeed after.
+    let hits = 0;
+    responder = (n, res) => {
+      hits += 1;
+      if (hits === 1) res.writeHead(503).end("try later");
+      else res.writeHead(200).end("ok");
+    };
+    const event = makeEvent({ id: `evt_${crypto.randomUUID().replace(/-/g, "")}`, type: "task.failed" });
+    await ingest(event);
+
+    const { terminal } = await waitForTerminalDelivery(wh.id);
+    assert.ok(terminal);
+    assert.equal(terminal.status, "success");
+    assert.ok(terminal.attempts >= 2, `expected ≥2 attempts, got ${terminal.attempts}`);
+    responder = (n, res) => res.writeHead(200).end("ok");
+  });
+
+  test("records a failed row after exhausting retries on persistent 500", async () => {
+    const wh = await registerWebhook({ event_types: ["error.raised"] });
+    responder = (n, res) => res.writeHead(500).end("nope");
+    const event = makeEvent({ id: `evt_${crypto.randomUUID().replace(/-/g, "")}`, type: "error.raised" });
+    await ingest(event);
+
+    const { terminal } = await waitForTerminalDelivery(wh.id);
+    assert.ok(terminal);
+    assert.equal(terminal.status, "failed");
+    assert.equal(terminal.attempts, 4); // 1 + WEBHOOK_MAX_RETRIES(3)
+    assert.equal(terminal.last_status_code, 500);
+    responder = (n, res) => res.writeHead(200).end("ok");
+  });
+
+  test("does not deliver an event that does not match the filter", async () => {
+    const wh = await registerWebhook({ event_types: ["memory.read"] });
+    const event = makeEvent({ id: `evt_${crypto.randomUUID().replace(/-/g, "")}`, type: "task.created" });
+    await ingest(event);
+    // Give any (erroneous) dispatch time to run, then assert no row was recorded.
+    await new Promise((r) => setTimeout(r, 300));
+    const rows = await db.listWebhookDeliveries(wh.id, "tenant-test", { limit: 10 });
+    assert.equal(rows.length, 0);
+  });
+
+  test("does not deliver to a disabled webhook", async () => {
+    const wh = await registerWebhook({ event_types: ["task.created"], enabled: false });
+    const event = makeEvent({ id: `evt_${crypto.randomUUID().replace(/-/g, "")}`, type: "task.created" });
+    await ingest(event);
+    await new Promise((r) => setTimeout(r, 300));
+    const rows = await db.listWebhookDeliveries(wh.id, "tenant-test", { limit: 10 });
+    assert.equal(rows.length, 0);
+  });
+
+  test("delivers nothing when WEBHOOKS_ENABLED is unset", async () => {
+    const wh = await registerWebhook({ event_types: ["task.created"] });
+    delete process.env.WEBHOOKS_ENABLED;
+    try {
+      const event = makeEvent({ id: `evt_${crypto.randomUUID().replace(/-/g, "")}`, type: "task.created" });
+      await ingest(event);
+      await new Promise((r) => setTimeout(r, 300));
+      const rows = await db.listWebhookDeliveries(wh.id, "tenant-test", { limit: 10 });
+      assert.equal(rows.length, 0);
+    } finally {
+      process.env.WEBHOOKS_ENABLED = "1";
+    }
+  });
+
+  test("tenant isolation — a webhook is only fed its own tenant's events", async () => {
+    const wh = await registerWebhook({ event_types: ["task.created"] });
+    // Mint a second tenant's write key and ingest an event as that tenant.
+    const keyRes = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: "tenant-other-16b", label: "other", scopes: ["read", "write"] }),
+    });
+    const otherKey = (await keyRes.json()).key;
+    const event = makeEvent({ id: `evt_${crypto.randomUUID().replace(/-/g, "")}`, type: "task.created", session_id: "ses_other", trace_id: "trc_other" });
+    await ingest(event, otherKey);
+    await new Promise((r) => setTimeout(r, 300));
+    // tenant-test's webhook must NOT have received tenant-other's event.
+    const rows = await db.listWebhookDeliveries(wh.id, "tenant-test", { limit: 10 });
+    assert.ok(!rows.some((row) => row.event_id === event.id));
+  });
+});

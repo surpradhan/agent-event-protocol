@@ -4,6 +4,41 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Webhook event delivery + retries (Phase 16-B) — 2026-06-13
+
+Phase 16 (Webhooks & Alerts) PR-B — delivers PRD §Phase 16 "event delivery: POST
+matching events to the webhook URL with retries". Builds on the 16-A registry.
+
+- **Delivery on ingest**: when an event is accepted, it is fanned out to the
+  tenant's **enabled** webhooks whose `event_types` filter matches, via a new
+  `src/webhookDelivery.js`. Each delivery POSTs `{ delivery_id, webhook_id,
+  event_type, delivered_at, event }` to the target URL.
+- **OFF by default** — nothing is delivered unless **`WEBHOOKS_ENABLED`** is
+  truthy, so a fresh deploy never starts POSTing anywhere. Registration still
+  works with delivery disabled.
+- **Off the ingest hot path** — delivery is fire-and-forget (scheduled on a
+  microtask after the 202 is sent); a slow/failing webhook never adds latency to
+  or fails an ingest.
+- **Bounded exponential-backoff retries** — retries transient failures (5xx, 408,
+  429, network/timeout) up to `WEBHOOK_MAX_RETRIES` (default 4); other 4xx are
+  permanent (no retry). Everything is bounded: per-attempt timeout
+  (`WEBHOOK_TIMEOUT_MS`), backoff base/ceiling, global concurrency
+  (`WEBHOOK_MAX_CONCURRENT`, a semaphore), and max payload size.
+- **SSRF re-checked at delivery** — the target is re-validated and its resolved
+  IPs are re-checked via a guarded DNS lookup right before connecting, so a host
+  that rebinds to a private/loopback address after registration is rejected. (Also
+  fixed a 16-A allowlist gap: a `host:port` allowlist entry now exempts that host's
+  IPs at delivery time, where DNS gives no port.)
+- **`webhook_deliveries` table** (tenant-scoped) records one row per attempt set:
+  `status` (pending→success/failed), `attempts`, `last_status_code`, `last_error`,
+  timestamps. SQLite migration `008_webhook_deliveries.js` + Postgres `SCHEMA_DDL`
+  mirror; new `createWebhookDelivery` / `updateWebhookDelivery` /
+  `listWebhookDeliveries` StorageBackend methods.
+- No new CI job. Server suite: 373 unit + 193 integration (incl. a real local-listener
+  delivery/retry test gated behind `WEBHOOKS_ENABLED` + the allowlist).
+
+---
+
 ## Webhook registration & management (Phase 16-A) — 2026-06-13
 
 Phase 16 (Webhooks & Alerts) PR-A — the registration half of PRD §Phase 16

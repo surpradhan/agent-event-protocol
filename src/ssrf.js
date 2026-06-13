@@ -213,6 +213,17 @@ function matchesAllowlist(host, port, allowlist) {
 }
 
 /**
+ * Is this host trusted by the allowlist, IGNORING port? An entry matches if it is
+ * the bare host, or a `host:port` entry whose host part equals `host`. Used by the
+ * delivery-time resolved-IP check, which only knows the host (a DNS lookup has no
+ * port), so a `host:port` allowlist entry must still exempt that host's IPs.
+ */
+function isHostAllowlisted(host, allowlist) {
+  if (!allowlist || allowlist.length === 0) return false;
+  return allowlist.some((e) => e === host || e.split(":")[0] === host);
+}
+
+/**
  * Validate a webhook target URL. Pure (no DNS).
  *
  * @param {string} rawUrl
@@ -270,8 +281,10 @@ function validateWebhookUrl(rawUrl, { allowlist } = {}) {
 function assertResolvedIpAllowed(host, resolvedIps, { allowlist } = {}) {
   const allow = normalizeAllowlist(allowlist);
   // An allowlisted host is trusted even if it resolves privately (that is the
-  // whole point of the allowlist — e.g. a localhost test listener).
-  if (matchesAllowlist(normalizeHost(host), null, allow)) return { ok: true };
+  // whole point of the allowlist — e.g. a localhost test listener). Match by host
+  // ignoring port: a `host:port` allowlist entry must still exempt that host's IPs
+  // here, since DNS resolution gives us no port to match against.
+  if (isHostAllowlisted(normalizeHost(host), allow)) return { ok: true };
 
   if (!Array.isArray(resolvedIps) || resolvedIps.length === 0) {
     return { ok: false, reason: "host did not resolve to any address" };
@@ -295,5 +308,6 @@ module.exports = {
   isBlockedIPv6,
   isBlockedHost,
   normalizeAllowlist,
-  matchesAllowlist
+  matchesAllowlist,
+  isHostAllowlisted
 };

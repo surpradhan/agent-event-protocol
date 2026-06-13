@@ -15,6 +15,7 @@ const { summarizePerformance } = require("./performance");
 const { detectAnomalies } = require("./anomalies");
 const { validateQuerySpec, runQuery } = require("./customQuery");
 const { validateCreateWebhook, validateUpdateWebhook } = require("./webhooks");
+const { scheduleDelivery } = require("./webhookDelivery");
 const { buildWorkflowGraph } = require("./workflowGraph");
 const { generateComplianceReport, isValidFramework, FRAMEWORK_IDS } = require("./compliance");
 const { renderComplianceReportPdf } = require("./compliance-pdf");
@@ -1401,6 +1402,11 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
   );
 
   broadcastSse("event.received", event, req.tenant_id);
+
+  // Fan the event out to any matching, enabled webhooks (Phase 16-B). This is
+  // fire-and-forget and gated by WEBHOOKS_ENABLED — it never blocks or fails the
+  // ingest response, and is a no-op when delivery is disabled.
+  scheduleDelivery(event, req.tenant_id);
 
   return res.status(202).json({ accepted: true, duplicate: false, id: event.id });
 });

@@ -35,7 +35,8 @@ const {
   applyTextFilter,
   formatAccessLogRow,
   formatSavedQueryRow,
-  formatWebhookRow
+  formatWebhookRow,
+  formatWebhookDeliveryRow
 } = require("./_helpers");
 
 const DEFAULT_DB_PATH = path.join(__dirname, "..", "..", "..", "data", "aep.db");
@@ -427,6 +428,33 @@ class SqliteBackend extends StorageBackend {
 
       deleteWebhook: db.prepare(`
         DELETE FROM webhooks WHERE id = ? AND tenant_id = ?
+      `),
+
+      // ----- webhook deliveries (Phase 16-B) -----
+      insertWebhookDelivery: db.prepare(`
+        INSERT INTO webhook_deliveries
+          (id, webhook_id, tenant_id, event_id, event_type, status, attempts,
+           last_status_code, last_error, created_at, updated_at)
+        VALUES
+          (@id, @webhook_id, @tenant_id, @event_id, @event_type, @status, @attempts,
+           @last_status_code, @last_error, @created_at, @updated_at)
+      `),
+
+      getWebhookDelivery: db.prepare(`
+        SELECT id, webhook_id, tenant_id, event_id, event_type, status, attempts,
+               last_status_code, last_error, created_at, updated_at
+        FROM   webhook_deliveries
+        WHERE  id = ? AND tenant_id = ?
+      `),
+
+      updateWebhookDelivery: db.prepare(`
+        UPDATE webhook_deliveries
+        SET    status = @status,
+               attempts = @attempts,
+               last_status_code = @last_status_code,
+               last_error = @last_error,
+               updated_at = @updated_at
+        WHERE  id = @id AND tenant_id = @tenant_id
       `)
     };
 
@@ -926,6 +954,61 @@ class SqliteBackend extends StorageBackend {
 
   async deleteWebhook(id, tenantId) {
     return this._stmts.deleteWebhook.run(id, tenantId).changes > 0;
+  }
+
+  // ----- webhook deliveries (Phase 16-B) -----
+
+  async createWebhookDelivery(record) {
+    this._stmts.insertWebhookDelivery.run({
+      id:               record.id,
+      webhook_id:       record.webhookId,
+      tenant_id:        record.tenantId,
+      event_id:         record.eventId,
+      event_type:       record.eventType,
+      status:           record.status,
+      attempts:         record.attempts ?? 0,
+      last_status_code: record.lastStatusCode ?? null,
+      last_error:       record.lastError ?? null,
+      created_at:       record.createdAt,
+      updated_at:       record.updatedAt
+    });
+    const row = this._stmts.getWebhookDelivery.get(record.id, record.tenantId);
+    return row ? formatWebhookDeliveryRow(row) : null;
+  }
+
+  async updateWebhookDelivery(id, tenantId, fields) {
+    const existing = this._stmts.getWebhookDelivery.get(id, tenantId);
+    if (!existing) return null;
+    this._stmts.updateWebhookDelivery.run({
+      id,
+      tenant_id:        tenantId,
+      status:           fields.status ?? existing.status,
+      attempts:         fields.attempts ?? existing.attempts,
+      last_status_code: fields.last_status_code ?? null,
+      last_error:       fields.last_error ?? null,
+      updated_at:       fields.updated_at
+    });
+    const row = this._stmts.getWebhookDelivery.get(id, tenantId);
+    return row ? formatWebhookDeliveryRow(row) : null;
+  }
+
+  async listWebhookDeliveries(webhookId, tenantId, { since = null, until = null, limit = 100 } = {}) {
+    const pageSize = Math.min(Math.max(1, parseInt(limit, 10) || 100), 1000);
+    // `(? IS NULL OR …)` guards keep the statement text constant for the plan
+    // cache while since/until each toggle on a bound NULL.
+    const rows = this._db
+      .prepare(`
+        SELECT id, webhook_id, tenant_id, event_id, event_type, status, attempts,
+               last_status_code, last_error, created_at, updated_at
+        FROM   webhook_deliveries
+        WHERE  webhook_id = ? AND tenant_id = ?
+          AND (? IS NULL OR created_at >= ?)
+          AND (? IS NULL OR created_at <  ?)
+        ORDER  BY created_at DESC
+        LIMIT  ?
+      `)
+      .all(webhookId, tenantId, since, since, until, until, pageSize);
+    return rows.map(formatWebhookDeliveryRow);
   }
 
   // ----- custom-analytics event fetch (Phase 15-B) -----

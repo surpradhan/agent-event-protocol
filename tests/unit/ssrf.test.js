@@ -197,6 +197,16 @@ describe("assertResolvedIpAllowed (delivery-time DNS-rebind check)", () => {
     const r = assertResolvedIpAllowed("localhost", ["127.0.0.1"], { allowlist: "localhost" });
     assert.equal(r.ok, true);
   });
+  test("a host:port allowlist entry exempts that host's resolved IPs (port ignored at delivery)", () => {
+    // DNS resolution gives no port, so a `host:port` entry must still trust the
+    // host's IPs — otherwise an allowlisted 127.0.0.1:9099 target is wrongly blocked.
+    const r = assertResolvedIpAllowed("127.0.0.1", ["127.0.0.1"], { allowlist: "127.0.0.1:9099" });
+    assert.equal(r.ok, true);
+  });
+  test("a different allowlisted host does NOT exempt an unrelated private IP", () => {
+    const r = assertResolvedIpAllowed("evil.example.com", ["10.0.0.1"], { allowlist: "127.0.0.1:9099" });
+    assert.equal(r.ok, false);
+  });
 });
 
 describe("isBlockedHost dispatch", () => {
