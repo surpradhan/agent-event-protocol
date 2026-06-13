@@ -251,6 +251,23 @@
           "updated_at": { "type": "string", "format": "date-time" }
         }
       },
+      "WebhookDelivery": {
+        "type": "object",
+        "description": "One (event → webhook) delivery attempt set, with its terminal outcome.",
+        "properties": {
+          "id": { "type": "string", "example": "wd_…" },
+          "webhook_id": { "type": "string" },
+          "tenant_id": { "type": "string" },
+          "event_id": { "type": "string" },
+          "event_type": { "type": "string" },
+          "status": { "type": "string", "enum": ["pending", "success", "failed"] },
+          "attempts": { "type": "integer", "description": "Number of HTTP attempts made (1 + retries)." },
+          "last_status_code": { "type": "integer", "nullable": true, "description": "Last HTTP status (null on network error / timeout / SSRF rejection)." },
+          "last_error": { "type": "string", "nullable": true, "description": "Short diagnostic for the last failure (null on success)." },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
       "LatencyStats": {
         "type": "object",
         "description": "Latency percentile statistics over a set of operation durations (milliseconds). Percentiles use the nearest-rank method, so each is an actually-observed sample.",
@@ -1394,6 +1411,30 @@
           "204": { "description": "Deleted" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "description": "Key lacks the 'write' scope" },
+          "404": { "description": "Not found for this tenant" }
+        }
+      }
+    },
+    "/webhooks/{id}/deliveries": {
+      "get": {
+        "tags": ["Webhooks"],
+        "summary": "List a webhook's delivery attempts",
+        "description": "Recent delivery attempts for a webhook (newest first), each with its terminal status, attempt count, last HTTP status code, and last error. Read- + tenant-scoped; 404 if the webhook isn't this tenant's.",
+        "operationId": "listWebhookDeliveries",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "since", "in": "query", "description": "Inclusive ISO-8601 lower bound on created_at.", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "until", "in": "query", "description": "Exclusive ISO-8601 upper bound on created_at.", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "limit", "in": "query", "description": "Max rows (1–1000, default 100).", "schema": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 100 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The webhook's recent delivery attempts",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "webhook_id": { "type": "string" }, "deliveries": { "type": "array", "items": { "$ref": "#/components/schemas/WebhookDelivery" } } } } } }
+          },
+          "400": { "description": "Invalid since/until/limit" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
           "404": { "description": "Not found for this tenant" }
         }
       }

@@ -1160,6 +1160,37 @@ app.delete("/webhooks/:id", requireApiKey("write"), validatePathParams, async (r
 });
 
 /**
+ * GET /webhooks/:id/deliveries — recent delivery attempts for a webhook
+ * (Phase 16-D). Read- + tenant-scoped. 404 if the webhook isn't this tenant's.
+ *
+ * Query params (all optional):
+ *   since — ISO-8601 inclusive lower bound on created_at (created_at >= since)
+ *   until — ISO-8601 exclusive upper bound on created_at (created_at <  until)
+ *   limit — max rows (1–1000, default 100)
+ */
+app.get("/webhooks/:id/deliveries", requireReadAccess, validatePathParams, validateQueryParams, async (req, res) => {
+  // 404 (not 403) when the webhook isn't the tenant's — don't leak existence.
+  const webhook = await db.getWebhook(req.params.id, req.tenant_id);
+  if (!webhook) return res.status(404).json({ error: "Not Found", message: "Webhook not found" });
+
+  const since = parseIsoBound(req.query.since);
+  const until = parseIsoBound(req.query.until);
+  if (!since.ok || !until.ok) {
+    return res.status(400).json({
+      error: "Bad Request",
+      message: "Query parameters 'since' and 'until' must be ISO-8601 timestamps"
+    });
+  }
+  const limit = req.query.limit !== undefined ? parseInt(req.query.limit, 10) : 100;
+  const deliveries = await db.listWebhookDeliveries(req.params.id, req.tenant_id, {
+    since: since.value,
+    until: until.value,
+    limit
+  });
+  res.json({ webhook_id: req.params.id, deliveries });
+});
+
+/**
  * GET /metrics/prometheus — Prometheus text format scrape endpoint
  *
  * Exports event counters, session/workflow gauges, per-type breakdowns,

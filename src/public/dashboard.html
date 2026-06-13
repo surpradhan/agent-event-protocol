@@ -579,6 +579,7 @@
     <button class="tab-btn"        id="tab-performance" onclick="switchMain('performance')">Performance</button>
     <button class="tab-btn"        id="tab-custom"     onclick="switchMain('custom')">Custom Analytics</button>
     <button class="tab-btn"        id="tab-anomalies"  onclick="switchMain('anomalies')">Anomalies<span id="anomalies-badge" class="tab-badge" style="display:none">0</span></button>
+    <button class="tab-btn"        id="tab-webhooks"   onclick="switchMain('webhooks')">Webhooks</button>
   </div>
 
   <!-- ═══ Sessions view ═══ -->
@@ -834,6 +835,27 @@
     </div>
   </div>
 
+  <!-- ═══ Webhooks view ═══ -->
+  <div id="view-webhooks" style="display:none">
+    <div class="card reject-panel">
+      <div class="panel-header" style="margin-bottom:12px">
+        <div>
+          <div class="panel-title">Webhooks</div>
+          <div class="hint" style="font-size:11px;margin-top:2px">Registered outbound endpoints for this tenant. Click one to see its recent delivery attempts. Delivery is gated server-side by <code>WEBHOOKS_ENABLED</code>; payloads are HMAC-signed (<code>X-AEP-Signature</code>).</div>
+        </div>
+        <button class="btn secondary" onclick="loadWebhooks()">Refresh</button>
+      </div>
+      <div id="wh-list"><div class="empty">No webhooks registered for this tenant.</div></div>
+    </div>
+    <div class="card reject-panel" id="wh-deliveries-card" style="display:none">
+      <div class="panel-header" style="margin-bottom:12px">
+        <div class="panel-title">Recent deliveries <span id="wh-del-target" class="hint"></span></div>
+        <button class="btn secondary" onclick="if(window._whSelected) loadWebhookDeliveries(window._whSelected)">Refresh</button>
+      </div>
+      <div id="wh-deliveries"><div class="empty">Select a webhook above.</div></div>
+    </div>
+  </div>
+
 </div><!-- .wrap -->
 
 <script>
@@ -1062,6 +1084,7 @@ function switchMain(v) {
   document.getElementById('view-performance').style.display = v === 'performance' ? '' : 'none';
   document.getElementById('view-custom').style.display = v === 'custom' ? '' : 'none';
   document.getElementById('view-anomalies').style.display = v === 'anomalies' ? '' : 'none';
+  document.getElementById('view-webhooks').style.display = v === 'webhooks' ? '' : 'none';
   document.getElementById('tab-sessions').className   = 'tab-btn' + (v === 'sessions'  ? ' active' : '');
   document.getElementById('tab-workflows').className  = 'tab-btn' + (v === 'workflows' ? ' active' : '');
   document.getElementById('tab-rejected').className   = 'tab-btn' + (v === 'rejected'  ? ' active' : '');
@@ -1069,11 +1092,13 @@ function switchMain(v) {
   document.getElementById('tab-performance').className = 'tab-btn' + (v === 'performance' ? ' active' : '');
   document.getElementById('tab-custom').className = 'tab-btn' + (v === 'custom' ? ' active' : '');
   document.getElementById('tab-anomalies').className = 'tab-btn' + (v === 'anomalies' ? ' active' : '');
+  document.getElementById('tab-webhooks').className = 'tab-btn' + (v === 'webhooks' ? ' active' : '');
   if (v === 'rejected') loadRejections();
   if (v === 'analytics') loadAnalytics();
   if (v === 'performance') loadPerformance();
   if (v === 'custom') initCustom();
   if (v === 'anomalies') loadAnomalies();
+  if (v === 'webhooks') loadWebhooks();
 }
 function switchSub(v) {
   subView = v;
@@ -2227,6 +2252,82 @@ function renderAnomalies(a) {
   }).join('');
 
   body.innerHTML = `${baseHtml ? `<div class="ad-baselines">${baseHtml}</div>` : ''}${items}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Webhooks (Phase 16-D) — registrations + recent delivery attempts
+// ─────────────────────────────────────────────────────────────────────────────
+async function loadWebhooks() {
+  const list = document.getElementById('wh-list');
+  try {
+    const data = await fetchJson('/webhooks');
+    renderWebhooks(data.webhooks || []);
+  } catch (e) {
+    list.innerHTML = `<div class="empty">Could not load webhooks (${esc(e.message)}).</div>`;
+  }
+}
+
+function renderWebhooks(webhooks) {
+  const list = document.getElementById('wh-list');
+  if (!webhooks.length) {
+    list.innerHTML = '<div class="empty">No webhooks registered for this tenant.</div>';
+    document.getElementById('wh-deliveries-card').style.display = 'none';
+    return;
+  }
+  list.innerHTML = webhooks.map(w => {
+    const state = w.enabled
+      ? '<span style="color:var(--ok,#3fb950)">enabled</span>'
+      : '<span class="hint">disabled</span>';
+    const types = (w.event_types || []).map(esc).join(', ');
+    return `
+      <div class="wh-row" onclick="loadWebhookDeliveries('${esc(w.id)}')" style="cursor:pointer;padding:10px 12px;border:1px solid var(--border,#30363d);border-radius:8px;margin-bottom:8px">
+        <div style="display:flex;gap:10px;align-items:center">
+          <code>${esc(w.id)}</code> ${state}
+          <span class="hint" style="margin-left:auto">${esc(w.created_at)}</span>
+        </div>
+        <div style="margin-top:4px;word-break:break-all">${esc(w.target_url)}</div>
+        <div class="hint" style="font-size:11px;margin-top:2px">events: ${types}</div>
+      </div>`;
+  }).join('');
+}
+
+const WH_STATUS_COLOR = { success: '#3fb950', failed: '#f85149', pending: '#d29922' };
+
+async function loadWebhookDeliveries(id) {
+  window._whSelected = id;
+  const card = document.getElementById('wh-deliveries-card');
+  card.style.display = '';
+  document.getElementById('wh-del-target').textContent = '(' + id + ')';
+  const body = document.getElementById('wh-deliveries');
+  body.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const data = await fetchJson('/webhooks/' + encodeURIComponent(id) + '/deliveries');
+    renderWebhookDeliveries(data.deliveries || []);
+  } catch (e) {
+    body.innerHTML = `<div class="empty">Could not load deliveries (${esc(e.message)}).</div>`;
+  }
+}
+
+function renderWebhookDeliveries(deliveries) {
+  const body = document.getElementById('wh-deliveries');
+  if (!deliveries.length) {
+    body.innerHTML = '<div class="empty">No delivery attempts recorded yet.</div>';
+    return;
+  }
+  body.innerHTML = deliveries.map(d => {
+    const col = WH_STATUS_COLOR[d.status] || 'var(--fg)';
+    const code = (d.last_status_code === null || d.last_status_code === undefined) ? '–' : d.last_status_code;
+    const err = d.last_error ? `<div class="hint" style="font-size:11px;color:#f85149;margin-top:2px">${esc(d.last_error)}</div>` : '';
+    return `
+      <div style="padding:8px 12px;border:1px solid var(--border,#30363d);border-radius:8px;margin-bottom:6px">
+        <div style="display:flex;gap:10px;align-items:center">
+          <span style="font-weight:600;color:${col};text-transform:uppercase;font-size:12px">${esc(d.status)}</span>
+          <code>${esc(d.event_type)}</code>
+          <span class="hint">attempts ${d.attempts} · HTTP ${esc(String(code))}</span>
+          <span class="hint" style="margin-left:auto">${esc(d.created_at)}</span>
+        </div>${err}
+      </div>`;
+  }).join('');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

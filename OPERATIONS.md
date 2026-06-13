@@ -478,6 +478,113 @@ projects / tiers / quotas (PR-C), retention / pruning (PR-D), and these ops docs
 
 ---
 
+## 6. Webhooks & alerts (Phase 16)
+
+AEP can POST ingested events to external HTTP endpoints ("webhooks") so you can
+trigger alerts or downstream automation. This is the project's only **outbound**
+network feature, so it is off by default and hardened against SSRF.
+
+### Enabling delivery (off by default)
+
+Registration (`POST /webhooks`) works at any time, but **no event is delivered
+anywhere** until you opt in:
+
+```bash
+WEBHOOKS_ENABLED=true      # 1/true/yes/on — without this, deliveries are a no-op
+```
+
+A fresh deploy therefore never starts POSTing to third parties unexpectedly.
+Delivery runs **off the ingest hot path** (fire-and-forget after the `202`), so a
+slow or failing webhook never adds latency to, or fails, an ingest.
+
+### Registering a webhook
+
+`POST /webhooks` (write-scoped key) with a `target_url`, an optional
+`event_types` filter (`["*"]` for all, or a subset of the 12 core event types),
+and an optional `enabled` flag:
+
+```bash
+curl -X POST https://your-aep/webhooks \
+  -H "Authorization: Bearer $WRITE_KEY" -H "Content-Type: application/json" \
+  -d '{"target_url":"https://hooks.example.com/aep","event_types":["error.raised","task.failed"]}'
+# → 201 { "id":"wh_…", …, "signing_secret":"whsec_…" }   ← store the secret NOW
+```
+
+The 201 response includes a one-time **`signing_secret`** — it is shown only here
+and never returned again (GET/list omit it). Manage webhooks with `GET /webhooks`,
+`GET /webhooks/:id`, `PATCH /webhooks/:id` (toggle `enabled` / change
+filter/URL), `DELETE /webhooks/:id`, or the `aep webhooks …` CLI.
+
+### SSRF security posture
+
+Every target URL is validated by a dedicated guard (`src/ssrf.js`) **both at
+registration and again at delivery time** (DNS can rebind in between). Blocked by
+default:
+
+- non-`http(s)` schemes, and URLs with embedded credentials (`user:pass@…`);
+- loopback (`127.0.0.0/8`, `::1`), the unspecified address, link-local
+  (`169.254.0.0/16` — including the `169.254.169.254` cloud-metadata endpoint),
+  RFC1918 private ranges, CGNAT (`100.64.0.0/10`), IPv6 ULA/link-local, and other
+  reserved ranges (IPv4-mapped IPv6 and the NAT64 `64:ff9b::/96` prefix are
+  decoded so they can't smuggle a private v4);
+- inherently-local hostnames (`localhost`, `*.internal`, `*.local`, …).
+
+At delivery the host is re-resolved and the socket is pinned to a **validated**
+IP, closing the DNS-rebind window. Self-hosters who must target an internal
+service (or a localhost listener in tests) can allow specific hosts:
+
+```bash
+WEBHOOK_TARGET_ALLOWLIST=alerts.svc.internal,127.0.0.1:9099   # host or host:port
+```
+
+An allowlisted host bypasses the private-range block but still must use
+`http(s)` and still cannot carry credentials.
+
+### Retry semantics (all bounded)
+
+A matching event is POSTed with **bounded exponential-backoff retries**. Transient
+failures (`5xx`, `408`, `429`, network errors, timeouts) are retried; other `4xx`
+are permanent (no retry). Every dimension is bounded — there is no unbounded
+queue:
+
+| Env var | Default | Hard max | Meaning |
+|---------|---------|----------|---------|
+| `WEBHOOK_MAX_RETRIES` | `4` | `10` | retries after the first attempt |
+| `WEBHOOK_TIMEOUT_MS` | `5000` | `30000` | per-attempt request timeout |
+| `WEBHOOK_MAX_CONCURRENT` | `10` | `100` | max concurrent in-flight deliveries |
+| `WEBHOOK_BACKOFF_BASE_MS` | `1000` | — | exponential backoff base |
+| `WEBHOOK_BACKOFF_MAX_MS` | `30000` | — | backoff ceiling per wait |
+
+### Payload signing & verification
+
+Each delivery is HMAC-SHA256-signed with the webhook's `signing_secret` (the same
+canonical-JSON + HMAC stack as event signatures) and carries:
+
+```
+X-AEP-Signature: hmac-sha256=<base64 digest>
+X-AEP-Webhook-Id / X-AEP-Delivery-Id / X-AEP-Event-Type
+```
+
+Verify by recomputing the HMAC over the **raw request body** you received and
+comparing in constant time — see `examples/verify-webhook-signature.js`. Guard
+against replay by deduping on the body's `delivery_id` and rejecting a stale
+`delivered_at`. (Webhooks created before signing was added have no secret and are
+delivered unsigned.)
+
+### Deliveries observability
+
+Every attempt set is recorded in `webhook_deliveries` (status
+`pending`/`success`/`failed`, attempt count, last HTTP code, last error). Inspect
+it via `GET /webhooks/:id/deliveries` (read-scoped; `since`/`until`/`limit`), the
+`aep webhooks deliveries <id>` CLI, or the dashboard **Webhooks** tab.
+
+**Caveat:** like the access log, `webhook_deliveries` rows are **not** pruned by
+the retention job — manage growth at the storage layer on high-volume
+deployments. Concurrency is bounded per node (the in-memory semaphore), so the
+limit is per-process, not cluster-wide.
+
+---
+
 *See also: [SETUP.md](./SETUP.md) (integration & API reference),
 [SECURITY.md](./SECURITY.md) (hardening), [AUTH.md](./AUTH.md) (keys, tenants,
 HMAC), and [CHANGELOG.md](./CHANGELOG.md) (version history).*

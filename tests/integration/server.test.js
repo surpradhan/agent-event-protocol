@@ -3558,3 +3558,107 @@ describe("Webhooks — HMAC payload signing (Phase 16-C)", () => {
     assert.ok(hit.headers["x-aep-delivery-id"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Webhooks (Phase 16-D) — GET /webhooks/:id/deliveries
+//
+// Seeds webhook_deliveries rows directly (delivery itself is covered in 16-B/16-C)
+// and exercises the read endpoint: shape, ordering, filters, scope, isolation.
+// ---------------------------------------------------------------------------
+
+describe("Webhooks — GET /webhooks/:id/deliveries (Phase 16-D)", () => {
+  let webhookId;
+
+  async function registerWebhook() {
+    const res = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: "https://hooks.example.com/d", event_types: ["task.created"] }),
+    });
+    return (await res.json()).id;
+  }
+
+  before(async () => {
+    webhookId = await registerWebhook();
+    // Seed three delivery rows (oldest → newest) for this tenant's webhook.
+    const base = Date.parse("2026-06-13T00:00:00.000Z");
+    const rows = [
+      { status: "success", attempts: 1, last_status_code: 200, last_error: null },
+      { status: "failed",  attempts: 4, last_status_code: 500, last_error: "HTTP 500" },
+      { status: "failed",  attempts: 4, last_status_code: null, last_error: "timeout after 5000ms" },
+    ];
+    for (let i = 0; i < rows.length; i++) {
+      const ts = new Date(base + i * 60000).toISOString();
+      const created = await db.createWebhookDelivery({
+        id: `wd_${crypto.randomUUID().replace(/-/g, "")}`,
+        webhookId,
+        tenantId: "tenant-test",
+        eventId: `evt_d${i}`,
+        eventType: "task.created",
+        status: "pending",
+        attempts: 0,
+        lastStatusCode: null,
+        lastError: null,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      await db.updateWebhookDelivery(created.id, "tenant-test", {
+        status: rows[i].status,
+        attempts: rows[i].attempts,
+        last_status_code: rows[i].last_status_code,
+        last_error: rows[i].last_error,
+        updated_at: ts,
+      });
+    }
+  });
+
+  test("returns the webhook's deliveries (newest first) with the right shape", async () => {
+    const res = await fetch(`${baseUrl}/webhooks/${webhookId}/deliveries`, { headers: { Authorization: `Bearer ${readKey}` } });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.webhook_id, webhookId);
+    assert.ok(Array.isArray(body.deliveries));
+    assert.ok(body.deliveries.length >= 3);
+    // Newest first.
+    assert.ok(body.deliveries[0].created_at >= body.deliveries[1].created_at);
+    const one = body.deliveries.find((d) => d.last_status_code === 200);
+    assert.equal(one.status, "success");
+    assert.equal(one.attempts, 1);
+    assert.equal(one.event_type, "task.created");
+    // A network-error row surfaces null status code + an error string.
+    const timeoutRow = body.deliveries.find((d) => d.last_error && d.last_error.includes("timeout"));
+    assert.equal(timeoutRow.last_status_code, null);
+  });
+
+  test("respects ?limit", async () => {
+    const res = await fetch(`${baseUrl}/webhooks/${webhookId}/deliveries?limit=1`, { headers: { Authorization: `Bearer ${readKey}` } });
+    const body = await res.json();
+    assert.equal(body.deliveries.length, 1);
+  });
+
+  test("400 on a malformed since/until", async () => {
+    const res = await fetch(`${baseUrl}/webhooks/${webhookId}/deliveries?since=not-a-date`, { headers: { Authorization: `Bearer ${readKey}` } });
+    assert.equal(res.status, 400);
+  });
+
+  test("404 for an unknown webhook id", async () => {
+    const res = await fetch(`${baseUrl}/webhooks/wh_does_not_exist/deliveries`, { headers: { Authorization: `Bearer ${readKey}` } });
+    assert.equal(res.status, 404);
+  });
+
+  test("tenant isolation — another tenant gets 404, not the rows", async () => {
+    const keyRes = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: "tenant-other-16d", label: "other", scopes: ["read"] }),
+    });
+    const otherKey = (await keyRes.json()).key;
+    const res = await fetch(`${baseUrl}/webhooks/${webhookId}/deliveries`, { headers: { Authorization: `Bearer ${otherKey}` } });
+    assert.equal(res.status, 404);
+  });
+
+  test("requires auth (401 without a key)", async () => {
+    const res = await fetch(`${baseUrl}/webhooks/${webhookId}/deliveries`);
+    assert.equal(res.status, 401);
+  });
+});

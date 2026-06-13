@@ -963,6 +963,7 @@ Usage:
   aep webhooks create --url <target> [--events <list>] [--disabled]
   aep webhooks update <id> [--url <target>] [--events <list>] [--enable | --disable]
   aep webhooks delete <id>
+  aep webhooks deliveries <id> [--since iso] [--until iso] [--limit n]
 
 Flags:
   --url     <target>   Target URL (http/https; SSRF-guarded — no private/loopback hosts)
@@ -970,7 +971,11 @@ Flags:
                        e.g. --events error.raised,task.failed
   --disabled           Create the webhook disabled (no deliveries until enabled)
   --enable | --disable Toggle the enabled flag on update
+  --since/--until/--limit  Filter delivery history (deliveries subcommand)
   --json               Print the raw JSON response
+
+Note: 'create' returns a one-time signing_secret (shown only once) — store it.
+Deliveries carry an X-AEP-Signature: hmac-sha256=<base64> header (verify over the raw body).
 `);
 }
 
@@ -1045,6 +1050,26 @@ async function cmdWebhooks(positional, flags, serverUrl, apiKey) {
       const res = await request("DELETE", `${serverUrl}/webhooks/${encodeURIComponent(id)}`, null, auth);
       if (res.status === 204) { console.log("Deleted."); return; }
       die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+      return;
+    }
+    case "deliveries": {
+      if (!id) die("Usage: aep webhooks deliveries <id> [--since iso] [--until iso] [--limit n]");
+      const qs = new URLSearchParams();
+      if (flags.since) qs.set("since", flags.since);
+      if (flags.until) qs.set("until", flags.until);
+      if (flags.limit) qs.set("limit", flags.limit);
+      const query = qs.toString() ? `?${qs}` : "";
+      const res = await request("GET", `${serverUrl}/webhooks/${encodeURIComponent(id)}/deliveries${query}`, null, auth);
+      if (res.status !== 200) die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+      if (flags.json) return show(res.body);
+      const rows = res.body.deliveries || [];
+      if (rows.length === 0) { console.log("(no deliveries)"); return; }
+      const sevColor = { success: "\x1b[32m", failed: "\x1b[31m", pending: "\x1b[33m" };
+      for (const d of rows) {
+        const col = sevColor[d.status] || "";
+        console.log(`  ${col}${d.status}\x1b[0m  ${d.event_type}  attempts=${d.attempts}  code=${d.last_status_code ?? "-"}  ${d.created_at}`);
+        if (d.last_error) console.log(`    error: ${d.last_error}`);
+      }
       return;
     }
     default:
