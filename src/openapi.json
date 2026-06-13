@@ -44,6 +44,73 @@
       }
     },
     "schemas": {
+      "AnomalyReport": {
+        "type": "object",
+        "description": "Workflow anomaly report (Phase 15-D). Traces are flagged by the robust modified-z (median/MAD) rule against the per-tenant cross-trace baseline.",
+        "properties": {
+          "threshold": { "type": "number", "description": "The modified-z cutoff used." },
+          "trace_count": { "type": "integer", "description": "Traces evaluated in the window." },
+          "anomaly_count": { "type": "integer", "description": "Traces flagged (pre-limit)." },
+          "baselines": {
+            "type": "object",
+            "description": "Per-metric baseline (keys: error_rate, policy_blocked_count, latency_max_ms).",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "median": { "type": "number" },
+                "scale": { "type": "number", "description": "Robust dispersion (≈ stddev) from MAD or mean-AD." },
+                "value_threshold": { "type": "number", "nullable": true, "description": "Raw-value cutoff; null when the baseline is not stable." },
+                "sample_size": { "type": "integer" },
+                "stable": { "type": "boolean", "description": "False when too few traces or zero spread; such a metric never flags." }
+              }
+            }
+          },
+          "anomalies": {
+            "type": "array",
+            "description": "Flagged traces, most anomalous first (capped at `limit`).",
+            "items": {
+              "type": "object",
+              "properties": {
+                "trace_id": { "type": "string" },
+                "max_score": { "type": "number" },
+                "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+                "metrics": {
+                  "type": "object",
+                  "properties": {
+                    "event_count": { "type": "integer" },
+                    "error_count": { "type": "integer" },
+                    "error_rate": { "type": "number" },
+                    "policy_blocked_count": { "type": "integer" },
+                    "latency_max_ms": { "type": "integer" }
+                  }
+                },
+                "flags": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "metric": { "type": "string", "enum": ["error_rate", "policy_blocked_count", "latency_max_ms"] },
+                      "value": { "type": "number" },
+                      "baseline_median": { "type": "number" },
+                      "value_threshold": { "type": "number" },
+                      "score": { "type": "number", "description": "Robust modified-z for this metric." },
+                      "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "generated_at": { "type": "string", "format": "date-time" },
+          "window": {
+            "type": "object",
+            "properties": {
+              "since": { "type": "string", "format": "date-time", "nullable": true },
+              "until": { "type": "string", "format": "date-time", "nullable": true }
+            }
+          }
+        }
+      },
       "WorkflowGraph": {
         "type": "object",
         "description": "Event-level causation graph spanning all sessions of a trace (Phase 15-C).",
@@ -1100,6 +1167,29 @@
           "400": {
             "description": "Invalid query parameter (e.g. a non-ISO `since`/`until`, or `limit` outside 1-1000)"
           },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/analytics/anomalies": {
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "Workflow anomaly detection",
+        "description": "Flags workflows (traces) whose error-rate, policy.blocked volume, or latency deviates from the per-tenant cross-trace baseline by more than `threshold` robust modified-z (median/MAD) — \"alert when a workflow deviates from expected patterns\". A metric only flags when its baseline is stable (at least 3 traces and non-zero spread). Read- + tenant-scoped.",
+        "operationId": "getAnomalies",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "since", "in": "query", "description": "Inclusive lower bound on event time (`time >= since`). ISO-8601.", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "until", "in": "query", "description": "Exclusive upper bound on event time (`time < until`). ISO-8601.", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "threshold", "in": "query", "description": "Modified-z cutoff (> 0, default 3.5; smaller is more sensitive).", "schema": { "type": "number", "minimum": 0, "exclusiveMinimum": true, "default": 3.5 } },
+          { "name": "limit", "in": "query", "description": "Maximum anomalies returned (1-1000, default 50).", "schema": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 50 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Anomaly report",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AnomalyReport" } } }
+          },
+          "400": { "description": "Invalid query parameter (non-ISO since/until, non-positive threshold, or limit outside 1-1000)" },
           "401": { "$ref": "#/components/responses/Unauthorized" }
         }
       }

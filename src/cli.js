@@ -10,7 +10,7 @@
  *   aep export   — Export session events as JSON or CSV
  *   aep audit    — Build / verify / render a tamper-evident audit bundle
  *   aep workflow — Query a full workflow tree by trace_id
- *   aep analytics — Policy-enforcement, performance & custom analytics
+ *   aep analytics — Policy-enforcement, performance, custom & anomaly analytics
  *   aep compliance — Compliance report templates (SOC2/HIPAA/GDPR/EU AI Act)
  *   aep validate — Validate a local event JSON file (existing)
  *
@@ -124,7 +124,7 @@ Commands:
   export     Export session events as JSON or CSV
   audit      Build / verify / render a tamper-evident audit bundle
   workflow   Query a full workflow tree by trace_id
-  analytics  Policy-enforcement, performance & custom analytics
+  analytics  Policy-enforcement, performance, custom & anomaly analytics
   compliance Compliance report templates (SOC2/HIPAA/GDPR/EU AI Act)
   validate   Validate a local event JSON file
 
@@ -672,22 +672,31 @@ async function cmdWorkflow(positional, flags, serverUrl, apiKey) {
 
 function analyticsHelp() {
   console.log(`
-\x1b[1maep analytics\x1b[0m — Policy-enforcement, performance & custom analytics
+\x1b[1maep analytics\x1b[0m — Policy-enforcement, performance, custom & anomaly analytics
 
 Usage:
   aep analytics policy-blocked [flags]
   aep analytics performance    [flags]
   aep analytics query          [flags]
+  aep analytics anomalies      [flags]
 
 Subcommands:
   policy-blocked   Aggregate policy.blocked events (what the agent refused, and when)
   performance      Latency profiling: p50/p95/p99 per tool / agent / session / operation
   query            Run / save / list user-defined custom-analytics queries (safe, structured)
+  anomalies        Flag workflows that deviate from baseline (error-rate / policy.blocked / latency)
 
 Flags (policy-blocked / performance):
   --since  <iso>    Inclusive lower bound on event time (ISO-8601)
   --until  <iso>    Exclusive upper bound on event time (ISO-8601)
   --limit  <n>      Max entries in the recent / slowest list (1-1000, default 20)
+  --json            Print the raw JSON response instead of a summary
+
+Flags (anomalies):
+  --since <iso>     Inclusive lower bound on event time (ISO-8601)
+  --until <iso>     Exclusive upper bound on event time (ISO-8601)
+  --threshold <n>   Modified-z cutoff (>0, default 3.5; smaller = more sensitive)
+  --limit <n>       Max anomalies returned (1-1000, default 50)
   --json            Print the raw JSON response instead of a summary
 
 Flags (query):
@@ -883,6 +892,44 @@ async function cmdAnalyticsQuery(flags, serverUrl, apiKey) {
   show(res.body);
 }
 
+async function cmdAnalyticsAnomalies(flags, serverUrl, apiKey) {
+  if (!apiKey) die("API key required. Set --key or AEP_API_KEY env var.");
+
+  const qs = new URLSearchParams();
+  if (flags.since) qs.set("since", flags.since);
+  if (flags.until) qs.set("until", flags.until);
+  if (flags.threshold) qs.set("threshold", flags.threshold);
+  if (flags.limit) qs.set("limit", flags.limit);
+  const query = qs.toString() ? `?${qs}` : "";
+
+  const res = await request("GET", `${serverUrl}/analytics/anomalies${query}`, null, {
+    Authorization: `Bearer ${apiKey}`,
+  });
+  if (res.status !== 200) {
+    die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+  }
+
+  if (flags.json) {
+    console.log(JSON.stringify(res.body, null, 2));
+    return;
+  }
+
+  const a = res.body;
+  console.log(`Anomalies: \x1b[1m${a.anomaly_count}\x1b[0m across ${a.trace_count} workflow(s)  (threshold=${a.threshold} modified-z)`);
+  if (a.anomaly_count === 0) {
+    console.log("  (no workflows deviate from the baseline)");
+    return;
+  }
+  const sevColor = { critical: "\x1b[31m", high: "\x1b[33m", medium: "\x1b[36m", low: "\x1b[90m" };
+  for (const an of a.anomalies) {
+    const col = sevColor[an.severity] || "";
+    console.log(`\n  ${col}${an.severity.toUpperCase()}\x1b[0m  \x1b[1m${an.trace_id}\x1b[0m  (max score ${an.max_score.toFixed(1)})`);
+    for (const f of an.flags) {
+      console.log(`    ${f.metric} = ${typeof f.value === "number" ? f.value.toFixed(2).replace(/\.00$/, "") : f.value}  (baseline≈${f.baseline_median.toFixed(2)}, score ${f.score.toFixed(1)})`);
+    }
+  }
+}
+
 async function cmdAnalytics(positional, flags, serverUrl, apiKey) {
   // `--help` prints usage for the group OR any subcommand (e.g.
   // `analytics performance --help`) before the per-subcommand key check.
@@ -893,6 +940,7 @@ async function cmdAnalytics(positional, flags, serverUrl, apiKey) {
     case "policy-blocked": return cmdAnalyticsPolicyBlocked(flags, serverUrl, apiKey);
     case "performance": return cmdAnalyticsPerformance(flags, serverUrl, apiKey);
     case "query": return cmdAnalyticsQuery(flags, serverUrl, apiKey);
+    case "anomalies": return cmdAnalyticsAnomalies(flags, serverUrl, apiKey);
     default:
       analyticsHelp();
       if (sub) die(`Unknown analytics subcommand: '${sub}'`);
