@@ -240,6 +240,26 @@ async function getEventsForQuery(tenantId, opts) {
   return getBackend().getEventsForQuery(tenantId, opts);
 }
 
+async function createWebhook(record) {
+  return getBackend().createWebhook(record);
+}
+
+async function getWebhook(id, tenantId) {
+  return getBackend().getWebhook(id, tenantId);
+}
+
+async function listWebhooks(tenantId) {
+  return getBackend().listWebhooks(tenantId);
+}
+
+async function updateWebhook(id, tenantId, fields, updatedAt) {
+  return getBackend().updateWebhook(id, tenantId, fields, updatedAt);
+}
+
+async function deleteWebhook(id, tenantId) {
+  return getBackend().deleteWebhook(id, tenantId);
+}
+
 async function recordApiKeyAccess(entry) {
   return getBackend().recordApiKeyAccess(entry);
 }
@@ -302,5 +322,11 @@ module.exports = {
   getEventsForQuery,
   // API-key access log (Phase 14 PR-E)
   recordApiKeyAccess,
-  getApiKeyAccessLog
+  getApiKeyAccessLog,
+  // Webhooks (Phase 16-A)
+  createWebhook,
+  getWebhook,
+  listWebhooks,
+  updateWebhook,
+  deleteWebhook
 };

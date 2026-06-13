@@ -11,6 +11,7 @@
  *   aep audit    — Build / verify / render a tamper-evident audit bundle
  *   aep workflow — Query a full workflow tree by trace_id
  *   aep analytics — Policy-enforcement, performance, custom & anomaly analytics
+ *   aep webhooks — Register & manage outbound webhooks
  *   aep compliance — Compliance report templates (SOC2/HIPAA/GDPR/EU AI Act)
  *   aep validate — Validate a local event JSON file (existing)
  *
@@ -125,6 +126,7 @@ Commands:
   audit      Build / verify / render a tamper-evident audit bundle
   workflow   Query a full workflow tree by trace_id
   analytics  Policy-enforcement, performance, custom & anomaly analytics
+  webhooks   Register & manage outbound webhooks
   compliance Compliance report templates (SOC2/HIPAA/GDPR/EU AI Act)
   validate   Validate a local event JSON file
 
@@ -948,6 +950,110 @@ async function cmdAnalytics(positional, flags, serverUrl, apiKey) {
 }
 
 // ---------------------------------------------------------------------------
+// Command: webhooks (Phase 16-A)
+// ---------------------------------------------------------------------------
+
+function webhooksHelp() {
+  console.log(`
+\x1b[1maep webhooks\x1b[0m — Register & manage outbound webhooks
+
+Usage:
+  aep webhooks list
+  aep webhooks get    <id>
+  aep webhooks create --url <target> [--events <list>] [--disabled]
+  aep webhooks update <id> [--url <target>] [--events <list>] [--enable | --disable]
+  aep webhooks delete <id>
+
+Flags:
+  --url     <target>   Target URL (http/https; SSRF-guarded — no private/loopback hosts)
+  --events  <list>     Comma-separated event types, or '*' for all (default: '*')
+                       e.g. --events error.raised,task.failed
+  --disabled           Create the webhook disabled (no deliveries until enabled)
+  --enable | --disable Toggle the enabled flag on update
+  --json               Print the raw JSON response
+`);
+}
+
+/** Parse --events into the array the API expects (["*"] or a list of types). */
+function parseEventTypesFlag(raw) {
+  if (raw === undefined) return undefined;
+  return String(raw)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function printWebhook(w) {
+  const state = w.enabled ? "\x1b[32menabled\x1b[0m" : "\x1b[90mdisabled\x1b[0m";
+  console.log(`  \x1b[36m${w.id}\x1b[0m  ${state}  ${w.target_url}`);
+  console.log(`    events: ${w.event_types.join(", ")}  (created ${w.created_at})`);
+}
+
+async function cmdWebhooks(positional, flags, serverUrl, apiKey) {
+  if (flags.help) { webhooksHelp(); return; }
+  if (!apiKey) die("API key required. Set --key or AEP_API_KEY env var.");
+  const auth = { Authorization: `Bearer ${apiKey}` };
+  const sub = positional[1];
+  const id = positional[2];
+  const show = (body) => console.log(JSON.stringify(body, null, 2));
+
+  switch (sub) {
+    case "list": {
+      const res = await request("GET", `${serverUrl}/webhooks`, null, auth);
+      if (res.status !== 200) die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+      if (flags.json) return show(res.body);
+      const rows = res.body.webhooks || [];
+      if (rows.length === 0) { console.log("(no webhooks)"); return; }
+      rows.forEach(printWebhook);
+      return;
+    }
+    case "get": {
+      if (!id) die("Usage: aep webhooks get <id>");
+      const res = await request("GET", `${serverUrl}/webhooks/${encodeURIComponent(id)}`, null, auth);
+      if (res.status !== 200) die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+      return show(res.body);
+    }
+    case "create": {
+      if (!flags.url || flags.url === true) die("Usage: aep webhooks create --url <target> [--events <list>] [--disabled]");
+      const body = { target_url: String(flags.url) };
+      const events = parseEventTypesFlag(flags.events);
+      if (events) body.event_types = events;
+      if (flags.disabled) body.enabled = false;
+      const res = await request("POST", `${serverUrl}/webhooks`, body, auth);
+      if (res.status !== 201) die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+      console.log(`Created webhook \x1b[36m${res.body.id}\x1b[0m → ${res.body.target_url}`);
+      if (flags.json) show(res.body);
+      return;
+    }
+    case "update": {
+      if (!id) die("Usage: aep webhooks update <id> [--url <target>] [--events <list>] [--enable | --disable]");
+      if (flags.enable && flags.disable) die("--enable and --disable are mutually exclusive");
+      const body = {};
+      if (flags.url && flags.url !== true) body.target_url = String(flags.url);
+      const events = parseEventTypesFlag(flags.events);
+      if (events) body.event_types = events;
+      if (flags.enable) body.enabled = true;
+      if (flags.disable) body.enabled = false;
+      const res = await request("PATCH", `${serverUrl}/webhooks/${encodeURIComponent(id)}`, body, auth);
+      if (res.status !== 200) die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+      console.log(`Updated webhook \x1b[36m${res.body.id}\x1b[0m`);
+      if (flags.json) show(res.body);
+      return;
+    }
+    case "delete": {
+      if (!id) die("Usage: aep webhooks delete <id>");
+      const res = await request("DELETE", `${serverUrl}/webhooks/${encodeURIComponent(id)}`, null, auth);
+      if (res.status === 204) { console.log("Deleted."); return; }
+      die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+      return;
+    }
+    default:
+      webhooksHelp();
+      if (sub) die(`Unknown webhooks subcommand: '${sub}'`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Command: compliance (Phase 14 PR-F)
 // ---------------------------------------------------------------------------
 
@@ -1122,6 +1228,7 @@ async function main() {
       case "audit":    await cmdAudit(positional, flags, serverUrl, apiKey); break;
       case "workflow": await cmdWorkflow(positional, flags, serverUrl, apiKey); break;
       case "analytics": await cmdAnalytics(positional, flags, serverUrl, apiKey); break;
+      case "webhooks": await cmdWebhooks(positional, flags, serverUrl, apiKey); break;
       case "compliance": await cmdCompliance(positional, flags, serverUrl, apiKey); break;
       case "validate": await cmdValidate(positional, flags); break;
       default:

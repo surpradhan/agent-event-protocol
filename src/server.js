@@ -14,6 +14,7 @@ const { summarizePolicyBlocked } = require("./analytics");
 const { summarizePerformance } = require("./performance");
 const { detectAnomalies } = require("./anomalies");
 const { validateQuerySpec, runQuery } = require("./customQuery");
+const { validateCreateWebhook, validateUpdateWebhook } = require("./webhooks");
 const { buildWorkflowGraph } = require("./workflowGraph");
 const { generateComplianceReport, isValidFramework, FRAMEWORK_IDS } = require("./compliance");
 const { renderComplianceReportPdf } = require("./compliance-pdf");
@@ -1064,6 +1065,90 @@ app.post("/analytics/saved-queries/:id/run", requireReadAccess, validatePathPara
 app.delete("/analytics/saved-queries/:id", requireApiKey("write"), validatePathParams, async (req, res) => {
   const removed = await db.deleteSavedQuery(req.params.id, req.tenant_id);
   if (!removed) return res.status(404).json({ error: "Not Found", message: "Saved query not found" });
+  res.status(204).end();
+});
+
+// ---------------------------------------------------------------------------
+// Webhooks (Phase 16-A) — registration & management
+//
+// A webhook is a tenant-scoped outbound endpoint: a target URL plus an event-type
+// filter. Registration only here; delivery (16-B) and signing (16-C) build on it.
+// The target URL is validated by the SSRF guard (src/ssrf.js) at registration —
+// loopback/private/link-local targets are rejected — and again at delivery time.
+// Self-hosters can permit specific private targets via WEBHOOK_TARGET_ALLOWLIST
+// (comma-separated host or host:port entries).
+// ---------------------------------------------------------------------------
+
+/** The configured allowlist of host[:port] targets that bypass the private-range block. */
+function webhookAllowlist() {
+  return process.env.WEBHOOK_TARGET_ALLOWLIST || "";
+}
+
+/**
+ * POST /webhooks — register a webhook. Requires a WRITE-scoped key.
+ * Body: { target_url, event_types?, enabled? }. 400 on invalid URL/filter/SSRF.
+ */
+app.post("/webhooks", requireApiKey("write"), async (req, res) => {
+  const result = validateCreateWebhook(req.body, { allowlist: webhookAllowlist() });
+  if (!result.ok) {
+    return res.status(400).json({ error: "Bad Request", message: "Invalid webhook", details: result.errors });
+  }
+  const now = new Date().toISOString();
+  const saved = await db.createWebhook({
+    id: `wh_${crypto.randomUUID().replace(/-/g, "")}`,
+    tenantId: req.tenant_id,
+    targetUrl: result.value.target_url,
+    eventTypes: result.value.event_types,
+    enabled: result.value.enabled,
+    createdAt: now,
+    updatedAt: now
+  });
+  res.status(201).json(saved);
+});
+
+/**
+ * GET /webhooks — list the tenant's webhooks (newest first).
+ */
+app.get("/webhooks", requireReadAccess, async (req, res) => {
+  const webhooks = await db.listWebhooks(req.tenant_id);
+  res.json({ webhooks });
+});
+
+/**
+ * GET /webhooks/:id — fetch one webhook (tenant-scoped). 404 if absent.
+ */
+app.get("/webhooks/:id", requireReadAccess, validatePathParams, async (req, res) => {
+  const webhook = await db.getWebhook(req.params.id, req.tenant_id);
+  if (!webhook) return res.status(404).json({ error: "Not Found", message: "Webhook not found" });
+  res.json(webhook);
+});
+
+/**
+ * PATCH /webhooks/:id — partial update (target_url / event_types / enabled).
+ * Requires a WRITE-scoped key. 400 on invalid fields, 404 if absent.
+ */
+app.patch("/webhooks/:id", requireApiKey("write"), validatePathParams, async (req, res) => {
+  const result = validateUpdateWebhook(req.body, { allowlist: webhookAllowlist() });
+  if (!result.ok) {
+    return res.status(400).json({ error: "Bad Request", message: "Invalid webhook update", details: result.errors });
+  }
+  const updated = await db.updateWebhook(
+    req.params.id,
+    req.tenant_id,
+    result.value,
+    new Date().toISOString()
+  );
+  if (!updated) return res.status(404).json({ error: "Not Found", message: "Webhook not found" });
+  res.json(updated);
+});
+
+/**
+ * DELETE /webhooks/:id — remove a webhook (tenant-scoped).
+ * Requires a WRITE-scoped key. 404 if absent.
+ */
+app.delete("/webhooks/:id", requireApiKey("write"), validatePathParams, async (req, res) => {
+  const removed = await db.deleteWebhook(req.params.id, req.tenant_id);
+  if (!removed) return res.status(404).json({ error: "Not Found", message: "Webhook not found" });
   res.status(204).end();
 });
 

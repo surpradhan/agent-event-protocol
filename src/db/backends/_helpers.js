@@ -197,6 +197,34 @@ function formatSavedQueryRow(row) {
   };
 }
 
+/**
+ * Shape a raw webhooks row into the public API representation. `event_types` is
+ * stored as JSON text and parsed back to an array; `enabled` is stored 0/1 and
+ * surfaced as a boolean. Defensive against a corrupt stored filter.
+ *
+ * @returns {{ id: string, tenant_id: string, target_url: string,
+ *             event_types: string[], enabled: boolean,
+ *             created_at: string, updated_at: string }}
+ */
+function formatWebhookRow(row) {
+  let eventTypes = [];
+  try {
+    const parsed = JSON.parse(row.event_types);
+    eventTypes = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    eventTypes = []; // tolerate a corrupt stored filter rather than throw
+  }
+  return {
+    id:          row.id,
+    tenant_id:   row.tenant_id,
+    target_url:  row.target_url,
+    event_types: eventTypes,
+    enabled:     row.enabled === 1 || row.enabled === true,
+    created_at:  row.created_at,
+    updated_at:  row.updated_at
+  };
+}
+
 module.exports = {
   formatSession,
   buildTree,
@@ -205,5 +233,6 @@ module.exports = {
   encodeCursor,
   applyTextFilter,
   formatAccessLogRow,
-  formatSavedQueryRow
+  formatSavedQueryRow,
+  formatWebhookRow
 };
