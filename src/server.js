@@ -16,6 +16,7 @@ const { detectAnomalies } = require("./anomalies");
 const { validateQuerySpec, runQuery } = require("./customQuery");
 const { validateCreateWebhook, validateUpdateWebhook } = require("./webhooks");
 const { scheduleDelivery } = require("./webhookDelivery");
+const { generateSigningSecret } = require("./webhookSignature");
 const { buildWorkflowGraph } = require("./workflowGraph");
 const { generateComplianceReport, isValidFramework, FRAMEWORK_IDS } = require("./compliance");
 const { renderComplianceReportPdf } = require("./compliance-pdf");
@@ -1095,16 +1096,21 @@ app.post("/webhooks", requireApiKey("write"), async (req, res) => {
     return res.status(400).json({ error: "Bad Request", message: "Invalid webhook", details: result.errors });
   }
   const now = new Date().toISOString();
+  // Mint a per-webhook signing secret (Phase 16-C). It is returned to the caller
+  // exactly ONCE here, and never again — GET/list responses omit it (the delivery
+  // engine reads it internally via getWebhookSigningSecret to sign payloads).
+  const signingSecret = generateSigningSecret();
   const saved = await db.createWebhook({
     id: `wh_${crypto.randomUUID().replace(/-/g, "")}`,
     tenantId: req.tenant_id,
     targetUrl: result.value.target_url,
     eventTypes: result.value.event_types,
     enabled: result.value.enabled,
+    signingSecret,
     createdAt: now,
     updatedAt: now
   });
-  res.status(201).json(saved);
+  res.status(201).json({ ...saved, signing_secret: signingSecret });
 });
 
 /**

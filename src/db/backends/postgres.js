@@ -192,16 +192,21 @@ const SCHEMA_DDL = `
   -- target URL is SSRF-validated before insert; event_types is JSON text
   -- (["*"] or a subset of the core types), data only.
   CREATE TABLE IF NOT EXISTS webhooks (
-    id           TEXT    NOT NULL PRIMARY KEY,
-    tenant_id    TEXT    NOT NULL,
-    target_url   TEXT    NOT NULL,
-    event_types  TEXT    NOT NULL,
-    enabled      INTEGER NOT NULL DEFAULT 1,
-    created_at   TEXT    NOT NULL,
-    updated_at   TEXT    NOT NULL
+    id             TEXT    NOT NULL PRIMARY KEY,
+    tenant_id      TEXT    NOT NULL,
+    target_url     TEXT    NOT NULL,
+    event_types    TEXT    NOT NULL,
+    enabled        INTEGER NOT NULL DEFAULT 1,
+    signing_secret TEXT,
+    created_at     TEXT    NOT NULL,
+    updated_at     TEXT    NOT NULL
   );
 
   CREATE INDEX IF NOT EXISTS idx_webhooks_tenant ON webhooks (tenant_id, created_at DESC);
+
+  -- Phase 16-C: mirrors migration 009 for already-existing Postgres DBs (the
+  -- CREATE above only adds the column on a fresh database).
+  ALTER TABLE webhooks ADD COLUMN IF NOT EXISTS signing_secret TEXT;
 
   -- ----- webhook_deliveries (Phase 16-B) -----------------------------------
   -- Mirrors src/db/migrations/008_webhook_deliveries.js.  One row per
@@ -906,14 +911,15 @@ class PostgresBackend extends StorageBackend {
   async createWebhook(record) {
     await this._pool.query(
       `INSERT INTO webhooks
-         (id, tenant_id, target_url, event_types, enabled, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+         (id, tenant_id, target_url, event_types, enabled, signing_secret, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         record.id,
         record.tenantId,
         record.targetUrl,
         JSON.stringify(record.eventTypes),
         record.enabled ? 1 : 0,
+        record.signingSecret ?? null,
         record.createdAt,
         record.updatedAt
       ]
@@ -928,6 +934,14 @@ class PostgresBackend extends StorageBackend {
       [id, tenantId]
     );
     return rows[0] ? formatWebhookRow(rows[0]) : null;
+  }
+
+  async getWebhookSigningSecret(id, tenantId) {
+    const { rows } = await this._pool.query(
+      `SELECT signing_secret FROM webhooks WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId]
+    );
+    return rows[0] ? rows[0].signing_secret : null;
   }
 
   async listWebhooks(tenantId) {

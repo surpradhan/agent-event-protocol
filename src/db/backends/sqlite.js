@@ -396,12 +396,18 @@ class SqliteBackend extends StorageBackend {
         DELETE FROM saved_queries WHERE id = ? AND tenant_id = ?
       `),
 
-      // ----- webhooks (Phase 16-A) -----
+      // ----- webhooks (Phase 16-A; signing_secret added 16-C) -----
       insertWebhook: db.prepare(`
         INSERT INTO webhooks
-          (id, tenant_id, target_url, event_types, enabled, created_at, updated_at)
+          (id, tenant_id, target_url, event_types, enabled, signing_secret, created_at, updated_at)
         VALUES
-          (@id, @tenant_id, @target_url, @event_types, @enabled, @created_at, @updated_at)
+          (@id, @tenant_id, @target_url, @event_types, @enabled, @signing_secret, @created_at, @updated_at)
+      `),
+
+      // Internal: fetch the raw signing secret for delivery (never exposed via the
+      // public getWebhook/listWebhooks projections below, which omit the column).
+      getWebhookSigningSecret: db.prepare(`
+        SELECT signing_secret FROM webhooks WHERE id = ? AND tenant_id = ?
       `),
 
       getWebhook: db.prepare(`
@@ -913,13 +919,14 @@ class SqliteBackend extends StorageBackend {
 
   async createWebhook(record) {
     this._stmts.insertWebhook.run({
-      id:          record.id,
-      tenant_id:   record.tenantId,
-      target_url:  record.targetUrl,
-      event_types: JSON.stringify(record.eventTypes),
-      enabled:     record.enabled ? 1 : 0,
-      created_at:  record.createdAt,
-      updated_at:  record.updatedAt
+      id:             record.id,
+      tenant_id:      record.tenantId,
+      target_url:     record.targetUrl,
+      event_types:    JSON.stringify(record.eventTypes),
+      enabled:        record.enabled ? 1 : 0,
+      signing_secret: record.signingSecret ?? null,
+      created_at:     record.createdAt,
+      updated_at:     record.updatedAt
     });
     return this.getWebhook(record.id, record.tenantId);
   }
@@ -927,6 +934,11 @@ class SqliteBackend extends StorageBackend {
   async getWebhook(id, tenantId) {
     const row = this._stmts.getWebhook.get(id, tenantId);
     return row ? formatWebhookRow(row) : null;
+  }
+
+  async getWebhookSigningSecret(id, tenantId) {
+    const row = this._stmts.getWebhookSigningSecret.get(id, tenantId);
+    return row ? row.signing_secret : null;
   }
 
   async listWebhooks(tenantId) {

@@ -285,17 +285,25 @@ class StorageBackend {
   /**
    * Persist a webhook registration.
    * @param {{ id: string, tenantId: string, targetUrl: string,
-   *           eventTypes: string[], enabled: boolean,
+   *           eventTypes: string[], enabled: boolean, signingSecret?: string|null,
    *           createdAt: string, updatedAt: string }} record
-   * @returns {Promise<object>} the stored row (formatWebhookRow shape)
+   * @returns {Promise<object>} the stored row (formatWebhookRow shape — no secret)
    */
   async createWebhook(record) {
     throw new Error("StorageBackend.createWebhook() not implemented");
   }
 
-  /** Fetch one tenant-scoped webhook by id, or null. */
+  /** Fetch one tenant-scoped webhook by id, or null. (Public shape — no secret.) */
   async getWebhook(id, tenantId) {
     throw new Error("StorageBackend.getWebhook() not implemented");
+  }
+
+  /**
+   * Fetch a webhook's raw signing secret (Phase 16-C), or null. Internal: used by
+   * the delivery engine to HMAC-sign the payload; never surfaced in API responses.
+   */
+  async getWebhookSigningSecret(id, tenantId) {
+    throw new Error("StorageBackend.getWebhookSigningSecret() not implemented");
   }
 
   /** List a tenant's webhooks (newest first). */

@@ -3457,3 +3457,104 @@ describe("Webhooks — event delivery (Phase 16-B)", () => {
     assert.ok(!rows.some((row) => row.event_id === event.id));
   });
 });
+
+// ---------------------------------------------------------------------------
+// Webhooks (Phase 16-C) — HMAC payload signing
+//
+// Verifies the one-time signing_secret on creation (and that it's never exposed
+// again), and that real deliveries carry a valid X-AEP-Signature header that
+// verifies against that secret over the raw received body.
+// ---------------------------------------------------------------------------
+
+describe("Webhooks — HMAC payload signing (Phase 16-C)", () => {
+  const http = require("http");
+  const { verifyWebhookSignature } = require("../../src/webhookSignature");
+  let listener;
+  let listenerPort;
+  let received;
+
+  before(async () => {
+    received = [];
+    listener = http.createServer((req, res) => {
+      const chunks = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", () => {
+        received.push({ headers: req.headers, rawBody: Buffer.concat(chunks).toString("utf8") });
+        res.writeHead(200).end("ok");
+      });
+    });
+    await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
+    listenerPort = listener.address().port;
+    process.env.WEBHOOKS_ENABLED = "1";
+    process.env.WEBHOOK_TARGET_ALLOWLIST = `127.0.0.1:${listenerPort}`;
+    process.env.WEBHOOK_MAX_RETRIES = "1";
+    process.env.WEBHOOK_BACKOFF_BASE_MS = "1";
+    process.env.WEBHOOK_TIMEOUT_MS = "2000";
+  });
+
+  after(async () => {
+    await new Promise((resolve) => listener.close(resolve));
+    delete process.env.WEBHOOKS_ENABLED;
+    delete process.env.WEBHOOK_TARGET_ALLOWLIST;
+    delete process.env.WEBHOOK_MAX_RETRIES;
+    delete process.env.WEBHOOK_BACKOFF_BASE_MS;
+    delete process.env.WEBHOOK_TIMEOUT_MS;
+  });
+
+  test("POST /webhooks returns a one-time signing_secret; GET never exposes it", async () => {
+    const createRes = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: `http://127.0.0.1:${listenerPort}/sig`, event_types: ["task.created"] }),
+    });
+    assert.equal(createRes.status, 201);
+    const created = await createRes.json();
+    assert.match(created.signing_secret, /^whsec_[0-9a-f]{64}$/);
+
+    // GET one — must NOT include the secret.
+    const getRes = await fetch(`${baseUrl}/webhooks/${created.id}`, { headers: { Authorization: `Bearer ${readKey}` } });
+    const got = await getRes.json();
+    assert.equal(got.signing_secret, undefined);
+
+    // GET list — must NOT include the secret on any item.
+    const listRes = await fetch(`${baseUrl}/webhooks`, { headers: { Authorization: `Bearer ${readKey}` } });
+    const list = await listRes.json();
+    assert.ok(list.webhooks.every((w) => w.signing_secret === undefined));
+  });
+
+  test("delivery carries an X-AEP-Signature that verifies against the secret", async () => {
+    const before = received.length;
+    const createRes = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: `http://127.0.0.1:${listenerPort}/sig2`, event_types: ["task.completed"] }),
+    });
+    const { id: webhookId, signing_secret: secret } = await createRes.json();
+
+    const event = makeEvent({ id: `evt_${crypto.randomUUID().replace(/-/g, "")}`, type: "task.completed" });
+    await ingest(event);
+
+    // Wait for the listener to receive the signed delivery.
+    const deadline = Date.now() + 4000;
+    let hit = null;
+    while (Date.now() < deadline) {
+      hit = received.slice(before).find((r) => {
+        try { return JSON.parse(r.rawBody).webhook_id === webhookId; } catch { return false; }
+      });
+      if (hit) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    assert.ok(hit, "expected the listener to receive the delivery");
+
+    const sigHeader = hit.headers["x-aep-signature"];
+    assert.ok(sigHeader && sigHeader.startsWith("hmac-sha256="), `expected signature header, got ${sigHeader}`);
+    // The signature verifies against the secret over the EXACT raw body received.
+    assert.equal(verifyWebhookSignature(hit.rawBody, sigHeader, secret), true);
+    // A wrong secret must NOT verify (the signature is real, not a constant).
+    assert.equal(verifyWebhookSignature(hit.rawBody, sigHeader, "whsec_wrong"), false);
+    // Identifying headers present.
+    assert.equal(hit.headers["x-aep-webhook-id"], webhookId);
+    assert.equal(hit.headers["x-aep-event-type"], "task.completed");
+    assert.ok(hit.headers["x-aep-delivery-id"]);
+  });
+});

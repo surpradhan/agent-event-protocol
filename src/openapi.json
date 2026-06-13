@@ -1336,7 +1336,7 @@
       "post": {
         "tags": ["Webhooks"],
         "summary": "Register a webhook",
-        "description": "Registers an outbound webhook. Requires a **write**-scoped key. The `target_url` is validated by the SSRF guard (loopback / private / link-local / non-http(s) targets are rejected); self-hosters can permit specific private targets via the `WEBHOOK_TARGET_ALLOWLIST` env var. `event_types` defaults to `[\"*\"]` (all events).",
+        "description": "Registers an outbound webhook. Requires a **write**-scoped key. The `target_url` is validated by the SSRF guard (loopback / private / link-local / non-http(s) targets are rejected); self-hosters can permit specific private targets via the `WEBHOOK_TARGET_ALLOWLIST` env var. `event_types` defaults to `[\"*\"]` (all events). The 201 response includes a one-time `signing_secret` — store it; it is NEVER returned again. Deliveries are HMAC-SHA256 signed with it and carry an `X-AEP-Signature: hmac-sha256=<base64>` header (verify over the raw request body).",
         "operationId": "createWebhook",
         "security": [{ "ApiKeyAuth": [] }],
         "requestBody": {
@@ -1344,7 +1344,7 @@
           "content": { "application/json": { "schema": { "type": "object", "required": ["target_url"], "properties": { "target_url": { "type": "string", "format": "uri" }, "event_types": { "type": "array", "items": { "type": "string" } }, "enabled": { "type": "boolean", "default": true } } } } }
         },
         "responses": {
-          "201": { "description": "The registered webhook", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Webhook" } } } },
+          "201": { "description": "The registered webhook, including its one-time `signing_secret` (shown only here).", "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/Webhook" }, { "type": "object", "properties": { "signing_secret": { "type": "string", "description": "Per-webhook HMAC signing secret. Returned ONCE at creation; store it securely — it is never returned again.", "example": "whsec_…" } } }] } } } },
           "400": { "description": "Invalid target URL (incl. SSRF-blocked host), event-type filter, or enabled flag" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "description": "Key lacks the 'write' scope" }
