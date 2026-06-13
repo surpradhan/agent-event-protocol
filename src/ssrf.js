@@ -129,10 +129,17 @@ function isBlockedIPv6(ip) {
   if (g.every((h) => h === 0)) return true;
   if (g.slice(0, 7).every((h) => h === 0) && g[7] === 1) return true;
 
-  // IPv4-mapped (::ffff:0:0/96) and IPv4-compatible (::/96, deprecated): defer to
-  // the embedded IPv4 verdict so e.g. ::ffff:127.0.0.1 is blocked.
+  // Addresses that embed an IPv4 in their low 32 bits — defer to the embedded
+  // IPv4 verdict so e.g. ::ffff:127.0.0.1 is blocked:
+  //   • ::ffff:0:0/96  IPv4-mapped
+  //   • ::/96          IPv4-compatible (deprecated)
+  //   • 64:ff9b::/96   NAT64 well-known prefix (RFC 6052) — a literal here is
+  //     translated by a NAT64 gateway to the embedded v4, so it's a real SSRF
+  //     vector when one is present; decode it and block private embeddings.
   const firstFiveZero = g.slice(0, 5).every((h) => h === 0);
-  if (firstFiveZero && (g[5] === 0xffff || g[5] === 0)) {
+  const isMappedOrCompat = firstFiveZero && (g[5] === 0xffff || g[5] === 0);
+  const isNat64 = g[0] === 0x0064 && g[1] === 0xff9b && g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0;
+  if (isMappedOrCompat || isNat64) {
     const embedded = `${(g[6] >>> 8) & 0xff}.${g[6] & 0xff}.${(g[7] >>> 8) & 0xff}.${g[7] & 0xff}`;
     return isBlockedIPv4(embedded);
   }

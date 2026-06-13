@@ -27,13 +27,14 @@ calls**, so the headline concern is SSRF, addressed up front.
   embedded credentials, and any target resolving to loopback, RFC1918 private,
   CGNAT, link-local (incl. the `169.254.169.254` cloud-metadata endpoint), IPv6
   ULA/link-local, or other reserved ranges (IPv4-mapped IPv6 is decoded so it
-  can't smuggle a private v4). Applied at registration; a delivery-time
-  DNS-rebind re-check (`assertResolvedIpAllowed`) is provided for 16-B.
-  Self-hosters can permit specific private targets via the new
-  **`WEBHOOK_TARGET_ALLOWLIST`** env var (comma-separated `host` / `host:port`).
+  can't smuggle a private v4; the `64:ff9b::/96` NAT64 well-known prefix is
+  decoded too). Applied at registration; a delivery-time DNS-rebind re-check
+  (`assertResolvedIpAllowed`) is provided for 16-B. Self-hosters can permit
+  specific private targets via the new **`WEBHOOK_TARGET_ALLOWLIST`** env var
+  (comma-separated `host` / `host:port`).
 - **`aep webhooks`** CLI (`list` / `get` / `create` / `update` / `delete`) and
   OpenAPI under a new **Webhooks** tag (`Webhook` schema).
-- No new CI job. Server suite: 345 unit + 186 integration.
+- No new CI job. Server suite: 350 unit + 186 integration.
 
 ---
 

@@ -80,7 +80,8 @@ describe("validateWebhookUrl — SSRF-blocked hosts", () => {
     "http://[::1]/x", // IPv6 loopback
     "http://[fe80::1]/x", // IPv6 link-local
     "http://[fc00::1]/x", // IPv6 ULA
-    "http://[::ffff:127.0.0.1]/x" // IPv4-mapped loopback
+    "http://[::ffff:127.0.0.1]/x", // IPv4-mapped loopback
+    "http://[64:ff9b::127.0.0.1]/x" // NAT64-embedded loopback
   ];
   for (const u of blocked) {
     test(`blocks ${u}`, () => {
@@ -137,6 +138,13 @@ describe("isBlockedIPv6", () => {
   test("IPv4-mapped defers to the embedded v4 verdict", () => {
     assert.equal(isBlockedIPv6("::ffff:127.0.0.1"), true);
     assert.equal(isBlockedIPv6("::ffff:8.8.8.8"), false);
+  });
+  test("NAT64 well-known prefix (64:ff9b::/96) defers to the embedded v4", () => {
+    // A NAT64 gateway would translate these to the embedded v4, so a private
+    // embedding is an SSRF vector and must be blocked; a public one is allowed.
+    assert.equal(isBlockedIPv6("64:ff9b::127.0.0.1"), true);
+    assert.equal(isBlockedIPv6("64:ff9b::10.0.0.1"), true);
+    assert.equal(isBlockedIPv6("64:ff9b::8.8.8.8"), false);
   });
   test("public IPv6 not blocked", () => {
     assert.equal(isBlockedIPv6("2606:4700:4700::1111"), false);
