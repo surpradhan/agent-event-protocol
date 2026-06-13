@@ -12,6 +12,7 @@ const { buildAuditBundle, verifyAuditBundle } = require("./audit");
 const { renderAuditBundlePdf } = require("./audit-pdf");
 const { summarizePolicyBlocked } = require("./analytics");
 const { summarizePerformance } = require("./performance");
+const { detectAnomalies } = require("./anomalies");
 const { validateQuerySpec, runQuery } = require("./customQuery");
 const { buildWorkflowGraph } = require("./workflowGraph");
 const { generateComplianceReport, isValidFramework, FRAMEWORK_IDS } = require("./compliance");
@@ -893,6 +894,56 @@ app.get("/analytics/performance", requireReadAccess, validateQueryParams, async 
   const summary = summarizePerformance(events, { now: new Date(), limit });
 
   res.json({ ...summary, window: { since: since.value, until: until.value } });
+});
+
+/**
+ * GET /analytics/anomalies — workflow anomaly detection (Phase 15-D).
+ *
+ * Flags traces whose error-rate / policy.blocked-volume / latency deviates from
+ * the per-tenant cross-trace baseline by more than `threshold` robust modified-z
+ * (median/MAD) — "alert when a workflow deviates from expected patterns"
+ * (PRD §Phase 15).  Read- + tenant-scoped; reuses the window event fetch and the
+ * pure detectAnomalies (src/anomalies.js) shaper.
+ *
+ * Query params (all optional):
+ *   since      — ISO-8601 inclusive lower bound on event time (time >= since)
+ *   until      — ISO-8601 exclusive upper bound on event time (time <  until)
+ *   threshold  — modified-z cutoff (> 0, default 3.5; smaller = more sensitive)
+ *   limit      — max anomalies returned (1–1000, default 50)
+ */
+app.get("/analytics/anomalies", requireReadAccess, validateQueryParams, async (req, res) => {
+  const since = parseIsoBound(req.query.since);
+  const until = parseIsoBound(req.query.until);
+  if (!since.ok || !until.ok) {
+    return res.status(400).json({
+      error: "Bad Request",
+      message: "Query parameters 'since' and 'until' must be ISO-8601 timestamps"
+    });
+  }
+
+  // `threshold` is a positive float (modified-z cutoff). validateQueryParams does
+  // not range-check it, so guard here: reject a non-positive / non-numeric value.
+  let threshold;
+  if (req.query.threshold !== undefined) {
+    threshold = Number(req.query.threshold);
+    if (!Number.isFinite(threshold) || threshold <= 0) {
+      return res.status(400).json({
+        error: "Bad Request",
+        message: "Query parameter 'threshold' must be a positive number"
+      });
+    }
+  }
+
+  const events = await db.getEventsForQuery(req.tenant_id, {
+    since: since.value,
+    until: until.value
+  });
+
+  // validateQueryParams already bounds ?limit to [1,1000]; default to 50.
+  const limit = req.query.limit !== undefined ? parseInt(req.query.limit, 10) : 50;
+  const result = detectAnomalies(events, { now: new Date(), threshold, limit });
+
+  res.json({ ...result, window: { since: since.value, until: until.value } });
 });
 
 // ---------------------------------------------------------------------------

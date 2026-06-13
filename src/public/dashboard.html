@@ -519,6 +519,24 @@
     .cq-saved-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
     .cq-saved-item .cq-name { font-weight: 600; color: var(--ink); }
 
+    /* Anomaly detection panel */
+    .ad-item { border: 1px solid var(--line2); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; background: rgba(255,255,255,0.02); border-left-width: 3px; }
+    .ad-item.sev-critical { border-left-color: #f87171; }
+    .ad-item.sev-high     { border-left-color: #fb923c; }
+    .ad-item.sev-medium   { border-left-color: #38bdf8; }
+    .ad-item.sev-low      { border-left-color: #94a3b8; }
+    .ad-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .ad-sev { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 8px; border-radius: 6px; }
+    .ad-sev.sev-critical { background: rgba(248,113,113,0.16); color: #fca5a5; }
+    .ad-sev.sev-high     { background: rgba(251,146,60,0.16);  color: #fdba74; }
+    .ad-sev.sev-medium   { background: rgba(56,189,248,0.16);  color: #7dd3fc; }
+    .ad-sev.sev-low      { background: rgba(148,163,184,0.16); color: #cbd5e1; }
+    .ad-trace { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--ink); }
+    .ad-flags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .ad-flag { font-size: 11px; padding: 4px 9px; border-radius: 7px; background: var(--line2); color: var(--ink); }
+    .ad-flag b { color: var(--accent2); }
+    .ad-baselines { display: flex; flex-wrap: wrap; gap: 14px; margin: 4px 0 14px; font-size: 11px; color: var(--muted); }
+
     /* ── Responsive ── */
     @media (max-width: 980px) {
       .metric-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
@@ -560,6 +578,7 @@
     <button class="tab-btn"        id="tab-analytics"  onclick="switchMain('analytics')">Policy Analytics</button>
     <button class="tab-btn"        id="tab-performance" onclick="switchMain('performance')">Performance</button>
     <button class="tab-btn"        id="tab-custom"     onclick="switchMain('custom')">Custom Analytics</button>
+    <button class="tab-btn"        id="tab-anomalies"  onclick="switchMain('anomalies')">Anomalies<span id="anomalies-badge" class="tab-badge" style="display:none">0</span></button>
   </div>
 
   <!-- ═══ Sessions view ═══ -->
@@ -793,6 +812,28 @@
     </div>
   </div>
 
+  <!-- ═══ Anomalies view ═══ -->
+  <div id="view-anomalies" style="display:none">
+    <div class="card reject-panel">
+      <div class="panel-header" style="margin-bottom:12px">
+        <div>
+          <div class="panel-title">Anomaly Detection <span id="ad-summary" class="hint"></span></div>
+          <div class="hint" style="font-size:11px;margin-top:2px">Workflows that deviate from the baseline — error-rate, <code>policy.blocked</code> volume, or latency spikes (robust modified-z &gt; threshold across this tenant's traces).</div>
+        </div>
+        <button class="btn secondary" onclick="loadAnomalies()">Refresh</button>
+      </div>
+      <div class="reject-toolbar">
+        <input id="ad-since" type="text" placeholder="Since (ISO-8601, optional)" autocomplete="off" />
+        <input id="ad-until" type="text" placeholder="Until (ISO-8601, optional)" autocomplete="off" />
+        <input id="ad-threshold" type="number" step="0.5" min="0.5" placeholder="threshold (3.5)" style="max-width:130px" />
+        <button class="btn secondary" onclick="loadAnomalies()">Apply</button>
+      </div>
+      <div id="ad-body">
+        <div class="empty">No anomalies detected for this tenant.</div>
+      </div>
+    </div>
+  </div>
+
 </div><!-- .wrap -->
 
 <script>
@@ -1020,16 +1061,19 @@ function switchMain(v) {
   document.getElementById('view-analytics').style.display = v === 'analytics' ? '' : 'none';
   document.getElementById('view-performance').style.display = v === 'performance' ? '' : 'none';
   document.getElementById('view-custom').style.display = v === 'custom' ? '' : 'none';
+  document.getElementById('view-anomalies').style.display = v === 'anomalies' ? '' : 'none';
   document.getElementById('tab-sessions').className   = 'tab-btn' + (v === 'sessions'  ? ' active' : '');
   document.getElementById('tab-workflows').className  = 'tab-btn' + (v === 'workflows' ? ' active' : '');
   document.getElementById('tab-rejected').className   = 'tab-btn' + (v === 'rejected'  ? ' active' : '');
   document.getElementById('tab-analytics').className  = 'tab-btn' + (v === 'analytics' ? ' active' : '');
   document.getElementById('tab-performance').className = 'tab-btn' + (v === 'performance' ? ' active' : '');
   document.getElementById('tab-custom').className = 'tab-btn' + (v === 'custom' ? ' active' : '');
+  document.getElementById('tab-anomalies').className = 'tab-btn' + (v === 'anomalies' ? ' active' : '');
   if (v === 'rejected') loadRejections();
   if (v === 'analytics') loadAnalytics();
   if (v === 'performance') loadPerformance();
   if (v === 'custom') initCustom();
+  if (v === 'anomalies') loadAnomalies();
 }
 function switchSub(v) {
   subView = v;
@@ -2113,6 +2157,76 @@ async function deleteSavedQuery(id) {
   if (res.status === 204) { loadSavedQueries(); }
   else if (res.status === 403) { out.innerHTML = cqShowMsg('Deleting needs a write-scoped API key.', 'err'); }
   else { out.innerHTML = cqShowMsg(`Delete failed (HTTP ${res.status}).`, 'err'); }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Anomaly detection panel (Phase 15-D)
+// ─────────────────────────────────────────────────────────────────────────────
+async function loadAnomalies() {
+  const body = document.getElementById('ad-body');
+  const since = document.getElementById('ad-since').value.trim();
+  const until = document.getElementById('ad-until').value.trim();
+  const thr   = document.getElementById('ad-threshold').value.trim();
+  const qs = new URLSearchParams();
+  if (since) qs.set('since', since);
+  if (until) qs.set('until', until);
+  if (thr)   qs.set('threshold', thr);
+  const url = '/analytics/anomalies' + (qs.toString() ? '?' + qs : '');
+  try {
+    const data = await fetchJson(url);
+    renderAnomalies(data);
+  } catch (e) {
+    body.innerHTML = `<div class="empty">Could not load anomalies (${esc(e.message)}). Check the filters.</div>`;
+    document.getElementById('ad-summary').textContent = '';
+  }
+}
+
+// Format a metric value for display (rates as %, latency as ms, counts as ints).
+function adFmtValue(metric, v) {
+  if (metric === 'error_rate') return (v * 100).toFixed(1) + '%';
+  if (metric === 'latency_max_ms') return Math.round(v).toLocaleString() + ' ms';
+  // counts: integers as-is; a fractional baseline threshold rounds to 1 decimal
+  return Number.isInteger(v) ? String(v) : v.toFixed(1);
+}
+const AD_METRIC_LABEL = { error_rate: 'error rate', policy_blocked_count: 'policy.blocked', latency_max_ms: 'max latency' };
+
+function renderAnomalies(a) {
+  const sum = document.getElementById('ad-summary');
+  sum.textContent = `(${a.anomaly_count} flagged of ${a.trace_count} workflow${a.trace_count !== 1 ? 's' : ''}, threshold ${a.threshold})`;
+  const badge = document.getElementById('anomalies-badge');
+  badge.style.display = a.anomaly_count > 0 ? '' : 'none';
+  badge.textContent = a.anomaly_count > 99 ? '99+' : String(a.anomaly_count);
+
+  const body = document.getElementById('ad-body');
+  if (!a.anomaly_count) {
+    body.innerHTML = a.trace_count
+      ? '<div class="empty">No workflows deviate from the baseline in this window.</div>'
+      : '<div class="empty">No workflows for this tenant in the selected window.</div>';
+    return;
+  }
+
+  // Baseline summary (only the stable metrics).
+  const baseHtml = Object.entries(a.baselines)
+    .filter(([, b]) => b.stable)
+    .map(([k, b]) => `<span>${esc(AD_METRIC_LABEL[k] || k)}: baseline ≈ ${esc(adFmtValue(k, b.median))}, flag &gt; ${esc(adFmtValue(k, b.value_threshold))}</span>`)
+    .join('');
+
+  const items = a.anomalies.map(an => {
+    const flags = an.flags.map(f =>
+      `<span class="ad-flag"><b>${esc(AD_METRIC_LABEL[f.metric] || f.metric)}</b> = ${esc(adFmtValue(f.metric, f.value))} <span class="hint">(score ${f.score.toFixed(1)})</span></span>`
+    ).join('');
+    return `
+      <div class="ad-item sev-${esc(an.severity)}">
+        <div class="ad-head">
+          <span class="ad-sev sev-${esc(an.severity)}">${esc(an.severity)}</span>
+          <span class="ad-trace">${esc(an.trace_id)}</span>
+          <span class="hint" style="margin-left:auto">${an.metrics.event_count} events · max score ${an.max_score.toFixed(1)}</span>
+        </div>
+        <div class="ad-flags">${flags}</div>
+      </div>`;
+  }).join('');
+
+  body.innerHTML = `${baseHtml ? `<div class="ad-baselines">${baseHtml}</div>` : ''}${items}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

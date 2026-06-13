@@ -2919,3 +2919,116 @@ describe("GET /workflows/:traceId/graph", () => {
     assert.equal(res.status, 404);
   });
 });
+
+// ---------------------------------------------------------------------------
+// GET /analytics/anomalies — workflow anomaly detection (Phase 15-D)
+// ---------------------------------------------------------------------------
+
+describe("GET /analytics/anomalies", () => {
+  // 8 calm traces (no policy.blocked) + 1 trace with a burst of policy.blocked,
+  // all in a far-future window (2033-01) so the cross-trace baseline is exact.
+  const AD_SINCE = "2033-01-01T00:00:00Z";
+  const AD_UNTIL = "2033-02-01T00:00:00Z";
+
+  before(async () => {
+    let t = Date.parse("2033-01-01T00:00:00Z");
+    const at = () => new Date((t += 1000)).toISOString();
+    // 8 calm traces, 3 benign task.created each
+    for (let i = 0; i < 8; i++) {
+      for (let j = 0; j < 3; j++) {
+        const res = await ingest(makeEvent({
+          id: `ad_calm_${i}_${j}`, time: at(), type: "task.created",
+          session_id: `ses_ad_${i}`, trace_id: `trc_ad_calm_${i}`,
+        }));
+        assert.equal(res.status, 202);
+      }
+    }
+    // 1 anomalous trace: a burst of 10 policy.blocked
+    for (let k = 0; k < 10; k++) {
+      const res = await ingest(makeEvent({
+        id: `ad_spike_${k}`, time: at(), type: "policy.blocked",
+        session_id: "ses_ad_spike", trace_id: "trc_ad_spike",
+        payload: { policy: "pii_guard", action_blocked: "send_email" },
+      }));
+      assert.equal(res.status, 202);
+    }
+  });
+
+  test("requires authentication (401 without a key)", async () => {
+    const res = await fetch(`${baseUrl}/analytics/anomalies`);
+    assert.equal(res.status, 401);
+  });
+
+  test("flags the policy.blocked-volume spike against the calm baseline", async () => {
+    const res = await fetch(
+      `${baseUrl}/analytics/anomalies?since=${AD_SINCE}&until=${AD_UNTIL}`,
+      { headers: { Authorization: `Bearer ${readKey}` } }
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+
+    assert.equal(body.trace_count, 9); // 8 calm + 1 spike
+    assert.equal(body.threshold, 3.5);
+    assert.equal(body.anomaly_count, 1);
+    const a = body.anomalies[0];
+    assert.equal(a.trace_id, "trc_ad_spike");
+    assert.equal(a.metrics.policy_blocked_count, 10);
+    assert.ok(a.flags.some((f) => f.metric === "policy_blocked_count"));
+    assert.ok(["critical", "high", "medium"].includes(a.severity));
+    assert.deepEqual(body.window, { since: AD_SINCE, until: AD_UNTIL });
+    // the policy_blocked baseline is stable; latency has no ops → not stable
+    assert.equal(body.baselines.policy_blocked_count.stable, true);
+    assert.equal(body.baselines.latency_max_ms.stable, false);
+  });
+
+  test("a higher ?threshold can suppress the flag", async () => {
+    const res = await fetch(
+      `${baseUrl}/analytics/anomalies?since=${AD_SINCE}&until=${AD_UNTIL}&threshold=100`,
+      { headers: { Authorization: `Bearer ${readKey}` } }
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.anomaly_count, 0);
+  });
+
+  test("?limit caps the anomalies list (count is pre-cap)", async () => {
+    const res = await fetch(
+      `${baseUrl}/analytics/anomalies?since=${AD_SINCE}&until=${AD_UNTIL}&limit=1`,
+      { headers: { Authorization: `Bearer ${readKey}` } }
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.anomalies.length <= 1);
+  });
+
+  test("rejects a non-positive ?threshold with 400", async () => {
+    const res = await fetch(`${baseUrl}/analytics/anomalies?threshold=0`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("rejects a non-ISO ?since with 400", async () => {
+    const res = await fetch(`${baseUrl}/analytics/anomalies?since=not-a-date`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("tenant isolation: another tenant sees none of this tenant's anomalies", async () => {
+    const keyRes = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: "tenant-other-15d", label: "other", scopes: ["read"] }),
+    });
+    const otherKey = (await keyRes.json()).key;
+    const res = await fetch(
+      `${baseUrl}/analytics/anomalies?since=${AD_SINCE}&until=${AD_UNTIL}`,
+      { headers: { Authorization: `Bearer ${otherKey}` } }
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.trace_count, 0);
+    assert.equal(body.anomaly_count, 0);
+  });
+});

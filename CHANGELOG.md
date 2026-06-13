@@ -4,6 +4,31 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Workflow anomaly detection (Phase 15-D) — 2026-06-12
+
+Phase 15 (Advanced Dashboard) PR-D — the final slice: "Anomaly detection: alert
+when a workflow deviates from expected patterns" (PRD §Phase 15), with an explicit
+definition of *expected*.
+
+- **`GET /analytics/anomalies`** (read- + tenant-scoped; `?since`/`?until`/
+  `?threshold`/`?limit`): flags workflows (traces) whose **error-rate**,
+  **policy.blocked volume**, or **latency** (slowest operation) exceeds the
+  per-tenant cross-trace baseline by more than `threshold` **robust modified-z**
+  (median/MAD, Iglewicz–Hoaglin; default 3.5). Robust statistics are used so a
+  single spike doesn't mask itself and sparse metrics (mostly-zero counts) still
+  flag; a metric only fires when its baseline is *stable* (≥ 3 traces, non-zero
+  spread), so a handful of traces or a uniform fleet produce no false positives.
+- **Pure `src/anomalies.js`** (`detectAnomalies`, injected `now`, no I/O) — reuses
+  the merged `getEventsForQuery` window fetch (no DB change, no migration) and the
+  performance module's start→end operation pairing for the latency metric.
+- **`aep analytics anomalies`** CLI (severity-coloured summary or `--json`), an
+  **Anomalies** dashboard tab (severity-ranked findings + per-metric flags +
+  baseline summary, with a tab badge), and OpenAPI under the Analytics tag
+  (`AnomalyReport` schema).
+- No schema change, no new CI job. Server suite: 282 unit + 169 integration.
+
+---
+
 ## Cross-session causation DAG (Phase 15-C) — 2026-06-12
 
 Phase 15 (Advanced Dashboard) PR-C: "Workflow visualization: interactive DAG
