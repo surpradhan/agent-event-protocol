@@ -1,3 +1,29 @@
+/**
+ * Logging Demo — Agent Event Protocol
+ *
+ * This demo emits a structured log investigation scenario:
+ *   task.created → tool.called → tool.result → error.raised → task.completed
+ *
+ * HOW TO RUN:
+ *   node examples/demos/logging-demo.js
+ *
+ * VIEWING RESULTS IN THE DASHBOARD:
+ * After running this demo, open the dashboard to explore the emitted events:
+ *
+ *   1. Open the dashboard:
+ *      http://localhost:8788
+ *
+ *   2. Find your session in the session/event timeline using the session ID
+ *      printed in the console output (ses_logging_...).
+ *
+ *   3. Filter events by type using the #type-filter dropdown
+ *      (e.g. filter by "tool.called" or "error.raised").
+ *
+ *   4. Export events as JSON or CSV:
+ *      GET /sessions/:id/export?format=json
+ *      GET /sessions/:id/export?format=csv
+ */
+
 const { createEvent, emitScenario, scenarioEnvelope, wait } = require("./demo-utils");
 
 async function main() {
