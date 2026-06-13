@@ -225,6 +225,31 @@ function formatWebhookRow(row) {
   };
 }
 
+/**
+ * Shape a raw webhook_deliveries row into the public API representation.
+ * `last_status_code` is numeric-or-null; `last_error` is string-or-null.
+ *
+ * @returns {{ id, webhook_id, tenant_id, event_id, event_type, status,
+ *             attempts, last_status_code, last_error, created_at, updated_at }}
+ */
+function formatWebhookDeliveryRow(row) {
+  return {
+    id:               row.id,
+    webhook_id:       row.webhook_id,
+    tenant_id:        row.tenant_id,
+    event_id:         row.event_id,
+    event_type:       row.event_type,
+    status:           row.status,
+    attempts:         Number(row.attempts),
+    last_status_code: row.last_status_code === null || row.last_status_code === undefined
+      ? null
+      : Number(row.last_status_code),
+    last_error:       row.last_error ?? null,
+    created_at:       row.created_at,
+    updated_at:       row.updated_at
+  };
+}
+
 module.exports = {
   formatSession,
   buildTree,
@@ -234,5 +259,6 @@ module.exports = {
   applyTextFilter,
   formatAccessLogRow,
   formatSavedQueryRow,
-  formatWebhookRow
+  formatWebhookRow,
+  formatWebhookDeliveryRow
 };

@@ -320,6 +320,40 @@ class StorageBackend {
     throw new Error("StorageBackend.deleteWebhook() not implemented");
   }
 
+  // ----- webhook deliveries (Phase 16-B) -----
+
+  /**
+   * Insert a webhook_deliveries row (typically status "pending").
+   * @param {{ id, webhookId, tenantId, eventId, eventType, status, attempts,
+   *           lastStatusCode, lastError, createdAt, updatedAt }} record
+   * @returns {Promise<object>} the stored row (formatWebhookDeliveryRow shape)
+   */
+  async createWebhookDelivery(record) {
+    throw new Error("StorageBackend.createWebhookDelivery() not implemented");
+  }
+
+  /**
+   * Update a delivery row's terminal fields (tenant-scoped). Returns the updated
+   * row or null if absent.
+   * @param {string} id
+   * @param {string} tenantId
+   * @param {{ status, attempts, last_status_code, last_error, updated_at }} fields
+   */
+  async updateWebhookDelivery(id, tenantId, fields) {
+    throw new Error("StorageBackend.updateWebhookDelivery() not implemented");
+  }
+
+  /**
+   * List a webhook's delivery attempts (tenant-scoped, newest first), with
+   * optional time-window + limit. Returns formatWebhookDeliveryRow shapes.
+   * @param {string} webhookId
+   * @param {string} tenantId
+   * @param {{ since?: string|null, until?: string|null, limit?: number }} [opts]
+   */
+  async listWebhookDeliveries(webhookId, tenantId, opts) {
+    throw new Error("StorageBackend.listWebhookDeliveries() not implemented");
+  }
+
   /**
    * Fetch tenant-scoped, time-windowed raw event envelopes for a custom query.
    * All filtering/grouping/aggregation is done by src/customQuery.js in pure JS.

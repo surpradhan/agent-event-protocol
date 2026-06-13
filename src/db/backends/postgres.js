@@ -48,7 +48,8 @@ const {
   applyTextFilter,
   formatAccessLogRow,
   formatSavedQueryRow,
-  formatWebhookRow
+  formatWebhookRow,
+  formatWebhookDeliveryRow
 } = require("./_helpers");
 
 // ---------------------------------------------------------------------------
@@ -201,6 +202,27 @@ const SCHEMA_DDL = `
   );
 
   CREATE INDEX IF NOT EXISTS idx_webhooks_tenant ON webhooks (tenant_id, created_at DESC);
+
+  -- ----- webhook_deliveries (Phase 16-B) -----------------------------------
+  -- Mirrors src/db/migrations/008_webhook_deliveries.js.  One row per
+  -- (event → webhook) delivery: terminal status + attempt count + last HTTP
+  -- code / error.  No FK (immutable history, survives webhook deletion).
+  CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id               TEXT    NOT NULL PRIMARY KEY,
+    webhook_id       TEXT    NOT NULL,
+    tenant_id        TEXT    NOT NULL,
+    event_id         TEXT    NOT NULL,
+    event_type       TEXT    NOT NULL,
+    status           TEXT    NOT NULL,
+    attempts         INTEGER NOT NULL DEFAULT 0,
+    last_status_code INTEGER,
+    last_error       TEXT,
+    created_at       TEXT    NOT NULL,
+    updated_at       TEXT    NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries (webhook_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_tenant  ON webhook_deliveries (tenant_id, created_at DESC);
 `;
 
 // Standard projection of a sessions row (column order matches SqliteBackend).
@@ -941,6 +963,77 @@ class PostgresBackend extends StorageBackend {
       [id, tenantId]
     );
     return res.rowCount > 0;
+  }
+
+  // ----- webhook deliveries (Phase 16-B) -----
+
+  async createWebhookDelivery(record) {
+    await this._pool.query(
+      `INSERT INTO webhook_deliveries
+         (id, webhook_id, tenant_id, event_id, event_type, status, attempts,
+          last_status_code, last_error, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        record.id,
+        record.webhookId,
+        record.tenantId,
+        record.eventId,
+        record.eventType,
+        record.status,
+        record.attempts ?? 0,
+        record.lastStatusCode ?? null,
+        record.lastError ?? null,
+        record.createdAt,
+        record.updatedAt
+      ]
+    );
+    return this._getWebhookDelivery(record.id, record.tenantId);
+  }
+
+  async _getWebhookDelivery(id, tenantId) {
+    const { rows } = await this._pool.query(
+      `SELECT id, webhook_id, tenant_id, event_id, event_type, status, attempts,
+              last_status_code, last_error, created_at, updated_at
+       FROM webhook_deliveries WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId]
+    );
+    return rows[0] ? formatWebhookDeliveryRow(rows[0]) : null;
+  }
+
+  async updateWebhookDelivery(id, tenantId, fields) {
+    const existing = await this._getWebhookDelivery(id, tenantId);
+    if (!existing) return null;
+    await this._pool.query(
+      `UPDATE webhook_deliveries
+       SET status = $1, attempts = $2, last_status_code = $3, last_error = $4, updated_at = $5
+       WHERE id = $6 AND tenant_id = $7`,
+      [
+        fields.status ?? existing.status,
+        fields.attempts ?? existing.attempts,
+        fields.last_status_code ?? null,
+        fields.last_error ?? null,
+        fields.updated_at,
+        id,
+        tenantId
+      ]
+    );
+    return this._getWebhookDelivery(id, tenantId);
+  }
+
+  async listWebhookDeliveries(webhookId, tenantId, { since = null, until = null, limit = 100 } = {}) {
+    const pageSize = Math.min(Math.max(1, parseInt(limit, 10) || 100), 1000);
+    const { rows } = await this._pool.query(
+      `SELECT id, webhook_id, tenant_id, event_id, event_type, status, attempts,
+              last_status_code, last_error, created_at, updated_at
+       FROM webhook_deliveries
+       WHERE webhook_id = $1 AND tenant_id = $2
+         AND ($3::text IS NULL OR created_at >= $3)
+         AND ($4::text IS NULL OR created_at <  $4)
+       ORDER BY created_at DESC
+       LIMIT $5`,
+      [webhookId, tenantId, since, until, pageSize]
+    );
+    return rows.map(formatWebhookDeliveryRow);
   }
 
   // ----- custom-analytics event fetch (Phase 15-B) -----

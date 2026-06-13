@@ -260,6 +260,18 @@ async function deleteWebhook(id, tenantId) {
   return getBackend().deleteWebhook(id, tenantId);
 }
 
+async function createWebhookDelivery(record) {
+  return getBackend().createWebhookDelivery(record);
+}
+
+async function updateWebhookDelivery(id, tenantId, fields) {
+  return getBackend().updateWebhookDelivery(id, tenantId, fields);
+}
+
+async function listWebhookDeliveries(webhookId, tenantId, opts) {
+  return getBackend().listWebhookDeliveries(webhookId, tenantId, opts);
+}
+
 async function recordApiKeyAccess(entry) {
   return getBackend().recordApiKeyAccess(entry);
 }
@@ -328,5 +340,9 @@ module.exports = {
   getWebhook,
   listWebhooks,
   updateWebhook,
-  deleteWebhook
+  deleteWebhook,
+  // Webhook deliveries (Phase 16-B)
+  createWebhookDelivery,
+  updateWebhookDelivery,
+  listWebhookDeliveries
 };
