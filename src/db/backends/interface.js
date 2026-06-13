@@ -280,6 +280,46 @@ class StorageBackend {
     throw new Error("StorageBackend.deleteSavedQuery() not implemented");
   }
 
+  // ----- webhooks (Phase 16-A) -----
+
+  /**
+   * Persist a webhook registration.
+   * @param {{ id: string, tenantId: string, targetUrl: string,
+   *           eventTypes: string[], enabled: boolean,
+   *           createdAt: string, updatedAt: string }} record
+   * @returns {Promise<object>} the stored row (formatWebhookRow shape)
+   */
+  async createWebhook(record) {
+    throw new Error("StorageBackend.createWebhook() not implemented");
+  }
+
+  /** Fetch one tenant-scoped webhook by id, or null. */
+  async getWebhook(id, tenantId) {
+    throw new Error("StorageBackend.getWebhook() not implemented");
+  }
+
+  /** List a tenant's webhooks (newest first). */
+  async listWebhooks(tenantId) {
+    throw new Error("StorageBackend.listWebhooks() not implemented");
+  }
+
+  /**
+   * Apply a partial update (target_url / event_types / enabled) to a
+   * tenant-scoped webhook. Returns the updated row, or null if absent.
+   * @param {string} id
+   * @param {string} tenantId
+   * @param {{ target_url?: string, event_types?: string[], enabled?: boolean }} fields
+   * @param {string} updatedAt
+   */
+  async updateWebhook(id, tenantId, fields, updatedAt) {
+    throw new Error("StorageBackend.updateWebhook() not implemented");
+  }
+
+  /** Delete one tenant-scoped webhook by id; resolves true if a row was removed. */
+  async deleteWebhook(id, tenantId) {
+    throw new Error("StorageBackend.deleteWebhook() not implemented");
+  }
+
   /**
    * Fetch tenant-scoped, time-windowed raw event envelopes for a custom query.
    * All filtering/grouping/aggregation is done by src/customQuery.js in pure JS.

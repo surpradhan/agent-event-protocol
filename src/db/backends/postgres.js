@@ -47,7 +47,8 @@ const {
   encodeCursor,
   applyTextFilter,
   formatAccessLogRow,
-  formatSavedQueryRow
+  formatSavedQueryRow,
+  formatWebhookRow
 } = require("./_helpers");
 
 // ---------------------------------------------------------------------------
@@ -183,6 +184,23 @@ const SCHEMA_DDL = `
   );
 
   CREATE INDEX IF NOT EXISTS idx_saved_queries_tenant ON saved_queries (tenant_id, created_at DESC);
+
+  -- ----- webhooks (Phase 16-A) ---------------------------------------------
+  -- Mirrors src/db/migrations/007_webhooks.js.  Per-tenant registry of outbound
+  -- webhook endpoints (target URL + event-type filter + enabled flag).  The
+  -- target URL is SSRF-validated before insert; event_types is JSON text
+  -- (["*"] or a subset of the core types), data only.
+  CREATE TABLE IF NOT EXISTS webhooks (
+    id           TEXT    NOT NULL PRIMARY KEY,
+    tenant_id    TEXT    NOT NULL,
+    target_url   TEXT    NOT NULL,
+    event_types  TEXT    NOT NULL,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    created_at   TEXT    NOT NULL,
+    updated_at   TEXT    NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_webhooks_tenant ON webhooks (tenant_id, created_at DESC);
 `;
 
 // Standard projection of a sessions row (column order matches SqliteBackend).
@@ -856,6 +874,70 @@ class PostgresBackend extends StorageBackend {
   async deleteSavedQuery(id, tenantId) {
     const res = await this._pool.query(
       `DELETE FROM saved_queries WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId]
+    );
+    return res.rowCount > 0;
+  }
+
+  // ----- webhooks (Phase 16-A) -----
+
+  async createWebhook(record) {
+    await this._pool.query(
+      `INSERT INTO webhooks
+         (id, tenant_id, target_url, event_types, enabled, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        record.id,
+        record.tenantId,
+        record.targetUrl,
+        JSON.stringify(record.eventTypes),
+        record.enabled ? 1 : 0,
+        record.createdAt,
+        record.updatedAt
+      ]
+    );
+    return this.getWebhook(record.id, record.tenantId);
+  }
+
+  async getWebhook(id, tenantId) {
+    const { rows } = await this._pool.query(
+      `SELECT id, tenant_id, target_url, event_types, enabled, created_at, updated_at
+       FROM webhooks WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId]
+    );
+    return rows[0] ? formatWebhookRow(rows[0]) : null;
+  }
+
+  async listWebhooks(tenantId) {
+    const { rows } = await this._pool.query(
+      `SELECT id, tenant_id, target_url, event_types, enabled, created_at, updated_at
+       FROM webhooks WHERE tenant_id = $1 ORDER BY created_at DESC`,
+      [tenantId]
+    );
+    return rows.map(formatWebhookRow);
+  }
+
+  async updateWebhook(id, tenantId, fields, updatedAt) {
+    const existing = await this.getWebhook(id, tenantId);
+    if (!existing) return null;
+    const targetUrl =
+      fields.target_url !== undefined ? fields.target_url : existing.target_url;
+    const eventTypes =
+      fields.event_types !== undefined ? fields.event_types : existing.event_types;
+    const enabled =
+      fields.enabled !== undefined ? fields.enabled : existing.enabled;
+    await this._pool.query(
+      `UPDATE webhooks
+       SET target_url = $1, event_types = $2, enabled = $3, updated_at = $4
+       WHERE id = $5 AND tenant_id = $6`,
+      [targetUrl, JSON.stringify(eventTypes), enabled ? 1 : 0, updatedAt, id, tenantId]
+    );
+    return this.getWebhook(id, tenantId);
+  }
+
+  async deleteWebhook(id, tenantId) {
+    const res = await this._pool.query(
+      `DELETE FROM webhooks WHERE id = $1 AND tenant_id = $2`,
       [id, tenantId]
     );
     return res.rowCount > 0;

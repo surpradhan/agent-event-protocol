@@ -4,6 +4,39 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Webhook registration & management (Phase 16-A) — 2026-06-13
+
+Phase 16 (Webhooks & Alerts) PR-A — the registration half of PRD §Phase 16
+"webhook registration: `POST /webhooks` with event filters and target URL".
+Registration & management only; event delivery (16-B) and HMAC signing (16-C)
+build on this. This is the project's **first feature that makes outbound network
+calls**, so the headline concern is SSRF, addressed up front.
+
+- **`webhooks` table** (tenant-scoped): SQLite migration `007_webhooks.js` +
+  Postgres `SCHEMA_DDL` mirror. Stores `target_url`, an `event_types` filter
+  (`["*"]` for all, or a subset of the core event types), an `enabled` flag, and
+  timestamps.
+- **CRUD routes**, all tenant-scoped from the API key:
+  - `POST /webhooks` (**write** scope) — register; `event_types` defaults to
+    `["*"]`, `enabled` to `true`.
+  - `GET /webhooks` / `GET /webhooks/:id` (read) — list / fetch.
+  - `PATCH /webhooks/:id` (**write**) — partial update of `target_url` /
+    `event_types` / `enabled` (a changed URL is re-validated).
+  - `DELETE /webhooks/:id` (**write**) — remove.
+- **SSRF guard** (`src/ssrf.js`, pure + unit-tested): rejects non-http(s) schemes,
+  embedded credentials, and any target resolving to loopback, RFC1918 private,
+  CGNAT, link-local (incl. the `169.254.169.254` cloud-metadata endpoint), IPv6
+  ULA/link-local, or other reserved ranges (IPv4-mapped IPv6 is decoded so it
+  can't smuggle a private v4). Applied at registration; a delivery-time
+  DNS-rebind re-check (`assertResolvedIpAllowed`) is provided for 16-B.
+  Self-hosters can permit specific private targets via the new
+  **`WEBHOOK_TARGET_ALLOWLIST`** env var (comma-separated `host` / `host:port`).
+- **`aep webhooks`** CLI (`list` / `get` / `create` / `update` / `delete`) and
+  OpenAPI under a new **Webhooks** tag (`Webhook` schema).
+- No new CI job. Server suite: 345 unit + 186 integration.
+
+---
+
 ## Workflow anomaly detection (Phase 15-D) — 2026-06-12
 
 Phase 15 (Advanced Dashboard) PR-D — the final slice: "Anomaly detection: alert

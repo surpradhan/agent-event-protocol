@@ -3032,3 +3032,250 @@ describe("GET /analytics/anomalies", () => {
     assert.equal(body.anomaly_count, 0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Webhooks (Phase 16-A) — registration & management
+// ---------------------------------------------------------------------------
+
+describe("Webhooks — POST /webhooks (registration)", () => {
+  test("creates a webhook with defaults (wildcard filter, enabled)", async () => {
+    const res = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: "https://hooks.example.com/aep" }),
+    });
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.match(body.id, /^wh_/);
+    assert.equal(body.target_url, "https://hooks.example.com/aep");
+    assert.deepEqual(body.event_types, ["*"]);
+    assert.equal(body.enabled, true);
+    assert.equal(body.tenant_id, "tenant-test");
+    assert.ok(body.created_at && body.updated_at);
+  });
+
+  test("creates with an explicit event-type filter and disabled flag", async () => {
+    const res = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({
+        target_url: "https://hooks.example.com/errors",
+        event_types: ["error.raised", "task.failed"],
+        enabled: false,
+      }),
+    });
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.deepEqual(body.event_types, ["error.raised", "task.failed"]);
+    assert.equal(body.enabled, false);
+  });
+
+  test("rejects an SSRF target (loopback) with 400", async () => {
+    const res = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: "http://127.0.0.1:9000/x" }),
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.ok(body.details.some((d) => /SSRF/.test(d)));
+  });
+
+  test("rejects a private RFC1918 + cloud-metadata target with 400", async () => {
+    for (const url of ["http://10.0.0.5/x", "http://169.254.169.254/latest/meta-data/"]) {
+      const res = await fetch(`${baseUrl}/webhooks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+        body: JSON.stringify({ target_url: url }),
+      });
+      assert.equal(res.status, 400, url);
+    }
+  });
+
+  test("rejects a non-http(s) scheme with 400", async () => {
+    const res = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: "file:///etc/passwd" }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("rejects an unknown event type with 400", async () => {
+    const res = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: "https://h.example.com/x", event_types: ["bogus.type"] }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("requires a write-scoped key (403 read, 401 anon)", async () => {
+    const r403 = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${readKey}` },
+      body: JSON.stringify({ target_url: "https://h.example.com/x" }),
+    });
+    assert.equal(r403.status, 403);
+    const r401 = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_url: "https://h.example.com/x" }),
+    });
+    assert.equal(r401.status, 401);
+  });
+
+  test("honours WEBHOOK_TARGET_ALLOWLIST for a private target", async () => {
+    process.env.WEBHOOK_TARGET_ALLOWLIST = "127.0.0.1:9099";
+    try {
+      const res = await fetch(`${baseUrl}/webhooks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+        body: JSON.stringify({ target_url: "http://127.0.0.1:9099/hook" }),
+      });
+      assert.equal(res.status, 201);
+    } finally {
+      delete process.env.WEBHOOK_TARGET_ALLOWLIST;
+    }
+  });
+});
+
+describe("Webhooks — GET / PATCH / DELETE", () => {
+  async function createWebhook(overrides = {}) {
+    const res = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: "https://hooks.example.com/m", ...overrides }),
+    });
+    return (await res.json());
+  }
+
+  test("GET /webhooks lists the tenant's webhooks (read scope)", async () => {
+    await createWebhook();
+    const res = await fetch(`${baseUrl}/webhooks`, { headers: { Authorization: `Bearer ${readKey}` } });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body.webhooks));
+    assert.ok(body.webhooks.length >= 1);
+  });
+
+  test("GET /webhooks/:id returns one, 404 for missing", async () => {
+    const wh = await createWebhook();
+    const res = await fetch(`${baseUrl}/webhooks/${wh.id}`, { headers: { Authorization: `Bearer ${readKey}` } });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).id, wh.id);
+
+    const miss = await fetch(`${baseUrl}/webhooks/wh_nope`, { headers: { Authorization: `Bearer ${readKey}` } });
+    assert.equal(miss.status, 404);
+  });
+
+  test("PATCH toggles enabled and updates filter/url", async () => {
+    const wh = await createWebhook({ enabled: true });
+    const res = await fetch(`${baseUrl}/webhooks/${wh.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ enabled: false, event_types: ["tool.called"], target_url: "https://hooks.example.com/new" }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.enabled, false);
+    assert.deepEqual(body.event_types, ["tool.called"]);
+    assert.equal(body.target_url, "https://hooks.example.com/new");
+    assert.ok(body.updated_at >= wh.updated_at);
+  });
+
+  test("PATCH re-validates SSRF on a target_url change (400)", async () => {
+    const wh = await createWebhook();
+    const res = await fetch(`${baseUrl}/webhooks/${wh.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: "http://192.168.1.10/x" }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("PATCH with no updatable fields → 400", async () => {
+    const wh = await createWebhook();
+    const res = await fetch(`${baseUrl}/webhooks/${wh.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({}),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("PATCH a missing webhook → 404", async () => {
+    const res = await fetch(`${baseUrl}/webhooks/wh_missing`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ enabled: false }),
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test("PATCH/DELETE require a write-scoped key (403 read)", async () => {
+    const wh = await createWebhook();
+    const p = await fetch(`${baseUrl}/webhooks/${wh.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${readKey}` },
+      body: JSON.stringify({ enabled: false }),
+    });
+    assert.equal(p.status, 403);
+    const d = await fetch(`${baseUrl}/webhooks/${wh.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(d.status, 403);
+  });
+
+  test("DELETE removes a webhook (204), then 404", async () => {
+    const wh = await createWebhook();
+    const del = await fetch(`${baseUrl}/webhooks/${wh.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${writeKey}` },
+    });
+    assert.equal(del.status, 204);
+    const after = await fetch(`${baseUrl}/webhooks/${wh.id}`, { headers: { Authorization: `Bearer ${writeKey}` } });
+    assert.equal(after.status, 404);
+    const delAgain = await fetch(`${baseUrl}/webhooks/${wh.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${writeKey}` },
+    });
+    assert.equal(delAgain.status, 404);
+  });
+
+  test("tenant isolation — another tenant cannot see, fetch, patch, or delete", async () => {
+    const wh = await createWebhook();
+    const keyRes = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: "tenant-other-16a", label: "other", scopes: ["read", "write"] }),
+    });
+    const otherKey = (await keyRes.json()).key;
+
+    const list = await fetch(`${baseUrl}/webhooks`, { headers: { Authorization: `Bearer ${otherKey}` } });
+    const listBody = await list.json();
+    assert.ok(!listBody.webhooks.some((w) => w.id === wh.id));
+
+    const get = await fetch(`${baseUrl}/webhooks/${wh.id}`, { headers: { Authorization: `Bearer ${otherKey}` } });
+    assert.equal(get.status, 404);
+
+    const patch = await fetch(`${baseUrl}/webhooks/${wh.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${otherKey}` },
+      body: JSON.stringify({ enabled: false }),
+    });
+    assert.equal(patch.status, 404);
+
+    const del = await fetch(`${baseUrl}/webhooks/${wh.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${otherKey}` },
+    });
+    assert.equal(del.status, 404);
+
+    // The original tenant still sees it intact.
+    const stillThere = await fetch(`${baseUrl}/webhooks/${wh.id}`, { headers: { Authorization: `Bearer ${writeKey}` } });
+    assert.equal(stillThere.status, 200);
+    assert.equal((await stillThere.json()).enabled, true);
+  });
+});
