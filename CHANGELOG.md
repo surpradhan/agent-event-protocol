@@ -4,6 +4,30 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Webhook deliveries observability + docs (Phase 16-D) — 2026-06-13
+
+Phase 16 (Webhooks & Alerts) PR-D — the final slice. Surfaces the delivery history
+and documents the feature. **Phase 16 is now complete (A–D).**
+
+- **`GET /webhooks/:id/deliveries`** (read- + tenant-scoped; `?since`/`?until`/
+  `?limit`): recent delivery attempts for a webhook, newest first, each with its
+  terminal `status`, `attempts`, `last_status_code`, and `last_error`. 404 if the
+  webhook isn't the tenant's (existence not leaked). Reuses the
+  `listWebhookDeliveries` data method from 16-B; `WebhookDelivery` schema + path
+  added to OpenAPI.
+- **Dashboard "Webhooks" tab**: lists the tenant's registrations (target,
+  event-type filter, enabled/disabled) and, on click, that webhook's recent
+  delivery attempts with colour-coded status — verified in the browser preview
+  against a live server (real ingest → delivery → failed-with-error rows render).
+- **`aep webhooks deliveries <id>`** CLI (`--since`/`--until`/`--limit`/`--json`).
+- **OPERATIONS.md §6 "Webhooks & alerts"**: enabling delivery (`WEBHOOKS_ENABLED`,
+  off by default), registration, the SSRF security posture + allowlist, the bounded
+  retry knobs, payload signing + verification, and deliveries observability (incl.
+  the "deliveries are not pruned" / per-node concurrency caveats).
+- No new CI job. Server suite: 386 unit + 201 integration.
+
+---
+
 ## Webhook HMAC payload signing (Phase 16-C) — 2026-06-13
 
 Phase 16 (Webhooks & Alerts) PR-C — delivers PRD §Phase 16 "signing: webhook
