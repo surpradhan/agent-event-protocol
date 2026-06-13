@@ -62,8 +62,10 @@ describe("validateWebhookUrl — SSRF-blocked hosts", () => {
   const blocked = [
     "http://localhost/x",
     "http://LOCALHOST/x",
+    "http://localhost./x", // trailing-dot FQDN still resolves to 127.0.0.1
     "http://foo.localhost/x",
     "http://service.internal/x",
+    "http://service.internal./x", // trailing-dot FQDN
     "http://printer.local/x",
     "http://x.home.arpa/x",
     "http://127.0.0.1/x",
@@ -91,6 +93,21 @@ describe("validateWebhookUrl — SSRF-blocked hosts", () => {
   test("allows a public IP literal", () => {
     assert.equal(validateWebhookUrl("https://8.8.8.8/x").ok, true);
     assert.equal(validateWebhookUrl("https://[2606:4700:4700::1111]/x").ok, true);
+  });
+
+  // Numeric IPv4 spellings (decimal / hex / octal / short) all normalize to a
+  // dotted-quad in the WHATWG URL parser before the guard runs; pin that so a
+  // future parser/refactor change can't silently reopen a localhost bypass.
+  test("blocks numeric/alternate spellings of loopback", () => {
+    for (const u of [
+      "http://2130706433/x",   // decimal 127.0.0.1
+      "http://0x7f000001/x",   // hex 127.0.0.1
+      "http://0x7f.0.0.1/x",   // mixed hex
+      "http://017700000001/x", // octal 127.0.0.1
+      "http://127.1/x"         // short form 127.0.0.1
+    ]) {
+      assert.equal(validateWebhookUrl(u).ok, false, u);
+    }
   });
 });
 

@@ -1027,6 +1027,7 @@ async function cmdWebhooks(positional, flags, serverUrl, apiKey) {
     }
     case "update": {
       if (!id) die("Usage: aep webhooks update <id> [--url <target>] [--events <list>] [--enable | --disable]");
+      if (flags.enable && flags.disable) die("--enable and --disable are mutually exclusive");
       const body = {};
       if (flags.url && flags.url !== true) body.target_url = String(flags.url);
       const events = parseEventTypesFlag(flags.events);

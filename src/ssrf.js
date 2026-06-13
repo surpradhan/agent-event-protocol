@@ -146,10 +146,16 @@ function isBlockedIPv6(ip) {
   return false;
 }
 
-/** Lower-cased hostname with any IPv6 brackets stripped. */
+/**
+ * Lower-cased hostname with any IPv6 brackets stripped and a single trailing
+ * dot removed. The WHATWG URL parser keeps a trailing-dot FQDN (e.g. `localhost.`,
+ * which still resolves to 127.0.0.1) verbatim, so canonicalizing it here is what
+ * lets the inherently-local suffix check below actually catch it.
+ */
 function normalizeHost(hostname) {
   let h = (hostname || "").toLowerCase();
   if (h.startsWith("[") && h.endsWith("]")) h = h.slice(1, -1);
+  if (h.endsWith(".")) h = h.slice(0, -1);
   return h;
 }
 
