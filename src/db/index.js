@@ -248,6 +248,10 @@ async function getWebhook(id, tenantId) {
   return getBackend().getWebhook(id, tenantId);
 }
 
+async function getWebhookSigningSecret(id, tenantId) {
+  return getBackend().getWebhookSigningSecret(id, tenantId);
+}
+
 async function listWebhooks(tenantId) {
   return getBackend().listWebhooks(tenantId);
 }
@@ -338,6 +342,7 @@ module.exports = {
   // Webhooks (Phase 16-A)
   createWebhook,
   getWebhook,
+  getWebhookSigningSecret,
   listWebhooks,
   updateWebhook,
   deleteWebhook,

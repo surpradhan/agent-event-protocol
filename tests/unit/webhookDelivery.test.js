@@ -187,6 +187,20 @@ describe("deliverWithRetries", () => {
     const r = await deliverWithRetries("http://127.0.0.1:9099/x", "{}", deps, CONFIG, "127.0.0.1:9099");
     assert.equal(r.status, "success");
   });
+
+  test("threads extra headers (e.g. X-AEP-Signature) through to httpPost", async () => {
+    let seenHeaders = null;
+    const deps = {
+      httpPost: async (_url, _body, opts) => { seenHeaders = opts.headers; return { statusCode: 200 }; },
+      sleep: async () => {},
+      now: () => new Date()
+    };
+    const extra = { "X-AEP-Signature": "hmac-sha256=abc", "X-AEP-Delivery-Id": "wd_1" };
+    const r = await deliverWithRetries("https://h.example.com/x", "{}", deps, CONFIG, "", extra);
+    assert.equal(r.status, "success");
+    assert.equal(seenHeaders["X-AEP-Signature"], "hmac-sha256=abc");
+    assert.equal(seenHeaders["X-AEP-Delivery-Id"], "wd_1");
+  });
 });
 
 describe("Semaphore", () => {

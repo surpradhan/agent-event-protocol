@@ -37,6 +37,8 @@ const { URL } = require("url");
 const db = require("./db");
 const logger = require("./logger");
 const { validateWebhookUrl, assertResolvedIpAllowed } = require("./ssrf");
+const { stableStringify } = require("./_canonical");
+const { buildSignatureHeader, HEADER: SIGNATURE_HEADER } = require("./webhookSignature");
 
 // ---------------------------------------------------------------------------
 // Configuration (env, all bounded by hard ceilings)
@@ -214,7 +216,7 @@ function defaultDeps() {
  * `permanent: true` means do-not-retry (SSRF/validation reject, or a non-retryable
  * HTTP status). A thrown httpPost (network error / timeout) is transient.
  */
-async function deliverOnce(targetUrl, body, deps, config, allowlist) {
+async function deliverOnce(targetUrl, body, deps, config, allowlist, extraHeaders = {}) {
   // Re-validate scheme / credentials / literal host (defense-in-depth; the
   // resolved-IP rebind check happens inside the guarded lookup in httpPost).
   const v = validateWebhookUrl(targetUrl, { allowlist });
@@ -227,7 +229,8 @@ async function deliverOnce(targetUrl, body, deps, config, allowlist) {
   try {
     const { statusCode } = await deps.httpPost(targetUrl, body, {
       timeoutMs: config.timeoutMs,
-      allowlist
+      allowlist,
+      headers: extraHeaders
     });
     if (statusCode >= 200 && statusCode < 300) {
       return { ok: true, statusCode, error: null, permanent: false };
@@ -250,14 +253,14 @@ async function deliverOnce(targetUrl, body, deps, config, allowlist) {
  * Deliver `body` to a webhook with bounded exponential-backoff retries.
  * Returns the terminal record fields: { status, attempts, last_status_code, last_error }.
  */
-async function deliverWithRetries(targetUrl, body, deps, config, allowlist) {
+async function deliverWithRetries(targetUrl, body, deps, config, allowlist, extraHeaders = {}) {
   let attempts = 0;
   let last = { statusCode: null, error: "not attempted" };
 
   // 1 initial try + up to maxRetries retries.
   for (let i = 0; i <= config.maxRetries; i++) {
     attempts += 1;
-    const r = await deliverOnce(targetUrl, body, deps, config, allowlist);
+    const r = await deliverOnce(targetUrl, body, deps, config, allowlist, extraHeaders);
     last = { statusCode: r.statusCode, error: r.error };
 
     if (r.ok) {
@@ -374,8 +377,29 @@ async function deliverToWebhook(event, webhook, tenantId, store, deps, config, a
       updatedAt: startedAt
     });
 
-    const body = JSON.stringify(buildDeliveryBody(event, webhook, deliveryId, startedAt));
-    const result = await deliverWithRetries(webhook.target_url, body, deps, config, allowlist);
+    // Serialize the body in the canonical (key-sorted) form so the exact bytes
+    // sent are deterministic and a receiver can verify by HMAC-ing the raw body.
+    const body = stableStringify(buildDeliveryBody(event, webhook, deliveryId, startedAt));
+
+    // Identifying headers + the HMAC signature (Phase 16-C). The signing secret is
+    // fetched via the dedicated internal accessor (never the public webhook shape);
+    // a webhook with no secret (created before 16-C) is delivered unsigned.
+    const headers = {
+      "X-AEP-Webhook-Id": webhook.id,
+      "X-AEP-Delivery-Id": deliveryId,
+      "X-AEP-Event-Type": event.type
+    };
+    let signingSecret = null;
+    try {
+      signingSecret = await store.getWebhookSigningSecret(webhook.id, tenantId);
+    } catch (err) {
+      logger.debug({ err, webhook_id: webhook.id }, "webhook delivery: secret fetch failed");
+    }
+    if (signingSecret) {
+      headers[SIGNATURE_HEADER] = buildSignatureHeader(body, signingSecret);
+    }
+
+    const result = await deliverWithRetries(webhook.target_url, body, deps, config, allowlist, headers);
 
     await store.updateWebhookDelivery(deliveryId, tenantId, {
       status: result.status,

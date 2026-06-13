@@ -4,6 +4,33 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Webhook HMAC payload signing (Phase 16-C) — 2026-06-13
+
+Phase 16 (Webhooks & Alerts) PR-C — delivers PRD §Phase 16 "signing: webhook
+payloads are HMAC-signed for verification".
+
+- **Per-webhook signing secret**: every webhook gets a `whsec_…` secret at
+  registration (`webhooks.signing_secret`, SQLite migration `009` + Postgres
+  `SCHEMA_DDL` mirror incl. an idempotent `ADD COLUMN IF NOT EXISTS`). It is
+  returned **once** in the `POST /webhooks` 201 response and **never again** — GET
+  / list responses omit it (the delivery engine reads it via a dedicated internal
+  `getWebhookSigningSecret`, never the public webhook shape).
+- **Signed deliveries**: the delivery body is serialized in the canonical
+  (key-sorted `stableStringify`) form and HMAC-SHA256-signed with the secret,
+  reusing the same canonical-JSON + HMAC stack as event signatures
+  (`src/_canonical.js`). Deliveries carry **`X-AEP-Signature: hmac-sha256=<base64>`**
+  plus `X-AEP-Webhook-Id` / `X-AEP-Delivery-Id` / `X-AEP-Event-Type` headers.
+  Because the transmitted bytes are the canonical form, a receiver verifies simply
+  by HMAC-ing the raw body received.
+- **Verification helper + example**: `src/webhookSignature.js`
+  (`generateSigningSecret` / `buildSignatureHeader` / constant-time
+  `verifyWebhookSignature`) and a standalone `examples/verify-webhook-signature.js`
+  receiver. Webhooks created before this slice (no secret) are delivered unsigned.
+- No new CI job. Server suite: 386 unit + 195 integration (incl. a real-listener
+  test asserting the signature verifies against the one-time secret).
+
+---
+
 ## Webhook event delivery + retries (Phase 16-B) — 2026-06-13
 
 Phase 16 (Webhooks & Alerts) PR-B — delivers PRD §Phase 16 "event delivery: POST
