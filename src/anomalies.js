@@ -171,11 +171,17 @@ const METRICS = [
  */
 function detectAnomalies(events, { now = new Date(), threshold = DEFAULT_THRESHOLD, limit = DEFAULT_LIMIT, minSamples = DEFAULT_MIN_SAMPLES } = {}) {
   const list = Array.isArray(events) ? events : [];
+  // These are defensive clamps for direct callers; over HTTP the route already
+  // rejects threshold <= 0 (400) and validateQueryParams bounds limit to [1,1000],
+  // so `cap === 0` (return-none) is only reachable from a direct in-process call.
   const cutoff = Number.isFinite(threshold) && threshold > 0 ? threshold : DEFAULT_THRESHOLD;
   const cap = Number.isFinite(limit) && limit >= 0 ? Math.floor(limit) : DEFAULT_LIMIT;
   const minN = Number.isFinite(minSamples) && minSamples >= 2 ? Math.floor(minSamples) : DEFAULT_MIN_SAMPLES;
 
-  // Group events by trace_id (events without a trace_id fold into one bucket).
+  // Group events by trace_id. Events with no (or a non-string) trace_id fold into
+  // a single synthetic "(none)" bucket — treated as one trace, so it can itself be
+  // baselined and flagged as `trace_id: "(none)"`. In practice every ingested event
+  // carries a trace_id, so this is a defensive fold rather than an expected path.
   const byTrace = new Map();
   for (const e of list) {
     const tid = (e && typeof e.trace_id === "string" && e.trace_id) || "(none)";
