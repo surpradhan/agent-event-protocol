@@ -64,28 +64,61 @@ function computeCutoff(retentionDays, now = Date.now()) {
  * project with a positive retention window, prunes events for the project's
  * tenant older than its cutoff and reconciles session summaries.
  *
- * @param {{ now?: Date|number, dryRun?: boolean }} [opts]
+ * Export-before-prune (cold storage)
+ * ----------------------------------
+ * When `exportBeforePrune` is set, the soon-to-be-deleted events (those with
+ * `time < cutoff`) are exported to cold storage *first*, via the injected
+ * `exportTenant(tenantId, cutoff)` function (wired to the export module by
+ * src/prune.js).  This is a **safety gate**: if the export rejects, that
+ * project's events are NOT deleted — the failure is recorded and the pass moves
+ * on, so a cold-storage outage can never cause unbacked data loss.  `--dry-run`
+ * never exports and never deletes.
+ *
+ * `exportTenant` should export exactly the prune predicate (events `time <
+ * cutoff`) — i.e. with `until = cutoff` — so the archived object matches what is
+ * deleted.  (A backdated event landing between export and delete is the only
+ * gap; events normally carry `time` near now, well after a past cutoff.)
+ *
+ * @param {{ now?: Date|number, dryRun?: boolean, exportBeforePrune?: boolean,
+ *           exportTenant?: (tenantId: string, cutoff: string) => Promise<object>,
+ *           db?: object }} [opts]  `db` is injectable for testing (defaults to the real backend)
  * @returns {Promise<{
  *   dryRun: boolean,
+ *   exportBeforePrune: boolean,
  *   projects_scanned: number,
  *   projects_pruned: number,
  *   events_deleted: number,
  *   sessions_deleted: number,
+ *   export_failures: number,
  *   details: Array<{
  *     project_id: string, tenant_id: string, retention_days: number,
- *     cutoff: string, events_deleted: number, sessions_deleted: number
+ *     cutoff: string, events_deleted: number, sessions_deleted: number,
+ *     exported?: boolean, objects_written?: number, events_exported?: number,
+ *     export_error?: string
  *   }>
  * }>}
  */
-async function pruneAll({ now = Date.now(), dryRun = false } = {}) {
-  const projects = await db.listProjects();
+async function pruneAll({
+  now = Date.now(),
+  dryRun = false,
+  exportBeforePrune = false,
+  exportTenant = null,
+  db: database = db
+} = {}) {
+  if (exportBeforePrune && !dryRun && typeof exportTenant !== "function") {
+    throw new Error("pruneAll: exportBeforePrune requires an exportTenant(tenantId, cutoff) function");
+  }
+
+  const projects = await database.listProjects();
 
   const summary = {
     dryRun,
+    exportBeforePrune,
     projects_scanned: projects.length,
     projects_pruned: 0,
     events_deleted: 0,
     sessions_deleted: 0,
+    export_failures: 0,
     details: []
   };
 
@@ -100,29 +133,51 @@ async function pruneAll({ now = Date.now(), dryRun = false } = {}) {
     const cutoff = computeCutoff(retentionDays, now);
     const tenantId = project.tenant_id;
 
-    let events_deleted = 0;
-    let sessions_deleted = 0;
-
-    if (dryRun) {
-      events_deleted = await db.countEventsBefore(tenantId, cutoff);
-    } else {
-      const res = await db.pruneEventsBefore(tenantId, cutoff);
-      events_deleted = res.events_deleted;
-      sessions_deleted = res.sessions_deleted;
-    }
-
-    summary.events_deleted += events_deleted;
-    summary.sessions_deleted += sessions_deleted;
-    if (events_deleted > 0) summary.projects_pruned += 1;
-
-    summary.details.push({
+    const detail = {
       project_id: project.id,
       tenant_id: tenantId,
       retention_days: retentionDays,
       cutoff,
-      events_deleted,
-      sessions_deleted
-    });
+      events_deleted: 0,
+      sessions_deleted: 0
+    };
+
+    if (dryRun) {
+      // Report what would be deleted; export nothing, delete nothing.
+      detail.events_deleted = await database.countEventsBefore(tenantId, cutoff);
+      if (exportBeforePrune) detail.exported = false; // would-export, but dry-run writes nothing
+    } else {
+      // Safety gate: export the soon-to-be-deleted events to cold storage first.
+      // If the export fails, skip deletion for this project so no data is lost.
+      if (exportBeforePrune) {
+        try {
+          const exp = await exportTenant(tenantId, cutoff);
+          detail.exported = true;
+          detail.objects_written = exp ? exp.objects_written : undefined;
+          detail.events_exported = exp ? exp.events_exported : undefined;
+        } catch (err) {
+          detail.exported = false;
+          detail.export_error = err && err.message ? err.message : String(err);
+          summary.export_failures += 1;
+          summary.details.push(detail);
+          logger.error(
+            { project_id: project.id, tenant_id: tenantId, cutoff, error: detail.export_error },
+            "retention: cold-storage export failed — skipping prune for this project"
+          );
+          continue; // do NOT delete unbacked data
+        }
+      }
+
+      const res = await database.pruneEventsBefore(tenantId, cutoff);
+      detail.events_deleted = res.events_deleted;
+      detail.sessions_deleted = res.sessions_deleted;
+    }
+
+    summary.events_deleted += detail.events_deleted;
+    summary.sessions_deleted += detail.sessions_deleted;
+    if (detail.events_deleted > 0) summary.projects_pruned += 1;
+
+    summary.details.push(detail);
 
     logger.info(
       {
@@ -130,8 +185,9 @@ async function pruneAll({ now = Date.now(), dryRun = false } = {}) {
         tenant_id: tenantId,
         retention_days: retentionDays,
         cutoff,
-        events_deleted,
-        sessions_deleted,
+        events_deleted: detail.events_deleted,
+        sessions_deleted: detail.sessions_deleted,
+        exported: detail.exported,
         dry_run: dryRun
       },
       dryRun ? "retention: would prune events" : "retention: pruned events"
