@@ -74,4 +74,34 @@ class LocalFileSink extends ExportSink {
   }
 }
 
-module.exports = { ExportSink, LocalFileSink };
+const SUPPORTED_SINKS = ["local", "s3"];
+
+/**
+ * Construct an ExportSink from a resolved config (shared by the export CLI and,
+ * later, the retention export-before-prune path).  S3 is OFF unless explicitly
+ * selected — `kind` defaults to "local".  The S3 sink module (and its AWS SDK
+ * dependency) is required lazily so the local path never loads it.
+ *
+ * @param {{ kind?: string, dir?: string, bucket?: string, region?: string,
+ *           endpoint?: string }} [config]
+ * @returns {ExportSink}
+ */
+function createSink(config = {}) {
+  const kind = String(config.kind || "local").toLowerCase();
+  switch (kind) {
+    case "local":
+      return new LocalFileSink({ dir: config.dir || "./exports" });
+    case "s3": {
+      const { S3Sink } = require("./s3sink");
+      return new S3Sink({
+        bucket: config.bucket,
+        region: config.region,
+        endpoint: config.endpoint
+      });
+    }
+    default:
+      throw new Error(`Unknown export sink: '${kind}' (supported: ${SUPPORTED_SINKS.join(", ")})`);
+  }
+}
+
+module.exports = { ExportSink, LocalFileSink, SUPPORTED_SINKS, createSink };

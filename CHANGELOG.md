@@ -4,6 +4,39 @@ All notable changes to AEP are documented here.
 
 ---
 
+## S3 export sink (Phase 17-B) — 2026-06-14
+
+Phase 17 (S3/Cloud Export) PR-B — the first cloud egress path. Delivers the S3
+half of PRD §Phase 17 "export sessions/events to S3". Drops in behind the PR-A
+`ExportSink` contract; no change to the export core or the local path.
+
+- **`src/export/s3sink.js` — `S3Sink`**: streams an export object to Amazon S3 via
+  the AWS SDK v3 multipart uploader (`@aws-sdk/lib-storage`'s `Upload`), so large
+  objects stream up without buffering. Reports an `s3://bucket/key` (or
+  `endpoint/bucket/key`) location.
+- **Security posture (mirrors the webhook delivery engine)**:
+  - **OFF by default** — only constructed when `--sink s3` (or `EXPORT_SINK=s3`)
+    is explicitly selected.
+  - **Credentials are never accepted as parameters and never logged** — the
+    `S3Client` resolves them from the standard AWS credential chain (env vars,
+    shared config, SSO, container/instance roles).
+  - The heavy AWS SDK is `require`d **lazily** (only when an S3 sink is used), so
+    the local path never loads it.
+- **`createSink({ kind, dir, bucket, region, endpoint })` factory** in
+  `src/export/sink.js` — shared sink construction for the CLI (and the retention
+  export path in PR-D).
+- **CLI**: `--sink local|s3`, `--bucket`, `--region`, `--endpoint` (each with env
+  fallbacks `EXPORT_SINK` / `EXPORT_S3_BUCKET` / `EXPORT_S3_REGION` (or
+  `AWS_REGION`) / `EXPORT_S3_ENDPOINT`). `--endpoint` enables S3-compatible stores
+  (MinIO, etc.) via path-style addressing.
+- **Scope**: S3 only. GCS / Azure Blob (also named in the PRD) are deliberate
+  follow-ups — they slot in as sibling sinks behind the same interface.
+- Testability: the uploader is injectable, so 13 new unit tests
+  (`tests/unit/exportS3.test.js`) drive the full encode→compress→S3 pipeline with
+  no network and no AWS SDK calls. No new CI job; server suite green.
+
+---
+
 ## Export core + JSONL + local sink (Phase 17-A) — 2026-06-14
 
 Phase 17 (S3/Cloud Export) PR-A — **starts Phase 17.** A pure, streaming export
