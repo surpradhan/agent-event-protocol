@@ -106,6 +106,35 @@ function printHuman(summary, destLabel) {
   }
 }
 
+/**
+ * Build the export-before-prune wiring from the EXPORT_* env config. Validates
+ * the format/compression and constructs the sink up front so a misconfiguration
+ * (unknown format, `s3` without a bucket, …) fails fast — before anything is
+ * deleted. Returns the injected `exportTenant` and a destination label for output.
+ * @returns {{ exportTenant: (tenantId: string, cutoff: string) => Promise<object>,
+ *             destLabel: string }}
+ */
+function buildExportWiring() {
+  const format = process.env.EXPORT_FORMAT || "jsonl";
+  const compression = process.env.EXPORT_COMPRESSION || "gzip";
+  const prefix = process.env.EXPORT_PREFIX || "";
+  formatExtension(format);            // validate (throws on unknown)
+  compressionExtension(compression);  // validate (throws on unknown)
+
+  const sinkConfig = resolveSinkConfig({
+    out: process.env.EXPORT_OUT || "./exports",
+    sink: null, bucket: null, region: null, endpoint: null
+  });
+  const sink = createSink(sinkConfig); // throws e.g. if sink=s3 without a bucket
+
+  // Export exactly the prune predicate (events with time < cutoff) for one
+  // tenant; resolves runExport's summary, rejects on any sink/encode failure.
+  const exportTenant = (tenantId, cutoff) =>
+    runExport({ tenantId, since: null, until: cutoff, format, compression, prefix, sink });
+
+  return { exportTenant, destLabel: destinationLabel(sinkConfig) };
+}
+
 async function main() {
   const { dryRun, json, exportBeforePrune: exportFlag, help } = parseArgs(process.argv);
 
@@ -116,29 +145,11 @@ async function main() {
 
   const exportBeforePrune = exportFlag || process.env.PRUNE_EXPORT_BEFORE_DELETE === "1";
 
-  // Build the export wiring up front (so a misconfiguration fails fast, before
-  // anything is deleted). Only needed for a real export-before-prune run.
-  let sink = null;
+  // Only a real (non-dry-run) export-before-prune run needs the export wiring.
   let exportTenant = null;
   let destLabel = "";
   if (exportBeforePrune && !dryRun) {
-    const format = process.env.EXPORT_FORMAT || "jsonl";
-    const compression = process.env.EXPORT_COMPRESSION || "gzip";
-    const prefix = process.env.EXPORT_PREFIX || "";
-    formatExtension(format);            // validate (throws on unknown)
-    compressionExtension(compression);  // validate (throws on unknown)
-
-    const sinkConfig = resolveSinkConfig({
-      out: process.env.EXPORT_OUT || "./exports",
-      sink: null, bucket: null, region: null, endpoint: null
-    });
-    sink = createSink(sinkConfig);      // throws e.g. if sink=s3 without a bucket
-    destLabel = destinationLabel(sinkConfig);
-
-    // Export exactly the prune predicate (events with time < cutoff) for one
-    // tenant; resolves runExport's summary, rejects on any sink/encode failure.
-    exportTenant = (tenantId, cutoff) =>
-      runExport({ tenantId, since: null, until: cutoff, format, compression, prefix, sink });
+    ({ exportTenant, destLabel } = buildExportWiring());
   }
 
   await db.init();
