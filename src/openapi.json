@@ -26,6 +26,7 @@
     { "name": "Metrics", "description": "Aggregate counters and statistics" },
     { "name": "Analytics", "description": "Compliance / policy-enforcement analytics" },
     { "name": "Compliance", "description": "Framework-mapped compliance reports" },
+    { "name": "Webhooks", "description": "Register & manage outbound webhook endpoints" },
     { "name": "Stream", "description": "Real-time Server-Sent Events feed" },
     { "name": "Admin", "description": "API key management (requires ADMIN_TOKEN)" }
   ],
@@ -228,6 +229,41 @@
           "tenant_id": { "type": "string" },
           "name": { "type": "string" },
           "spec": { "$ref": "#/components/schemas/QuerySpec" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Webhook": {
+        "type": "object",
+        "description": "A registered outbound webhook endpoint (tenant-scoped).",
+        "properties": {
+          "id": { "type": "string", "example": "wh_…" },
+          "tenant_id": { "type": "string" },
+          "target_url": { "type": "string", "format": "uri", "description": "Delivery target (http/https; SSRF-guarded — private/loopback/link-local hosts are rejected)." },
+          "event_types": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Event-type filter: [\"*\"] for all events, or a subset of the core event types.",
+            "example": ["error.raised", "task.failed"]
+          },
+          "enabled": { "type": "boolean", "description": "A disabled webhook is retained but receives no deliveries." },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "WebhookDelivery": {
+        "type": "object",
+        "description": "One (event → webhook) delivery attempt set, with its terminal outcome.",
+        "properties": {
+          "id": { "type": "string", "example": "wd_…" },
+          "webhook_id": { "type": "string" },
+          "tenant_id": { "type": "string" },
+          "event_id": { "type": "string" },
+          "event_type": { "type": "string" },
+          "status": { "type": "string", "enum": ["pending", "success", "failed"] },
+          "attempts": { "type": "integer", "description": "Number of HTTP attempts made (1 + retries)." },
+          "last_status_code": { "type": "integer", "nullable": true, "description": "Last HTTP status (null on network error / timeout / SSRF rejection)." },
+          "last_error": { "type": "string", "nullable": true, "description": "Short diagnostic for the last failure (null on success)." },
           "created_at": { "type": "string", "format": "date-time" },
           "updated_at": { "type": "string", "format": "date-time" }
         }
@@ -1296,6 +1332,110 @@
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "404": { "description": "Not found for this tenant" },
           "422": { "description": "The stored spec is no longer valid" }
+        }
+      }
+    },
+    "/webhooks": {
+      "get": {
+        "tags": ["Webhooks"],
+        "summary": "List registered webhooks",
+        "description": "Lists the authenticated tenant's webhooks (newest first). Read- + tenant-scoped.",
+        "operationId": "listWebhooks",
+        "security": [{ "ApiKeyAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "The tenant's webhooks",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "webhooks": { "type": "array", "items": { "$ref": "#/components/schemas/Webhook" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      },
+      "post": {
+        "tags": ["Webhooks"],
+        "summary": "Register a webhook",
+        "description": "Registers an outbound webhook. Requires a **write**-scoped key. The `target_url` is validated by the SSRF guard (loopback / private / link-local / non-http(s) targets are rejected); self-hosters can permit specific private targets via the `WEBHOOK_TARGET_ALLOWLIST` env var. `event_types` defaults to `[\"*\"]` (all events). The 201 response includes a one-time `signing_secret` — store it; it is NEVER returned again. Deliveries are HMAC-SHA256 signed with it and carry an `X-AEP-Signature: hmac-sha256=<base64>` header (verify over the raw request body).",
+        "operationId": "createWebhook",
+        "security": [{ "ApiKeyAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["target_url"], "properties": { "target_url": { "type": "string", "format": "uri" }, "event_types": { "type": "array", "items": { "type": "string" } }, "enabled": { "type": "boolean", "default": true } } } } }
+        },
+        "responses": {
+          "201": { "description": "The registered webhook, including its one-time `signing_secret` (shown only here).", "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/Webhook" }, { "type": "object", "properties": { "signing_secret": { "type": "string", "description": "Per-webhook HMAC signing secret. Returned ONCE at creation; store it securely — it is never returned again.", "example": "whsec_…" } } }] } } } },
+          "400": { "description": "Invalid target URL (incl. SSRF-blocked host), event-type filter, or enabled flag" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "description": "Key lacks the 'write' scope" }
+        }
+      }
+    },
+    "/webhooks/{id}": {
+      "get": {
+        "tags": ["Webhooks"],
+        "summary": "Fetch a webhook",
+        "operationId": "getWebhook",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "The webhook", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Webhook" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "description": "Not found for this tenant" }
+        }
+      },
+      "patch": {
+        "tags": ["Webhooks"],
+        "summary": "Update a webhook",
+        "description": "Partially updates a webhook (`target_url`, `event_types`, and/or `enabled`). Requires a **write**-scoped key. A changed `target_url` is re-validated by the SSRF guard.",
+        "operationId": "updateWebhook",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "target_url": { "type": "string", "format": "uri" }, "event_types": { "type": "array", "items": { "type": "string" } }, "enabled": { "type": "boolean" } } } } }
+        },
+        "responses": {
+          "200": { "description": "The updated webhook", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Webhook" } } } },
+          "400": { "description": "Invalid fields (incl. SSRF-blocked host), or no updatable field provided" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "description": "Key lacks the 'write' scope" },
+          "404": { "description": "Not found for this tenant" }
+        }
+      },
+      "delete": {
+        "tags": ["Webhooks"],
+        "summary": "Delete a webhook",
+        "description": "Removes a webhook. Requires a **write**-scoped key.",
+        "operationId": "deleteWebhook",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "204": { "description": "Deleted" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "description": "Key lacks the 'write' scope" },
+          "404": { "description": "Not found for this tenant" }
+        }
+      }
+    },
+    "/webhooks/{id}/deliveries": {
+      "get": {
+        "tags": ["Webhooks"],
+        "summary": "List a webhook's delivery attempts",
+        "description": "Recent delivery attempts for a webhook (newest first), each with its terminal status, attempt count, last HTTP status code, and last error. Read- + tenant-scoped; 404 if the webhook isn't this tenant's.",
+        "operationId": "listWebhookDeliveries",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "since", "in": "query", "description": "Inclusive ISO-8601 lower bound on created_at.", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "until", "in": "query", "description": "Exclusive ISO-8601 upper bound on created_at.", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "limit", "in": "query", "description": "Max rows (1–1000, default 100).", "schema": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 100 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The webhook's recent delivery attempts",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "webhook_id": { "type": "string" }, "deliveries": { "type": "array", "items": { "$ref": "#/components/schemas/WebhookDelivery" } } } } } }
+          },
+          "400": { "description": "Invalid since/until/limit" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "description": "Not found for this tenant" }
         }
       }
     },

@@ -3032,3 +3032,633 @@ describe("GET /analytics/anomalies", () => {
     assert.equal(body.anomaly_count, 0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Webhooks (Phase 16-A) — registration & management
+// ---------------------------------------------------------------------------
+
+describe("Webhooks — POST /webhooks (registration)", () => {
+  test("creates a webhook with defaults (wildcard filter, enabled)", async () => {
+    const res = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: "https://hooks.example.com/aep" }),
+    });
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.match(body.id, /^wh_/);
+    assert.equal(body.target_url, "https://hooks.example.com/aep");
+    assert.deepEqual(body.event_types, ["*"]);
+    assert.equal(body.enabled, true);
+    assert.equal(body.tenant_id, "tenant-test");
+    assert.ok(body.created_at && body.updated_at);
+  });
+
+  test("creates with an explicit event-type filter and disabled flag", async () => {
+    const res = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({
+        target_url: "https://hooks.example.com/errors",
+        event_types: ["error.raised", "task.failed"],
+        enabled: false,
+      }),
+    });
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.deepEqual(body.event_types, ["error.raised", "task.failed"]);
+    assert.equal(body.enabled, false);
+  });
+
+  test("rejects an SSRF target (loopback) with 400", async () => {
+    const res = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: "http://127.0.0.1:9000/x" }),
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.ok(body.details.some((d) => /SSRF/.test(d)));
+  });
+
+  test("rejects a private RFC1918 + cloud-metadata target with 400", async () => {
+    for (const url of ["http://10.0.0.5/x", "http://169.254.169.254/latest/meta-data/"]) {
+      const res = await fetch(`${baseUrl}/webhooks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+        body: JSON.stringify({ target_url: url }),
+      });
+      assert.equal(res.status, 400, url);
+    }
+  });
+
+  test("rejects a non-http(s) scheme with 400", async () => {
+    const res = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: "file:///etc/passwd" }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("rejects an unknown event type with 400", async () => {
+    const res = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: "https://h.example.com/x", event_types: ["bogus.type"] }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("requires a write-scoped key (403 read, 401 anon)", async () => {
+    const r403 = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${readKey}` },
+      body: JSON.stringify({ target_url: "https://h.example.com/x" }),
+    });
+    assert.equal(r403.status, 403);
+    const r401 = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_url: "https://h.example.com/x" }),
+    });
+    assert.equal(r401.status, 401);
+  });
+
+  test("honours WEBHOOK_TARGET_ALLOWLIST for a private target", async () => {
+    process.env.WEBHOOK_TARGET_ALLOWLIST = "127.0.0.1:9099";
+    try {
+      const res = await fetch(`${baseUrl}/webhooks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+        body: JSON.stringify({ target_url: "http://127.0.0.1:9099/hook" }),
+      });
+      assert.equal(res.status, 201);
+    } finally {
+      delete process.env.WEBHOOK_TARGET_ALLOWLIST;
+    }
+  });
+});
+
+describe("Webhooks — GET / PATCH / DELETE", () => {
+  async function createWebhook(overrides = {}) {
+    const res = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: "https://hooks.example.com/m", ...overrides }),
+    });
+    return (await res.json());
+  }
+
+  test("GET /webhooks lists the tenant's webhooks (read scope)", async () => {
+    await createWebhook();
+    const res = await fetch(`${baseUrl}/webhooks`, { headers: { Authorization: `Bearer ${readKey}` } });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body.webhooks));
+    assert.ok(body.webhooks.length >= 1);
+  });
+
+  test("GET /webhooks/:id returns one, 404 for missing", async () => {
+    const wh = await createWebhook();
+    const res = await fetch(`${baseUrl}/webhooks/${wh.id}`, { headers: { Authorization: `Bearer ${readKey}` } });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).id, wh.id);
+
+    const miss = await fetch(`${baseUrl}/webhooks/wh_nope`, { headers: { Authorization: `Bearer ${readKey}` } });
+    assert.equal(miss.status, 404);
+  });
+
+  test("PATCH toggles enabled and updates filter/url", async () => {
+    const wh = await createWebhook({ enabled: true });
+    const res = await fetch(`${baseUrl}/webhooks/${wh.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ enabled: false, event_types: ["tool.called"], target_url: "https://hooks.example.com/new" }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.enabled, false);
+    assert.deepEqual(body.event_types, ["tool.called"]);
+    assert.equal(body.target_url, "https://hooks.example.com/new");
+    assert.ok(body.updated_at >= wh.updated_at);
+  });
+
+  test("PATCH re-validates SSRF on a target_url change (400)", async () => {
+    const wh = await createWebhook();
+    const res = await fetch(`${baseUrl}/webhooks/${wh.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: "http://192.168.1.10/x" }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("PATCH with no updatable fields → 400", async () => {
+    const wh = await createWebhook();
+    const res = await fetch(`${baseUrl}/webhooks/${wh.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({}),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test("PATCH a missing webhook → 404", async () => {
+    const res = await fetch(`${baseUrl}/webhooks/wh_missing`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ enabled: false }),
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test("PATCH/DELETE require a write-scoped key (403 read)", async () => {
+    const wh = await createWebhook();
+    const p = await fetch(`${baseUrl}/webhooks/${wh.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${readKey}` },
+      body: JSON.stringify({ enabled: false }),
+    });
+    assert.equal(p.status, 403);
+    const d = await fetch(`${baseUrl}/webhooks/${wh.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(d.status, 403);
+  });
+
+  test("DELETE removes a webhook (204), then 404", async () => {
+    const wh = await createWebhook();
+    const del = await fetch(`${baseUrl}/webhooks/${wh.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${writeKey}` },
+    });
+    assert.equal(del.status, 204);
+    const after = await fetch(`${baseUrl}/webhooks/${wh.id}`, { headers: { Authorization: `Bearer ${writeKey}` } });
+    assert.equal(after.status, 404);
+    const delAgain = await fetch(`${baseUrl}/webhooks/${wh.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${writeKey}` },
+    });
+    assert.equal(delAgain.status, 404);
+  });
+
+  test("tenant isolation — another tenant cannot see, fetch, patch, or delete", async () => {
+    const wh = await createWebhook();
+    const keyRes = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: "tenant-other-16a", label: "other", scopes: ["read", "write"] }),
+    });
+    const otherKey = (await keyRes.json()).key;
+
+    const list = await fetch(`${baseUrl}/webhooks`, { headers: { Authorization: `Bearer ${otherKey}` } });
+    const listBody = await list.json();
+    assert.ok(!listBody.webhooks.some((w) => w.id === wh.id));
+
+    const get = await fetch(`${baseUrl}/webhooks/${wh.id}`, { headers: { Authorization: `Bearer ${otherKey}` } });
+    assert.equal(get.status, 404);
+
+    const patch = await fetch(`${baseUrl}/webhooks/${wh.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${otherKey}` },
+      body: JSON.stringify({ enabled: false }),
+    });
+    assert.equal(patch.status, 404);
+
+    const del = await fetch(`${baseUrl}/webhooks/${wh.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${otherKey}` },
+    });
+    assert.equal(del.status, 404);
+
+    // The original tenant still sees it intact.
+    const stillThere = await fetch(`${baseUrl}/webhooks/${wh.id}`, { headers: { Authorization: `Bearer ${writeKey}` } });
+    assert.equal(stillThere.status, 200);
+    assert.equal((await stillThere.json()).enabled, true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Webhooks (Phase 16-B) — event delivery + retries
+//
+// Exercises the REAL outbound delivery path against a local http listener, gated
+// by WEBHOOKS_ENABLED + WEBHOOK_TARGET_ALLOWLIST (so 127.0.0.1 is permitted) with
+// tiny backoff so retries are fast. Delivery is fire-and-forget, so tests poll the
+// webhook_deliveries table (via the db module) until a terminal row appears.
+// ---------------------------------------------------------------------------
+
+describe("Webhooks — event delivery (Phase 16-B)", () => {
+  const http = require("http");
+  let listener;
+  let listenerPort;
+  let received;
+  let responder; // (hitCount, res) => void — set per test
+
+  before(async () => {
+    received = [];
+    responder = (n, res) => res.writeHead(200).end("ok");
+    listener = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        received.push({ method: req.method, url: req.url, headers: req.headers, body });
+        responder(received.length, res);
+      });
+    });
+    await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
+    listenerPort = listener.address().port;
+
+    process.env.WEBHOOKS_ENABLED = "1";
+    process.env.WEBHOOK_TARGET_ALLOWLIST = `127.0.0.1:${listenerPort}`;
+    process.env.WEBHOOK_MAX_RETRIES = "3";
+    process.env.WEBHOOK_BACKOFF_BASE_MS = "1";
+    process.env.WEBHOOK_BACKOFF_MAX_MS = "5";
+    process.env.WEBHOOK_TIMEOUT_MS = "2000";
+  });
+
+  after(async () => {
+    await new Promise((resolve) => listener.close(resolve));
+    delete process.env.WEBHOOKS_ENABLED;
+    delete process.env.WEBHOOK_TARGET_ALLOWLIST;
+    delete process.env.WEBHOOK_MAX_RETRIES;
+    delete process.env.WEBHOOK_BACKOFF_BASE_MS;
+    delete process.env.WEBHOOK_BACKOFF_MAX_MS;
+    delete process.env.WEBHOOK_TIMEOUT_MS;
+  });
+
+  async function registerWebhook(body) {
+    const res = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: `http://127.0.0.1:${listenerPort}/hook`, ...body }),
+    });
+    assert.equal(res.status, 201);
+    return res.json();
+  }
+
+  async function waitForTerminalDelivery(webhookId, timeoutMs = 4000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const rows = await db.listWebhookDeliveries(webhookId, "tenant-test", { limit: 10 });
+      const terminal = rows.find((r) => r.status === "success" || r.status === "failed");
+      if (terminal) return { rows, terminal };
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const rows = await db.listWebhookDeliveries(webhookId, "tenant-test", { limit: 10 });
+    return { rows, terminal: null };
+  }
+
+  test("delivers a matching event and records a success row", async () => {
+    const before = received.length;
+    const wh = await registerWebhook({ event_types: ["task.created"] });
+    const event = makeEvent({ id: `evt_${crypto.randomUUID().replace(/-/g, "")}`, type: "task.created" });
+    const ing = await ingest(event);
+    assert.equal(ing.status, 202);
+
+    const { terminal } = await waitForTerminalDelivery(wh.id);
+    assert.ok(terminal, "expected a terminal delivery row");
+    assert.equal(terminal.status, "success");
+    assert.equal(terminal.attempts, 1);
+    assert.equal(terminal.last_status_code, 200);
+    assert.equal(terminal.event_id, event.id);
+    assert.equal(terminal.event_type, "task.created");
+
+    // The listener actually received the POST with the event in the body.
+    assert.ok(received.length > before);
+    const last = received[received.length - 1];
+    assert.equal(last.method, "POST");
+    const payload = JSON.parse(last.body);
+    assert.equal(payload.event.id, event.id);
+    assert.equal(payload.webhook_id, wh.id);
+  });
+
+  test("retries on 5xx then succeeds (records attempts > 1)", async () => {
+    const wh = await registerWebhook({ event_types: ["task.failed"] });
+    // Fail the first hit for THIS webhook's path, succeed after.
+    let hits = 0;
+    responder = (n, res) => {
+      hits += 1;
+      if (hits === 1) res.writeHead(503).end("try later");
+      else res.writeHead(200).end("ok");
+    };
+    const event = makeEvent({ id: `evt_${crypto.randomUUID().replace(/-/g, "")}`, type: "task.failed" });
+    await ingest(event);
+
+    const { terminal } = await waitForTerminalDelivery(wh.id);
+    assert.ok(terminal);
+    assert.equal(terminal.status, "success");
+    assert.ok(terminal.attempts >= 2, `expected ≥2 attempts, got ${terminal.attempts}`);
+    responder = (n, res) => res.writeHead(200).end("ok");
+  });
+
+  test("records a failed row after exhausting retries on persistent 500", async () => {
+    const wh = await registerWebhook({ event_types: ["error.raised"] });
+    responder = (n, res) => res.writeHead(500).end("nope");
+    const event = makeEvent({ id: `evt_${crypto.randomUUID().replace(/-/g, "")}`, type: "error.raised" });
+    await ingest(event);
+
+    const { terminal } = await waitForTerminalDelivery(wh.id);
+    assert.ok(terminal);
+    assert.equal(terminal.status, "failed");
+    assert.equal(terminal.attempts, 4); // 1 + WEBHOOK_MAX_RETRIES(3)
+    assert.equal(terminal.last_status_code, 500);
+    responder = (n, res) => res.writeHead(200).end("ok");
+  });
+
+  test("does not deliver an event that does not match the filter", async () => {
+    const wh = await registerWebhook({ event_types: ["memory.read"] });
+    const event = makeEvent({ id: `evt_${crypto.randomUUID().replace(/-/g, "")}`, type: "task.created" });
+    await ingest(event);
+    // Give any (erroneous) dispatch time to run, then assert no row was recorded.
+    await new Promise((r) => setTimeout(r, 300));
+    const rows = await db.listWebhookDeliveries(wh.id, "tenant-test", { limit: 10 });
+    assert.equal(rows.length, 0);
+  });
+
+  test("does not deliver to a disabled webhook", async () => {
+    const wh = await registerWebhook({ event_types: ["task.created"], enabled: false });
+    const event = makeEvent({ id: `evt_${crypto.randomUUID().replace(/-/g, "")}`, type: "task.created" });
+    await ingest(event);
+    await new Promise((r) => setTimeout(r, 300));
+    const rows = await db.listWebhookDeliveries(wh.id, "tenant-test", { limit: 10 });
+    assert.equal(rows.length, 0);
+  });
+
+  test("delivers nothing when WEBHOOKS_ENABLED is unset", async () => {
+    const wh = await registerWebhook({ event_types: ["task.created"] });
+    delete process.env.WEBHOOKS_ENABLED;
+    try {
+      const event = makeEvent({ id: `evt_${crypto.randomUUID().replace(/-/g, "")}`, type: "task.created" });
+      await ingest(event);
+      await new Promise((r) => setTimeout(r, 300));
+      const rows = await db.listWebhookDeliveries(wh.id, "tenant-test", { limit: 10 });
+      assert.equal(rows.length, 0);
+    } finally {
+      process.env.WEBHOOKS_ENABLED = "1";
+    }
+  });
+
+  test("tenant isolation — a webhook is only fed its own tenant's events", async () => {
+    const wh = await registerWebhook({ event_types: ["task.created"] });
+    // Mint a second tenant's write key and ingest an event as that tenant.
+    const keyRes = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: "tenant-other-16b", label: "other", scopes: ["read", "write"] }),
+    });
+    const otherKey = (await keyRes.json()).key;
+    const event = makeEvent({ id: `evt_${crypto.randomUUID().replace(/-/g, "")}`, type: "task.created", session_id: "ses_other", trace_id: "trc_other" });
+    await ingest(event, otherKey);
+    await new Promise((r) => setTimeout(r, 300));
+    // tenant-test's webhook must NOT have received tenant-other's event.
+    const rows = await db.listWebhookDeliveries(wh.id, "tenant-test", { limit: 10 });
+    assert.ok(!rows.some((row) => row.event_id === event.id));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Webhooks (Phase 16-C) — HMAC payload signing
+//
+// Verifies the one-time signing_secret on creation (and that it's never exposed
+// again), and that real deliveries carry a valid X-AEP-Signature header that
+// verifies against that secret over the raw received body.
+// ---------------------------------------------------------------------------
+
+describe("Webhooks — HMAC payload signing (Phase 16-C)", () => {
+  const http = require("http");
+  const { verifyWebhookSignature } = require("../../src/webhookSignature");
+  let listener;
+  let listenerPort;
+  let received;
+
+  before(async () => {
+    received = [];
+    listener = http.createServer((req, res) => {
+      const chunks = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", () => {
+        received.push({ headers: req.headers, rawBody: Buffer.concat(chunks).toString("utf8") });
+        res.writeHead(200).end("ok");
+      });
+    });
+    await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
+    listenerPort = listener.address().port;
+    process.env.WEBHOOKS_ENABLED = "1";
+    process.env.WEBHOOK_TARGET_ALLOWLIST = `127.0.0.1:${listenerPort}`;
+    process.env.WEBHOOK_MAX_RETRIES = "1";
+    process.env.WEBHOOK_BACKOFF_BASE_MS = "1";
+    process.env.WEBHOOK_TIMEOUT_MS = "2000";
+  });
+
+  after(async () => {
+    await new Promise((resolve) => listener.close(resolve));
+    delete process.env.WEBHOOKS_ENABLED;
+    delete process.env.WEBHOOK_TARGET_ALLOWLIST;
+    delete process.env.WEBHOOK_MAX_RETRIES;
+    delete process.env.WEBHOOK_BACKOFF_BASE_MS;
+    delete process.env.WEBHOOK_TIMEOUT_MS;
+  });
+
+  test("POST /webhooks returns a one-time signing_secret; GET never exposes it", async () => {
+    const createRes = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: `http://127.0.0.1:${listenerPort}/sig`, event_types: ["task.created"] }),
+    });
+    assert.equal(createRes.status, 201);
+    const created = await createRes.json();
+    assert.match(created.signing_secret, /^whsec_[0-9a-f]{64}$/);
+
+    // GET one — must NOT include the secret.
+    const getRes = await fetch(`${baseUrl}/webhooks/${created.id}`, { headers: { Authorization: `Bearer ${readKey}` } });
+    const got = await getRes.json();
+    assert.equal(got.signing_secret, undefined);
+
+    // GET list — must NOT include the secret on any item.
+    const listRes = await fetch(`${baseUrl}/webhooks`, { headers: { Authorization: `Bearer ${readKey}` } });
+    const list = await listRes.json();
+    assert.ok(list.webhooks.every((w) => w.signing_secret === undefined));
+  });
+
+  test("delivery carries an X-AEP-Signature that verifies against the secret", async () => {
+    const before = received.length;
+    const createRes = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: `http://127.0.0.1:${listenerPort}/sig2`, event_types: ["task.completed"] }),
+    });
+    const { id: webhookId, signing_secret: secret } = await createRes.json();
+
+    const event = makeEvent({ id: `evt_${crypto.randomUUID().replace(/-/g, "")}`, type: "task.completed" });
+    await ingest(event);
+
+    // Wait for the listener to receive the signed delivery.
+    const deadline = Date.now() + 4000;
+    let hit = null;
+    while (Date.now() < deadline) {
+      hit = received.slice(before).find((r) => {
+        try { return JSON.parse(r.rawBody).webhook_id === webhookId; } catch { return false; }
+      });
+      if (hit) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    assert.ok(hit, "expected the listener to receive the delivery");
+
+    const sigHeader = hit.headers["x-aep-signature"];
+    assert.ok(sigHeader && sigHeader.startsWith("hmac-sha256="), `expected signature header, got ${sigHeader}`);
+    // The signature verifies against the secret over the EXACT raw body received.
+    assert.equal(verifyWebhookSignature(hit.rawBody, sigHeader, secret), true);
+    // A wrong secret must NOT verify (the signature is real, not a constant).
+    assert.equal(verifyWebhookSignature(hit.rawBody, sigHeader, "whsec_wrong"), false);
+    // Identifying headers present.
+    assert.equal(hit.headers["x-aep-webhook-id"], webhookId);
+    assert.equal(hit.headers["x-aep-event-type"], "task.completed");
+    assert.ok(hit.headers["x-aep-delivery-id"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Webhooks (Phase 16-D) — GET /webhooks/:id/deliveries
+//
+// Seeds webhook_deliveries rows directly (delivery itself is covered in 16-B/16-C)
+// and exercises the read endpoint: shape, ordering, filters, scope, isolation.
+// ---------------------------------------------------------------------------
+
+describe("Webhooks — GET /webhooks/:id/deliveries (Phase 16-D)", () => {
+  let webhookId;
+
+  async function registerWebhook() {
+    const res = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify({ target_url: "https://hooks.example.com/d", event_types: ["task.created"] }),
+    });
+    return (await res.json()).id;
+  }
+
+  before(async () => {
+    webhookId = await registerWebhook();
+    // Seed three delivery rows (oldest → newest) for this tenant's webhook.
+    const base = Date.parse("2026-06-13T00:00:00.000Z");
+    const rows = [
+      { status: "success", attempts: 1, last_status_code: 200, last_error: null },
+      { status: "failed",  attempts: 4, last_status_code: 500, last_error: "HTTP 500" },
+      { status: "failed",  attempts: 4, last_status_code: null, last_error: "timeout after 5000ms" },
+    ];
+    for (let i = 0; i < rows.length; i++) {
+      const ts = new Date(base + i * 60000).toISOString();
+      const created = await db.createWebhookDelivery({
+        id: `wd_${crypto.randomUUID().replace(/-/g, "")}`,
+        webhookId,
+        tenantId: "tenant-test",
+        eventId: `evt_d${i}`,
+        eventType: "task.created",
+        status: "pending",
+        attempts: 0,
+        lastStatusCode: null,
+        lastError: null,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      await db.updateWebhookDelivery(created.id, "tenant-test", {
+        status: rows[i].status,
+        attempts: rows[i].attempts,
+        last_status_code: rows[i].last_status_code,
+        last_error: rows[i].last_error,
+        updated_at: ts,
+      });
+    }
+  });
+
+  test("returns the webhook's deliveries (newest first) with the right shape", async () => {
+    const res = await fetch(`${baseUrl}/webhooks/${webhookId}/deliveries`, { headers: { Authorization: `Bearer ${readKey}` } });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.webhook_id, webhookId);
+    assert.ok(Array.isArray(body.deliveries));
+    assert.ok(body.deliveries.length >= 3);
+    // Newest first.
+    assert.ok(body.deliveries[0].created_at >= body.deliveries[1].created_at);
+    const one = body.deliveries.find((d) => d.last_status_code === 200);
+    assert.equal(one.status, "success");
+    assert.equal(one.attempts, 1);
+    assert.equal(one.event_type, "task.created");
+    // A network-error row surfaces null status code + an error string.
+    const timeoutRow = body.deliveries.find((d) => d.last_error && d.last_error.includes("timeout"));
+    assert.equal(timeoutRow.last_status_code, null);
+  });
+
+  test("respects ?limit", async () => {
+    const res = await fetch(`${baseUrl}/webhooks/${webhookId}/deliveries?limit=1`, { headers: { Authorization: `Bearer ${readKey}` } });
+    const body = await res.json();
+    assert.equal(body.deliveries.length, 1);
+  });
+
+  test("400 on a malformed since/until", async () => {
+    const res = await fetch(`${baseUrl}/webhooks/${webhookId}/deliveries?since=not-a-date`, { headers: { Authorization: `Bearer ${readKey}` } });
+    assert.equal(res.status, 400);
+  });
+
+  test("404 for an unknown webhook id", async () => {
+    const res = await fetch(`${baseUrl}/webhooks/wh_does_not_exist/deliveries`, { headers: { Authorization: `Bearer ${readKey}` } });
+    assert.equal(res.status, 404);
+  });
+
+  test("tenant isolation — another tenant gets 404, not the rows", async () => {
+    const keyRes = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: "tenant-other-16d", label: "other", scopes: ["read"] }),
+    });
+    const otherKey = (await keyRes.json()).key;
+    const res = await fetch(`${baseUrl}/webhooks/${webhookId}/deliveries`, { headers: { Authorization: `Bearer ${otherKey}` } });
+    assert.equal(res.status, 404);
+  });
+
+  test("requires auth (401 without a key)", async () => {
+    const res = await fetch(`${baseUrl}/webhooks/${webhookId}/deliveries`);
+    assert.equal(res.status, 401);
+  });
+});

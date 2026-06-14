@@ -4,6 +4,126 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Webhook deliveries observability + docs (Phase 16-D) — 2026-06-13
+
+Phase 16 (Webhooks & Alerts) PR-D — the final slice. Surfaces the delivery history
+and documents the feature. **Phase 16 is now complete (A–D).**
+
+- **`GET /webhooks/:id/deliveries`** (read- + tenant-scoped; `?since`/`?until`/
+  `?limit`): recent delivery attempts for a webhook, newest first, each with its
+  terminal `status`, `attempts`, `last_status_code`, and `last_error`. 404 if the
+  webhook isn't the tenant's (existence not leaked). Reuses the
+  `listWebhookDeliveries` data method from 16-B; `WebhookDelivery` schema + path
+  added to OpenAPI.
+- **Dashboard "Webhooks" tab**: lists the tenant's registrations (target,
+  event-type filter, enabled/disabled) and, on click, that webhook's recent
+  delivery attempts with colour-coded status — verified in the browser preview
+  against a live server (real ingest → delivery → failed-with-error rows render).
+- **`aep webhooks deliveries <id>`** CLI (`--since`/`--until`/`--limit`/`--json`).
+- **OPERATIONS.md §6 "Webhooks & alerts"**: enabling delivery (`WEBHOOKS_ENABLED`,
+  off by default), registration, the SSRF security posture + allowlist, the bounded
+  retry knobs, payload signing + verification, and deliveries observability (incl.
+  the "deliveries are not pruned" / per-node concurrency caveats).
+- No new CI job. Server suite: 386 unit + 201 integration.
+
+---
+
+## Webhook HMAC payload signing (Phase 16-C) — 2026-06-13
+
+Phase 16 (Webhooks & Alerts) PR-C — delivers PRD §Phase 16 "signing: webhook
+payloads are HMAC-signed for verification".
+
+- **Per-webhook signing secret**: every webhook gets a `whsec_…` secret at
+  registration (`webhooks.signing_secret`, SQLite migration `009` + Postgres
+  `SCHEMA_DDL` mirror incl. an idempotent `ADD COLUMN IF NOT EXISTS`). It is
+  returned **once** in the `POST /webhooks` 201 response and **never again** — GET
+  / list responses omit it (the delivery engine reads it via a dedicated internal
+  `getWebhookSigningSecret`, never the public webhook shape).
+- **Signed deliveries**: the delivery body is serialized in the canonical
+  (key-sorted `stableStringify`) form and HMAC-SHA256-signed with the secret,
+  reusing the same canonical-JSON + HMAC stack as event signatures
+  (`src/_canonical.js`). Deliveries carry **`X-AEP-Signature: hmac-sha256=<base64>`**
+  plus `X-AEP-Webhook-Id` / `X-AEP-Delivery-Id` / `X-AEP-Event-Type` headers.
+  Because the transmitted bytes are the canonical form, a receiver verifies simply
+  by HMAC-ing the raw body received.
+- **Verification helper + example**: `src/webhookSignature.js`
+  (`generateSigningSecret` / `buildSignatureHeader` / constant-time
+  `verifyWebhookSignature`) and a standalone `examples/verify-webhook-signature.js`
+  receiver. Webhooks created before this slice (no secret) are delivered unsigned.
+- No new CI job. Server suite: 386 unit + 195 integration (incl. a real-listener
+  test asserting the signature verifies against the one-time secret).
+
+---
+
+## Webhook event delivery + retries (Phase 16-B) — 2026-06-13
+
+Phase 16 (Webhooks & Alerts) PR-B — delivers PRD §Phase 16 "event delivery: POST
+matching events to the webhook URL with retries". Builds on the 16-A registry.
+
+- **Delivery on ingest**: when an event is accepted, it is fanned out to the
+  tenant's **enabled** webhooks whose `event_types` filter matches, via a new
+  `src/webhookDelivery.js`. Each delivery POSTs `{ delivery_id, webhook_id,
+  event_type, delivered_at, event }` to the target URL.
+- **OFF by default** — nothing is delivered unless **`WEBHOOKS_ENABLED`** is
+  truthy, so a fresh deploy never starts POSTing anywhere. Registration still
+  works with delivery disabled.
+- **Off the ingest hot path** — delivery is fire-and-forget (scheduled on a
+  microtask after the 202 is sent); a slow/failing webhook never adds latency to
+  or fails an ingest.
+- **Bounded exponential-backoff retries** — retries transient failures (5xx, 408,
+  429, network/timeout) up to `WEBHOOK_MAX_RETRIES` (default 4); other 4xx are
+  permanent (no retry). Everything is bounded: per-attempt timeout
+  (`WEBHOOK_TIMEOUT_MS`), backoff base/ceiling, global concurrency
+  (`WEBHOOK_MAX_CONCURRENT`, a semaphore), and max payload size.
+- **SSRF re-checked at delivery** — the target is re-validated and its resolved
+  IPs are re-checked via a guarded DNS lookup right before connecting, so a host
+  that rebinds to a private/loopback address after registration is rejected. (Also
+  fixed a 16-A allowlist gap: a `host:port` allowlist entry now exempts that host's
+  IPs at delivery time, where DNS gives no port.)
+- **`webhook_deliveries` table** (tenant-scoped) records one row per attempt set:
+  `status` (pending→success/failed), `attempts`, `last_status_code`, `last_error`,
+  timestamps. SQLite migration `008_webhook_deliveries.js` + Postgres `SCHEMA_DDL`
+  mirror; new `createWebhookDelivery` / `updateWebhookDelivery` /
+  `listWebhookDeliveries` StorageBackend methods.
+- No new CI job. Server suite: 373 unit + 193 integration (incl. a real local-listener
+  delivery/retry test gated behind `WEBHOOKS_ENABLED` + the allowlist).
+
+---
+
+## Webhook registration & management (Phase 16-A) — 2026-06-13
+
+Phase 16 (Webhooks & Alerts) PR-A — the registration half of PRD §Phase 16
+"webhook registration: `POST /webhooks` with event filters and target URL".
+Registration & management only; event delivery (16-B) and HMAC signing (16-C)
+build on this. This is the project's **first feature that makes outbound network
+calls**, so the headline concern is SSRF, addressed up front.
+
+- **`webhooks` table** (tenant-scoped): SQLite migration `007_webhooks.js` +
+  Postgres `SCHEMA_DDL` mirror. Stores `target_url`, an `event_types` filter
+  (`["*"]` for all, or a subset of the core event types), an `enabled` flag, and
+  timestamps.
+- **CRUD routes**, all tenant-scoped from the API key:
+  - `POST /webhooks` (**write** scope) — register; `event_types` defaults to
+    `["*"]`, `enabled` to `true`.
+  - `GET /webhooks` / `GET /webhooks/:id` (read) — list / fetch.
+  - `PATCH /webhooks/:id` (**write**) — partial update of `target_url` /
+    `event_types` / `enabled` (a changed URL is re-validated).
+  - `DELETE /webhooks/:id` (**write**) — remove.
+- **SSRF guard** (`src/ssrf.js`, pure + unit-tested): rejects non-http(s) schemes,
+  embedded credentials, and any target resolving to loopback, RFC1918 private,
+  CGNAT, link-local (incl. the `169.254.169.254` cloud-metadata endpoint), IPv6
+  ULA/link-local, or other reserved ranges (IPv4-mapped IPv6 is decoded so it
+  can't smuggle a private v4; the `64:ff9b::/96` NAT64 well-known prefix is
+  decoded too). Applied at registration; a delivery-time DNS-rebind re-check
+  (`assertResolvedIpAllowed`) is provided for 16-B. Self-hosters can permit
+  specific private targets via the new **`WEBHOOK_TARGET_ALLOWLIST`** env var
+  (comma-separated `host` / `host:port`).
+- **`aep webhooks`** CLI (`list` / `get` / `create` / `update` / `delete`) and
+  OpenAPI under a new **Webhooks** tag (`Webhook` schema).
+- No new CI job. Server suite: 350 unit + 186 integration.
+
+---
+
 ## Workflow anomaly detection (Phase 15-D) — 2026-06-12
 
 Phase 15 (Advanced Dashboard) PR-D — the final slice: "Anomaly detection: alert

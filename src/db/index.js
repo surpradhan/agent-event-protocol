@@ -240,6 +240,42 @@ async function getEventsForQuery(tenantId, opts) {
   return getBackend().getEventsForQuery(tenantId, opts);
 }
 
+async function createWebhook(record) {
+  return getBackend().createWebhook(record);
+}
+
+async function getWebhook(id, tenantId) {
+  return getBackend().getWebhook(id, tenantId);
+}
+
+async function getWebhookSigningSecret(id, tenantId) {
+  return getBackend().getWebhookSigningSecret(id, tenantId);
+}
+
+async function listWebhooks(tenantId) {
+  return getBackend().listWebhooks(tenantId);
+}
+
+async function updateWebhook(id, tenantId, fields, updatedAt) {
+  return getBackend().updateWebhook(id, tenantId, fields, updatedAt);
+}
+
+async function deleteWebhook(id, tenantId) {
+  return getBackend().deleteWebhook(id, tenantId);
+}
+
+async function createWebhookDelivery(record) {
+  return getBackend().createWebhookDelivery(record);
+}
+
+async function updateWebhookDelivery(id, tenantId, fields) {
+  return getBackend().updateWebhookDelivery(id, tenantId, fields);
+}
+
+async function listWebhookDeliveries(webhookId, tenantId, opts) {
+  return getBackend().listWebhookDeliveries(webhookId, tenantId, opts);
+}
+
 async function recordApiKeyAccess(entry) {
   return getBackend().recordApiKeyAccess(entry);
 }
@@ -302,5 +338,16 @@ module.exports = {
   getEventsForQuery,
   // API-key access log (Phase 14 PR-E)
   recordApiKeyAccess,
-  getApiKeyAccessLog
+  getApiKeyAccessLog,
+  // Webhooks (Phase 16-A)
+  createWebhook,
+  getWebhook,
+  getWebhookSigningSecret,
+  listWebhooks,
+  updateWebhook,
+  deleteWebhook,
+  // Webhook deliveries (Phase 16-B)
+  createWebhookDelivery,
+  updateWebhookDelivery,
+  listWebhookDeliveries
 };

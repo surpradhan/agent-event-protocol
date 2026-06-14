@@ -14,6 +14,9 @@ const { summarizePolicyBlocked } = require("./analytics");
 const { summarizePerformance } = require("./performance");
 const { detectAnomalies } = require("./anomalies");
 const { validateQuerySpec, runQuery } = require("./customQuery");
+const { validateCreateWebhook, validateUpdateWebhook } = require("./webhooks");
+const { scheduleDelivery } = require("./webhookDelivery");
+const { generateSigningSecret } = require("./webhookSignature");
 const { buildWorkflowGraph } = require("./workflowGraph");
 const { generateComplianceReport, isValidFramework, FRAMEWORK_IDS } = require("./compliance");
 const { renderComplianceReportPdf } = require("./compliance-pdf");
@@ -1067,6 +1070,126 @@ app.delete("/analytics/saved-queries/:id", requireApiKey("write"), validatePathP
   res.status(204).end();
 });
 
+// ---------------------------------------------------------------------------
+// Webhooks (Phase 16-A) — registration & management
+//
+// A webhook is a tenant-scoped outbound endpoint: a target URL plus an event-type
+// filter. Registration only here; delivery (16-B) and signing (16-C) build on it.
+// The target URL is validated by the SSRF guard (src/ssrf.js) at registration —
+// loopback/private/link-local targets are rejected — and again at delivery time.
+// Self-hosters can permit specific private targets via WEBHOOK_TARGET_ALLOWLIST
+// (comma-separated host or host:port entries).
+// ---------------------------------------------------------------------------
+
+/** The configured allowlist of host[:port] targets that bypass the private-range block. */
+function webhookAllowlist() {
+  return process.env.WEBHOOK_TARGET_ALLOWLIST || "";
+}
+
+/**
+ * POST /webhooks — register a webhook. Requires a WRITE-scoped key.
+ * Body: { target_url, event_types?, enabled? }. 400 on invalid URL/filter/SSRF.
+ */
+app.post("/webhooks", requireApiKey("write"), async (req, res) => {
+  const result = validateCreateWebhook(req.body, { allowlist: webhookAllowlist() });
+  if (!result.ok) {
+    return res.status(400).json({ error: "Bad Request", message: "Invalid webhook", details: result.errors });
+  }
+  const now = new Date().toISOString();
+  // Mint a per-webhook signing secret (Phase 16-C). It is returned to the caller
+  // exactly ONCE here, and never again — GET/list responses omit it (the delivery
+  // engine reads it internally via getWebhookSigningSecret to sign payloads).
+  const signingSecret = generateSigningSecret();
+  const saved = await db.createWebhook({
+    id: `wh_${crypto.randomUUID().replace(/-/g, "")}`,
+    tenantId: req.tenant_id,
+    targetUrl: result.value.target_url,
+    eventTypes: result.value.event_types,
+    enabled: result.value.enabled,
+    signingSecret,
+    createdAt: now,
+    updatedAt: now
+  });
+  res.status(201).json({ ...saved, signing_secret: signingSecret });
+});
+
+/**
+ * GET /webhooks — list the tenant's webhooks (newest first).
+ */
+app.get("/webhooks", requireReadAccess, async (req, res) => {
+  const webhooks = await db.listWebhooks(req.tenant_id);
+  res.json({ webhooks });
+});
+
+/**
+ * GET /webhooks/:id — fetch one webhook (tenant-scoped). 404 if absent.
+ */
+app.get("/webhooks/:id", requireReadAccess, validatePathParams, async (req, res) => {
+  const webhook = await db.getWebhook(req.params.id, req.tenant_id);
+  if (!webhook) return res.status(404).json({ error: "Not Found", message: "Webhook not found" });
+  res.json(webhook);
+});
+
+/**
+ * PATCH /webhooks/:id — partial update (target_url / event_types / enabled).
+ * Requires a WRITE-scoped key. 400 on invalid fields, 404 if absent.
+ */
+app.patch("/webhooks/:id", requireApiKey("write"), validatePathParams, async (req, res) => {
+  const result = validateUpdateWebhook(req.body, { allowlist: webhookAllowlist() });
+  if (!result.ok) {
+    return res.status(400).json({ error: "Bad Request", message: "Invalid webhook update", details: result.errors });
+  }
+  const updated = await db.updateWebhook(
+    req.params.id,
+    req.tenant_id,
+    result.value,
+    new Date().toISOString()
+  );
+  if (!updated) return res.status(404).json({ error: "Not Found", message: "Webhook not found" });
+  res.json(updated);
+});
+
+/**
+ * DELETE /webhooks/:id — remove a webhook (tenant-scoped).
+ * Requires a WRITE-scoped key. 404 if absent.
+ */
+app.delete("/webhooks/:id", requireApiKey("write"), validatePathParams, async (req, res) => {
+  const removed = await db.deleteWebhook(req.params.id, req.tenant_id);
+  if (!removed) return res.status(404).json({ error: "Not Found", message: "Webhook not found" });
+  res.status(204).end();
+});
+
+/**
+ * GET /webhooks/:id/deliveries — recent delivery attempts for a webhook
+ * (Phase 16-D). Read- + tenant-scoped. 404 if the webhook isn't this tenant's.
+ *
+ * Query params (all optional):
+ *   since — ISO-8601 inclusive lower bound on created_at (created_at >= since)
+ *   until — ISO-8601 exclusive upper bound on created_at (created_at <  until)
+ *   limit — max rows (1–1000, default 100)
+ */
+app.get("/webhooks/:id/deliveries", requireReadAccess, validatePathParams, validateQueryParams, async (req, res) => {
+  // 404 (not 403) when the webhook isn't the tenant's — don't leak existence.
+  const webhook = await db.getWebhook(req.params.id, req.tenant_id);
+  if (!webhook) return res.status(404).json({ error: "Not Found", message: "Webhook not found" });
+
+  const since = parseIsoBound(req.query.since);
+  const until = parseIsoBound(req.query.until);
+  if (!since.ok || !until.ok) {
+    return res.status(400).json({
+      error: "Bad Request",
+      message: "Query parameters 'since' and 'until' must be ISO-8601 timestamps"
+    });
+  }
+  const limit = req.query.limit !== undefined ? parseInt(req.query.limit, 10) : 100;
+  const deliveries = await db.listWebhookDeliveries(req.params.id, req.tenant_id, {
+    since: since.value,
+    until: until.value,
+    limit
+  });
+  res.json({ webhook_id: req.params.id, deliveries });
+});
+
 /**
  * GET /metrics/prometheus — Prometheus text format scrape endpoint
  *
@@ -1316,6 +1439,11 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
   );
 
   broadcastSse("event.received", event, req.tenant_id);
+
+  // Fan the event out to any matching, enabled webhooks (Phase 16-B). This is
+  // fire-and-forget and gated by WEBHOOKS_ENABLED — it never blocks or fails the
+  // ingest response, and is a no-op when delivery is disabled.
+  scheduleDelivery(event, req.tenant_id);
 
   return res.status(202).json({ accepted: true, duplicate: false, id: event.id });
 });
