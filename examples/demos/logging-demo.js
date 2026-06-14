@@ -11,7 +11,7 @@
  * After running this demo, open the dashboard to explore the emitted events:
  *
  *   1. Open the dashboard:
- *      http://localhost:8788
+ *      http://localhost:8787/dashboard
  *
  *   2. Find your session in the session/event timeline using the session ID
  *      printed in the console output (ses_logging_...).
