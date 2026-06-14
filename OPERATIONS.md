@@ -328,11 +328,16 @@ It uses the **same storage backend as the server** (`STORAGE_BACKEND` +
 ### CLI usage
 
 ```bash
-npm run prune                 # delete expired events for all projects
-npm run prune -- --dry-run    # report what WOULD be deleted, change nothing
-npm run prune -- --json       # machine-readable summary on stdout
-npm run prune -- --help       # usage
+npm run prune                          # delete expired events for all projects
+npm run prune -- --dry-run             # report what WOULD be deleted, change nothing
+npm run prune -- --json                # machine-readable summary on stdout
+npm run prune -- --export-before-prune # archive expired events to cold storage, THEN delete
+npm run prune -- --help                # usage
 ```
+
+> `--export-before-prune` archives each project's expired events to cold storage
+> (S3 or a local directory) **before** deleting them, and skips deletion for any
+> project whose export fails. See [§7 Export & cold storage](#7-export--cold-storage-phase-17).
 
 `--dry-run` JSON summary shape:
 
@@ -582,6 +587,138 @@ it via `GET /webhooks/:id/deliveries` (read-scoped; `since`/`until`/`limit`), th
 the retention job — manage growth at the storage layer on high-volume
 deployments. Concurrency is bounded per node (the in-memory semaphore), so the
 limit is per-process, not cluster-wide.
+
+---
+
+## 7. Export & cold storage (Phase 17)
+
+AEP can stream a tenant's **event log** to durable cold storage — a local
+directory or an S3 bucket — as JSON Lines, CSV, or Apache Parquet, optionally
+compressed. Like the prune job this is an **operator-invoked, run-once job with
+no always-on scheduler**: run it on demand, or on a cron / k8s CronJob schedule.
+
+The *event* envelope is the archival unit (sessions are derived summaries,
+rebuildable from events), which is also exactly what the retention job deletes —
+so export integrates cleanly as **export-before-prune** (below).
+
+### The export job
+
+```bash
+npm run export                                   # all tenants → ./exports (jsonl, gzip)
+npm run export -- --tenant dev                   # one tenant
+npm run export -- --since 2026-01-01T00:00:00Z --until 2026-04-01T00:00:00Z
+npm run export -- --format parquet               # jsonl | csv | parquet
+npm run export -- --compression brotli           # none | gzip | brotli (text formats)
+npm run export -- --sink s3 --bucket my-archive --region us-east-1
+npm run export -- --dry-run --json               # report what would be written
+npm run export -- --help
+```
+
+One object is written per tenant (`<prefix>/<tenant>/aep-events-<tenant>-<ts>.<ext>`);
+tenants with no events in the window are skipped. Export is **scoped by
+`tenant_id`** (same caveat as quota/retention). It uses the **same storage
+backend as the server** (`STORAGE_BACKEND` + `DATABASE_PATH` / `DATABASE_URL`).
+
+| Format | Extension | Compression |
+|--------|-----------|-------------|
+| `jsonl` | `.jsonl` | external: none / gzip / brotli |
+| `csv` | `.csv` | external: none / gzip / brotli |
+| `parquet` | `.parquet` | **internal** (per-column GZIP) — external `--compression` does not apply |
+
+### Sinks & configuration (env)
+
+Both the export job and export-before-prune read the same `EXPORT_*` env vars
+(CLI flags override them on `npm run export`):
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `EXPORT_SINK` | `local` | `local` or `s3` |
+| `EXPORT_OUT` | `./exports` | base directory for the local sink |
+| `EXPORT_S3_BUCKET` | — | bucket name (**required** for `s3`) |
+| `EXPORT_S3_REGION` | `AWS_REGION` | S3 region |
+| `EXPORT_S3_ENDPOINT` | — | S3-compatible endpoint (MinIO etc.; path-style) |
+| `EXPORT_FORMAT` | `jsonl` | `jsonl` / `csv` / `parquet` |
+| `EXPORT_COMPRESSION` | `gzip` | `none` / `gzip` / `brotli` |
+| `EXPORT_PREFIX` | (none) | key prefix within the sink |
+
+### Credential / security posture (S3)
+
+- **S3 is off unless explicitly selected** (`--sink s3` / `EXPORT_SINK=s3`); the
+  default is the local filesystem and loads no cloud SDK.
+- **Credentials are never passed as flags and never logged.** The S3 client
+  resolves them from the **standard AWS credential chain** — env vars
+  (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN`), shared
+  config, SSO, or (preferred in-cluster) an **IAM role** via IRSA / instance
+  profile. Grant the role least-privilege `s3:PutObject` on the archive
+  prefix only.
+- Enable **bucket encryption (SSE-S3 / SSE-KMS)** and a restrictive bucket
+  policy; cold-storage exports are full event payloads.
+
+### Export before prune (export-then-delete)
+
+To archive expired events to cold storage **before** the retention job deletes
+them, add `--export-before-prune` (or `PRUNE_EXPORT_BEFORE_DELETE=1`) to the
+prune job:
+
+```bash
+EXPORT_SINK=s3 EXPORT_S3_BUCKET=my-aep-archive AWS_REGION=us-east-1 \
+  npm run prune -- --export-before-prune
+```
+
+For each project with a finite retention window, the job exports the
+soon-to-be-deleted events (those with `time < cutoff`) to the configured sink,
+then deletes them. **Safety gate:** if a project's export fails, that project's
+events are **not** deleted — the failure is recorded in the summary
+(`export_failures`, per-project `export_error`) and the job exits non-zero, so a
+cold-storage outage can never cause unbacked data loss. `--dry-run` exports
+nothing and deletes nothing.
+
+> The export window (`until = cutoff`) matches the prune predicate exactly, so
+> the archived object contains precisely the rows that are deleted. (A backdated
+> event landing between export and delete is the only gap; events normally carry
+> a `time` near now, well after a past cutoff.)
+
+### Scheduling recipe — Kubernetes CronJob (export-before-prune)
+
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: aep-prune-archive
+spec:
+  schedule: "15 3 * * *"            # nightly 03:15
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          annotations:
+            eks.amazonaws.com/role-arn: arn:aws:iam::<acct>:role/aep-archive  # IRSA
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: prune
+              image: <your-aep-image>
+              command: ["npm", "run", "prune", "--", "--export-before-prune"]
+              env:
+                - name: STORAGE_BACKEND
+                  value: postgres
+                - name: DATABASE_URL
+                  valueFrom: { secretKeyRef: { name: aep-db, key: url } }
+                - name: EXPORT_SINK
+                  value: s3
+                - name: EXPORT_S3_BUCKET
+                  value: my-aep-archive
+                - name: EXPORT_FORMAT
+                  value: parquet
+                # AWS credentials come from the IRSA role above — none in env.
+```
+
+The crontab equivalent mirrors [§4's recipe](#scheduling-recipe--crontab) with
+`--export-before-prune` added and the `EXPORT_*` vars exported in the cron
+environment. Alert on a non-zero exit (export failure blocked a prune) or a
+missing success log.
 
 ---
 

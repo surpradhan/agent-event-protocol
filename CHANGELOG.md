@@ -4,6 +4,37 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Retention export-before-prune + ops docs (Phase 17-D) — 2026-06-14
+
+Phase 17 (S3/Cloud Export) PR-D — the final slice. Wires the export module into
+the retention job and documents the whole feature. **Phase 17 (S3/Cloud Export)
+is now complete (A–D).**
+
+- **Export before prune** (`src/retention.js` + `src/prune.js`): the prune job
+  now takes `--export-before-prune` (or `PRUNE_EXPORT_BEFORE_DELETE=1`). For each
+  project with a finite retention window, the soon-to-be-deleted events (those
+  with `time < cutoff`) are exported to cold storage first (via the export
+  module, with `until = cutoff` so the archive matches the prune predicate
+  exactly), then deleted.
+- **Safety gate**: if a project's export fails, that project's events are **not**
+  deleted — the failure is recorded (`export_failures`, per-project
+  `export_error`) and the job exits non-zero, so a cold-storage outage can never
+  cause unbacked data loss. `--dry-run` exports nothing and deletes nothing.
+  `pruneAll` now accepts an injected `db` + `exportTenant` for testing.
+- **Config**: export destination/format reuse the standard `EXPORT_*` env vars
+  (`EXPORT_SINK` / `EXPORT_OUT` / `EXPORT_S3_BUCKET` / `EXPORT_S3_REGION` /
+  `EXPORT_S3_ENDPOINT` / `EXPORT_FORMAT` / `EXPORT_COMPRESSION` / `EXPORT_PREFIX`).
+  Misconfiguration (unknown format/compression, `s3` without a bucket) fails fast
+  before anything is deleted.
+- **OPERATIONS.md §7 "Export & cold storage"**: the export job, sinks + env
+  config, S3 credential/security posture (AWS chain / IRSA, never logged,
+  least-privilege + bucket encryption), export-before-prune semantics + safety
+  gate, and a k8s CronJob recipe. §4 cross-links it.
+- New unit tests for the export-before-prune wiring (incl. the safety gate);
+  no new DB schema, no new CI job. Server suite green.
+
+---
+
 ## Export format + compression options (Phase 17-C) — 2026-06-14
 
 Phase 17 (S3/Cloud Export) PR-C — completes the PRD §Phase 17 "format options:
