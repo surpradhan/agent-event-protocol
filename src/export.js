@@ -178,6 +178,9 @@ Usage:
 One object is written per tenant; tenants with no events in the window are skipped.
 Export is scoped by each tenant_id (see src/export/index.js).
 
+Compression (gzip/brotli) wraps the text formats (jsonl, csv). Parquet is columnar
+and self-compressed (internal GZIP), so --compression does not apply to it.
+
 S3 is off unless --sink s3 (or EXPORT_SINK=s3). AWS credentials are read from the
 standard credential chain (env / shared config / SSO / instance role) — never
 passed as flags and never logged.

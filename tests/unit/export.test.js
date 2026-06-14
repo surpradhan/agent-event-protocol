@@ -47,19 +47,19 @@ const SAMPLE_EVENTS = [
 
 describe("formats: extensions", () => {
   test("supported lists are exposed", () => {
-    assert.deepEqual(SUPPORTED_FORMATS, ["jsonl"]);
-    assert.deepEqual(SUPPORTED_COMPRESSIONS, ["none", "gzip"]);
+    assert.deepEqual(SUPPORTED_FORMATS, ["jsonl", "csv", "parquet"]);
+    assert.deepEqual(SUPPORTED_COMPRESSIONS, ["none", "gzip", "brotli"]);
   });
 
   test("formatExtension returns the suffix and throws on unknown", () => {
     assert.equal(formatExtension("jsonl"), "jsonl");
-    assert.throws(() => formatExtension("parquet"), /Unsupported export format/);
+    assert.throws(() => formatExtension("avro"), /Unsupported export format/);
   });
 
   test("compressionExtension returns the suffix and throws on unknown", () => {
     assert.equal(compressionExtension("none"), "");
     assert.equal(compressionExtension("gzip"), ".gz");
-    assert.throws(() => compressionExtension("brotli"), /Unsupported compression/);
+    assert.throws(() => compressionExtension("lz4"), /Unsupported compression/);
   });
 });
 
@@ -201,7 +201,7 @@ describe("slugifyTenant / buildObjectKey", () => {
   });
 
   test("buildObjectKey rejects an unknown format", () => {
-    assert.throws(() => buildObjectKey({ tenantId: "dev", format: "csv" }), /Unsupported export format/);
+    assert.throws(() => buildObjectKey({ tenantId: "dev", format: "avro" }), /Unsupported export format/);
   });
 });
 
@@ -269,9 +269,9 @@ describe("runExport", () => {
 
   test("validates format/compression even in dry-run", async () => {
     const db = fakeDb({ projects: [{ tenant_id: "t1" }] });
-    await assert.rejects(() => runExport({ db, dryRun: true, format: "csv" }), /Unsupported export format/);
+    await assert.rejects(() => runExport({ db, dryRun: true, format: "avro" }), /Unsupported export format/);
     await assert.rejects(
-      () => runExport({ db, dryRun: true, compression: "brotli" }),
+      () => runExport({ db, dryRun: true, compression: "lz4" }),
       /Unsupported compression/
     );
   });
