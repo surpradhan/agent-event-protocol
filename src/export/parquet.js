@@ -51,6 +51,11 @@ function buildSchema() {
  * @returns {object}
  */
 function eventToRow(event) {
+  // `id` is the one required (non-optional) column in the schema — fail loudly
+  // rather than writing a literal "undefined"/"null" cell.
+  if (event.id === undefined || event.id === null) {
+    throw new Error("parquet export: event is missing required 'id'");
+  }
   const row = {};
   for (const col of SCALAR_COLUMNS) {
     if (event[col] !== undefined && event[col] !== null) row[col] = String(event[col]);
@@ -58,8 +63,6 @@ function eventToRow(event) {
   for (const col of OBJECT_COLUMNS) {
     if (event[col] !== undefined && event[col] !== null) row[col] = JSON.stringify(event[col]);
   }
-  // `id` is required by the schema — guarantee a value.
-  if (row.id === undefined) row.id = String(event.id);
   return row;
 }
 

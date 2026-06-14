@@ -35,7 +35,7 @@ const path = require("path");
 const db = require("./db");
 const { runExport, DEFAULT_FORMAT, DEFAULT_COMPRESSION } = require("./export/index");
 const { createSink, SUPPORTED_SINKS } = require("./export/sink");
-const { SUPPORTED_FORMATS, SUPPORTED_COMPRESSIONS } = require("./export/formats");
+const { SUPPORTED_FORMATS, SUPPORTED_COMPRESSIONS, isSelfCompressed } = require("./export/formats");
 
 const DEFAULT_OUT_DIR = "./exports";
 
@@ -243,6 +243,17 @@ async function main() {
   if (opts.help) {
     printHelp();
     return;
+  }
+
+  // If the user explicitly asked for a compression that a self-compressed format
+  // (parquet) ignores, say so on stderr rather than silently dropping it.
+  const explicitCompression = process.argv.some(
+    (a) => a === "--compression" || a.startsWith("--compression=")
+  );
+  if (explicitCompression && isSelfCompressed(opts.format) && opts.compression !== "none") {
+    console.error(
+      `Note: --format ${opts.format} is self-compressed; --compression ${opts.compression} is ignored.`
+    );
   }
 
   const sinkConfig = resolveSinkConfig(opts);

@@ -165,6 +165,22 @@ describe("parquet format", () => {
   });
 });
 
+describe("parquet eventToRow", () => {
+  const { eventToRow } = require("../../src/export/parquet");
+  test("stringifies object columns and omits missing optionals", () => {
+    const row = eventToRow({ id: "e1", type: "task.created", payload: { a: 1 }, labels: { env: "prod" } });
+    assert.equal(row.id, "e1");
+    assert.equal(row.type, "task.created");
+    assert.equal(row.payload, '{"a":1}');
+    assert.equal(row.labels, '{"env":"prod"}');
+    assert.ok(!("subject" in row));
+  });
+  test("throws when the required id is missing", () => {
+    assert.throws(() => eventToRow({ type: "task.created" }), /missing required 'id'/);
+    assert.throws(() => eventToRow({ id: null }), /missing required 'id'/);
+  });
+});
+
 describe("buildObjectKey for new formats", () => {
   const now = Date.parse("2026-06-14T10:15:30.000Z");
   test("csv + brotli", () => {
