@@ -64,6 +64,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1068.0",
     "@aws-sdk/lib-storage": "^3.1068.0",
+    "@dsnp/parquetjs": "^1.8.7",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
     "better-sqlite3": "^12.8.0",

@@ -46,7 +46,8 @@ const {
   createEncoder,
   createCompressor,
   formatExtension,
-  compressionExtension
+  compressionExtension,
+  isSelfCompressed
 } = require("./formats");
 
 const DEFAULT_FORMAT = "jsonl";
@@ -94,6 +95,10 @@ function buildObjectKey({
  * event envelopes and `sink` is any ExportSink, so this is unit-testable with a
  * LocalFileSink and an in-memory array.
  *
+ * Parquet is a binary columnar format and is written by src/export/parquet.js
+ * (lazily loaded); it manages its own compression, so `compression` is ignored
+ * for it.
+ *
  * @param {{ records: Iterable<object>|AsyncIterable<object>, format?: string,
  *           compression?: string, sink: import('./sink').ExportSink, key: string }} opts
  * @returns {Promise<{ bytes: number, location: string }>}
@@ -101,6 +106,13 @@ function buildObjectKey({
 async function writeRecords({ records, format = DEFAULT_FORMAT, compression = DEFAULT_COMPRESSION, sink, key }) {
   if (!sink) throw new Error("writeRecords requires a sink");
   if (!key) throw new Error("writeRecords requires a key");
+
+  if (isSelfCompressed(format)) {
+    // Columnar self-compressed formats (parquet) are not per-record stream
+    // Transforms — delegate to their dedicated writer (lazy-loads the heavy lib).
+    const { writeParquet } = require("./parquet");
+    return writeParquet({ records, sink, key });
+  }
 
   const { stream: encoder } = createEncoder(format);
   const { stream: compressor } = createCompressor(compression);
@@ -188,12 +200,16 @@ async function runExport({
     throw new Error("runExport requires a sink unless dryRun is set");
   }
 
+  // Self-compressed formats (parquet) carry their own internal compression, so
+  // the external compression layer + its filename extension do not apply.
+  const effectiveCompression = isSelfCompressed(format) ? "none" : compression;
+
   const tenantIds = await resolveTenantIds(db, tenantId);
 
   const summary = {
     dryRun,
     format,
-    compression,
+    compression: effectiveCompression,
     tenants_scanned: tenantIds.length,
     tenants_exported: 0,
     events_exported: 0,
@@ -203,7 +219,7 @@ async function runExport({
 
   for (const tid of tenantIds) {
     const events = await db.getEventsForQuery(tid, { since, until });
-    const key = buildObjectKey({ tenantId: tid, now, format, compression, prefix });
+    const key = buildObjectKey({ tenantId: tid, now, format, compression: effectiveCompression, prefix });
 
     if (events.length === 0) {
       summary.details.push({ tenant_id: tid, events: 0, key: null, location: null, bytes: null, skipped: true });
@@ -216,17 +232,17 @@ async function runExport({
     if (dryRun) {
       summary.details.push({ tenant_id: tid, events: events.length, key, location: null, bytes: null });
       logger.info(
-        { tenant_id: tid, events: events.length, key, format, compression, since, until, dry_run: true },
+        { tenant_id: tid, events: events.length, key, format, compression: effectiveCompression, since, until, dry_run: true },
         "export: would write events"
       );
       continue;
     }
 
-    const { bytes, location } = await writeRecords({ records: events, format, compression, sink, key });
+    const { bytes, location } = await writeRecords({ records: events, format, compression: effectiveCompression, sink, key });
     summary.objects_written += 1;
     summary.details.push({ tenant_id: tid, events: events.length, key, location, bytes });
     logger.info(
-      { tenant_id: tid, events: events.length, key, location, bytes, format, compression, since, until },
+      { tenant_id: tid, events: events.length, key, location, bytes, format, compression: effectiveCompression, since, until },
       "export: wrote events"
     );
   }

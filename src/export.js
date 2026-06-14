@@ -35,7 +35,7 @@ const path = require("path");
 const db = require("./db");
 const { runExport, DEFAULT_FORMAT, DEFAULT_COMPRESSION } = require("./export/index");
 const { createSink, SUPPORTED_SINKS } = require("./export/sink");
-const { SUPPORTED_FORMATS, SUPPORTED_COMPRESSIONS } = require("./export/formats");
+const { SUPPORTED_FORMATS, SUPPORTED_COMPRESSIONS, isSelfCompressed } = require("./export/formats");
 
 const DEFAULT_OUT_DIR = "./exports";
 
@@ -178,6 +178,9 @@ Usage:
 One object is written per tenant; tenants with no events in the window are skipped.
 Export is scoped by each tenant_id (see src/export/index.js).
 
+Compression (gzip/brotli) wraps the text formats (jsonl, csv). Parquet is columnar
+and self-compressed (internal GZIP), so --compression does not apply to it.
+
 S3 is off unless --sink s3 (or EXPORT_SINK=s3). AWS credentials are read from the
 standard credential chain (env / shared config / SSO / instance role) — never
 passed as flags and never logged.
@@ -240,6 +243,17 @@ async function main() {
   if (opts.help) {
     printHelp();
     return;
+  }
+
+  // If the user explicitly asked for a compression that a self-compressed format
+  // (parquet) ignores, say so on stderr rather than silently dropping it.
+  const explicitCompression = process.argv.some(
+    (a) => a === "--compression" || a.startsWith("--compression=")
+  );
+  if (explicitCompression && isSelfCompressed(opts.format) && opts.compression !== "none") {
+    console.error(
+      `Note: --format ${opts.format} is self-compressed; --compression ${opts.compression} is ignored.`
+    );
   }
 
   const sinkConfig = resolveSinkConfig(opts);

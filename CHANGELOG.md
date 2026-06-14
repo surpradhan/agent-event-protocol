@@ -4,6 +4,36 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Export format + compression options (Phase 17-C) — 2026-06-14
+
+Phase 17 (S3/Cloud Export) PR-C — completes the PRD §Phase 17 "format options:
+JSON Lines, Parquet, CSV" and "compression: gzip, brotli". Selectable per export
+behind the PR-A factories; no change to the sinks.
+
+- **CSV format** (`src/export/formats.js`): a streaming RFC-4180 encoder with a
+  fixed envelope column set (`specversion,id,time,source,type,session_id,…`).
+  Object-valued fields (`payload`/`labels`/`extensions`/`signature`) are stored
+  as JSON strings; cells are quoted (quotes doubled) when they contain a comma,
+  quote, CR or LF; a header row is emitted first.
+- **Parquet format** (`src/export/parquet.js`, lazily loaded): Apache Parquet via
+  `@dsnp/parquetjs`. Envelope fields as UTF8 columns (`id` required, rest
+  optional; object fields as JSON strings), written through the same
+  `writeRecords` byte-counting + sink concurrency path. Parquet is **columnar and
+  self-compressed** (internal per-column GZIP), so the external `--compression`
+  layer (and its filename suffix) does **not** apply — `runExport` neutralises it
+  to `none` and the object keys `.parquet`. The heavy library is `require`d
+  lazily (the jsonl/csv paths never load it), mirroring the S3 sink.
+- **brotli compression**: added to the compressor factory (`.br`) alongside gzip
+  and none; wraps the text formats (jsonl, csv).
+- **CLI**: `--format jsonl|csv|parquet`, `--compression none|gzip|brotli`, with a
+  help note that Parquet self-compresses.
+- 12 new unit tests (`tests/unit/exportFormats.test.js`) incl. a real
+  Parquet write→read-back round-trip; existing export tests updated for the
+  expanded support matrix. Adds `@dsnp/parquetjs` (pure-JS, no native build);
+  no new CI job. Server suite green.
+
+---
+
 ## S3 export sink (Phase 17-B) — 2026-06-14
 
 Phase 17 (S3/Cloud Export) PR-B — the first cloud egress path. Delivers the S3
