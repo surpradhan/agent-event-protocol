@@ -23,8 +23,18 @@
  * Like the prune job, this is a run-once operator entry point — there is no
  * always-on scheduler (cron / k8s CronJob wiring is documented in PR-D).
  *
- * Scope caveat (carried from quota metering / retention): `events` rows carry
- * `tenant_id`, not `project_id`, so export is scoped by a project's `tenant_id`.
+ * Scope caveats
+ * -------------
+ *   • `events` rows carry `tenant_id`, not `project_id`, so export is scoped by a
+ *     project's `tenant_id` (carried from quota metering / retention).
+ *   • A full export enumerates tenants from the project registry, so events with
+ *     a NULL `tenant_id` (untagged) are not reachable by the all-tenants run.
+ *     This matches the read API / prune scoping; per-project event tagging would
+ *     remove it (a candidate for a later PR).
+ *   • `runExport` materialises each tenant's window fully in memory (the DB read
+ *     returns an array; the encode→compress→sink half then streams it). This is
+ *     fine for the current scale and mirrors the analytics/customQuery readers;
+ *     a cursor-streamed read is a candidate enhancement for very large windows.
  */
 
 const { Readable, Transform } = require("stream");
