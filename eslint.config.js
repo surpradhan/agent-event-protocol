@@ -55,7 +55,7 @@ module.exports = [
     }
   },
   {
-    files: ["src/cli.js", "src/cli-validate.js", "src/prune.js", "src/db/migrate.js"],
+    files: ["src/cli.js", "src/cli-validate.js", "src/prune.js", "src/export.js", "src/db/migrate.js"],
     rules: {
       "no-console": "off"
     }

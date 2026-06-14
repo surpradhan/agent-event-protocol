@@ -4,6 +4,35 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Export core + JSONL + local sink (Phase 17-A) — 2026-06-14
+
+Phase 17 (S3/Cloud Export) PR-A — **starts Phase 17.** A pure, streaming export
+core plus an operator CLI. Delivers the first cut of PRD §Phase 17 "export
+sessions/events … format options: JSON Lines … compression: gzip". The *event*
+log is the archival unit (sessions are derived; the prune job operates on events
+too), which sets up "export to cold storage before delete" in PR-D.
+
+- **`src/export/` module**:
+  - `sink.js` — a minimal pluggable `ExportSink` interface (`write(key, stream)`)
+    and a `LocalFileSink` (no cloud dependency) with a path-traversal guard. Cloud
+    sinks (S3 in PR-B) drop in behind the same contract.
+  - `formats.js` — `createEncoder` / `createCompressor` factories + pure
+    `formatExtension` / `compressionExtension` lookups. Ships JSON Lines + gzip
+    (and explicit `none`); Parquet/CSV/brotli land in PR-C behind these factories.
+  - `index.js` — `writeRecords()` streams records → encoder → optional compressor →
+    byte-counter → sink (fully unit-testable with a `LocalFileSink`, no DB), and
+    `runExport()` resolves the tenant set, fetches each tenant's time-windowed
+    events (reuses `getEventsForQuery`, no new DB method), and writes one object
+    per non-empty tenant. Tenant-scoped exactly like the read API / prune job.
+- **`src/export.js` operator CLI** (`npm run export`): `--tenant`, `--out`,
+  `--prefix`, `--since`/`--until`, `--format`, `--compression`, `--dry-run`,
+  `--json`, `--help`. Mirrors `src/prune.js` — run-once, **no always-on
+  scheduler** (cron / k8s CronJob wiring documented in PR-D).
+- No schema change, no new DB method, no new CI job. 27 new unit tests
+  (`tests/unit/export.test.js`); server suite green.
+
+---
+
 ## Webhook deliveries observability + docs (Phase 16-D) — 2026-06-13
 
 Phase 16 (Webhooks & Alerts) PR-D — the final slice. Surfaces the delivery history
