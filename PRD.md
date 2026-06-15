@@ -462,6 +462,8 @@ path until a stable Vercel callback API ships.
 
 ### Phase 15: Advanced Dashboard Features (Q4 2026)
 
+**Status: ✅ Complete (A–D)**
+
 **Objective:** Enhance real-time visualization and analytics.
 
 - **Advanced filtering**: filter by agent role, event type, payload fields, custom labels
@@ -481,12 +483,16 @@ path until a stable Vercel callback API ships.
 
 ### Phase 17: S3/Cloud Export (Q4 2026)
 
+**Status: ✅ Complete (A–D)**
+
 **Objective:** Long-term archival and compliance.
 
-- Periodic export: export sessions/events to S3, GCS, or Azure Blob Storage
-- Format options: JSON Lines, Parquet, CSV
-- Compression: gzip, brotli
+- Periodic export: export sessions/events to S3 (GCS/Azure = future follow-ups)
+- Format options: JSON Lines, CSV, Parquet (`--format jsonl|csv|parquet`)
+- Compression: gzip, brotli, none (`--compression none|gzip|brotli`; Parquet self-compresses)
 - Retention policies: auto-delete from SQLite after N days, export to cold storage
+- Export-before-prune safety gate: failed export blocks deletion, exits non-zero
+- Orphan-tenant coverage: `--all-tenants` exports tenants with events but no project row (issue #122)
 
 ---
 

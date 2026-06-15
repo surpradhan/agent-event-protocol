@@ -1,6 +1,6 @@
 # AEP Setup & Integration Guide
 
-**Version:** 0.2.0 · **Last Updated:** March 24, 2026
+**Version:** 0.2.0 · **Last Updated:** June 15, 2026
 
 This guide walks you through setting up the AEP reference implementation and integrating event emission into your existing AI agents. By the end, your agents will emit structured, traceable events that you can observe in real time through the AEP dashboard.
 
