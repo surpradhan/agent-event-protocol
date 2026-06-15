@@ -544,6 +544,38 @@
       .toolbar { grid-template-columns: 1fr 1fr; }
       .toolbar .btn { width: 100%; }
     }
+
+    /* ── Keyboard focus visibility (WCAG 2.4.7) ──
+       Keyboard users get a clear accent ring on every interactive surface.
+       Mouse clicks stay ring-free via :focus-visible. */
+    .clickable-item:focus-visible,
+    .event:focus-visible,
+    .tree-row:focus-visible,
+    .reject-item:focus-visible,
+    .tab-btn:focus-visible,
+    .sub-tab:focus-visible,
+    .tree-toggle:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+      border-radius: 8px;
+    }
+    /* SVG DAG / workflow-graph nodes: inline styles no longer force outline:none,
+       so the focus ring renders around the focused node group. */
+    svg g[data-eid]:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    /* ── Respect reduced-motion preferences (vestibular safety) ── */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+      .live-dot.on { animation: none; }
+    }
   </style>
 </head>
 <body>
@@ -692,7 +724,7 @@
       <div class="panel-header" style="margin-bottom:12px">
         <div>
           <div class="panel-title">Recent Rejections <span id="reject-total" class="hint"></span></div>
-          <div class="hint" style="font-size:11px;margin-top:2px">In-memory only — resets on server restart. Last 200 entries kept.</div>
+          <div class="hint" style="font-size:11px;margin-top:2px">In-memory only — resets on server restart. Last 1000 entries kept.</div>
         </div>
         <button class="btn secondary" onclick="loadRejections()">Refresh</button>
       </div>
@@ -902,6 +934,7 @@ function showAuthOverlay(message) {
         <p id="auth-msg" style="margin:0 0 20px;font-size:14px;color:#527060;font-family:'Inter',sans-serif">
           Enter your dashboard token to continue.
         </p>
+        <label for="auth-input" class="sr-only">Dashboard token</label>
         <input id="auth-input" type="password" placeholder="Dashboard token"
                autocomplete="current-password"
                style="width:100%;box-sizing:border-box;border:1px solid rgba(255,255,255,0.08);
@@ -1337,7 +1370,7 @@ function renderWorkflowGraph(g) {
     const lbl = (n.type || '').length > 20 ? n.type.slice(0, 18) + '…' : (n.type || '');
     const idl = id.length > 18 ? id.slice(0, 16) + '…' : id;
     const sidl = short(n.session_id || '—', 16);
-    nodeSvg += `<g role="button" tabindex="0" data-eid="${esc(id)}" style="cursor:pointer;outline:none">
+    nodeSvg += `<g role="button" tabindex="0" data-eid="${esc(id)}" style="cursor:pointer">
       <rect x="${p.x}" y="${p.y}" width="${WFG.NW}" height="${WFG.NH}" rx="9" fill="rgba(255,255,255,0.03)" stroke="${col}" stroke-width="1.6"/>
       <rect x="${p.x}" y="${p.y}" width="5" height="${WFG.NH}" rx="2" fill="${col}"/>
       <text x="${p.x + 14}" y="${p.y + 20}" font-size="11" font-weight="700" fill="${col}" font-family="Inter,sans-serif">${esc(lbl)}</text>
@@ -1511,7 +1544,12 @@ function renderTimeline(events) {
       <div class="hint">id: ${esc(short(e.id, 22))}</div>
       <div class="hint">causation: ${esc(e.causation_id ? short(e.causation_id, 22) : '–')}</div>
       <pre>${esc(JSON.stringify(e.payload, null, 2))}</pre>`;
-    el.onclick = () => { activeIdx = i; renderTimeline(curEvents); };
+    const activateEvent = () => { activeIdx = i; renderTimeline(curEvents); };
+    el.setAttribute('role', 'button');
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('aria-label', `Event ${e.type}, ${new Date(e.time).toLocaleTimeString()}`);
+    el.onclick = activateEvent;
+    el.onkeydown = ke => { if (ke.key === 'Enter' || ke.key === ' ') { ke.preventDefault(); activateEvent(); } };
     box.appendChild(el);
   }
   updReplay();
@@ -1710,7 +1748,7 @@ function renderDag(events, upToIdx = -1) {
     const tx = isFuture ? 'rgba(255,255,255,0.18)' : st.dTx;
     const idTx = isFuture ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.35)';
     const glow = (isCurrent || isActive) ? ` filter="url(#glow)"` : '';
-    nodes += `<g role="button" tabindex="0" aria-label="${esc(lbl)}" data-eid="${esc(id)}" style="cursor:pointer;outline:none" opacity="${opacity}">
+    nodes += `<g role="button" tabindex="0" aria-label="${esc(lbl)}" data-eid="${esc(id)}" style="cursor:pointer" opacity="${opacity}">
       <rect x="${p.x}" y="${p.y}" width="${NW}" height="${NH}" rx="8"
         fill="${bg}" stroke="${sc}" stroke-width="${sw}"${glow}/>
       <text x="${p.x + 8}" y="${p.y + 19}" font-size="11" font-weight="700" fill="${tx}" font-family="Inter,sans-serif">${esc(lbl)}</text>
@@ -2276,11 +2314,11 @@ function renderWebhooks(webhooks) {
   }
   list.innerHTML = webhooks.map(w => {
     const state = w.enabled
-      ? '<span style="color:var(--ok,#3fb950)">enabled</span>'
+      ? '<span style="color:var(--accent)">enabled</span>'
       : '<span class="hint">disabled</span>';
     const types = (w.event_types || []).map(esc).join(', ');
     return `
-      <div class="wh-row" onclick="loadWebhookDeliveries('${esc(w.id)}')" style="cursor:pointer;padding:10px 12px;border:1px solid var(--border,#30363d);border-radius:8px;margin-bottom:8px">
+      <div class="wh-row" onclick="loadWebhookDeliveries('${esc(w.id)}')" style="cursor:pointer;padding:10px 12px;border:1px solid var(--line2);border-radius:8px;margin-bottom:8px">
         <div style="display:flex;gap:10px;align-items:center">
           <code>${esc(w.id)}</code> ${state}
           <span class="hint" style="margin-left:auto">${esc(w.created_at)}</span>
@@ -2291,7 +2329,7 @@ function renderWebhooks(webhooks) {
   }).join('');
 }
 
-const WH_STATUS_COLOR = { success: '#3fb950', failed: '#f85149', pending: '#d29922' };
+const WH_STATUS_COLOR = { success: 'var(--accent)', failed: 'var(--warn)', pending: 'var(--warm)' };
 
 async function loadWebhookDeliveries(id) {
   window._whSelected = id;
@@ -2315,11 +2353,11 @@ function renderWebhookDeliveries(deliveries) {
     return;
   }
   body.innerHTML = deliveries.map(d => {
-    const col = WH_STATUS_COLOR[d.status] || 'var(--fg)';
+    const col = WH_STATUS_COLOR[d.status] || 'var(--ink)';
     const code = (d.last_status_code === null || d.last_status_code === undefined) ? '–' : d.last_status_code;
-    const err = d.last_error ? `<div class="hint" style="font-size:11px;color:#f85149;margin-top:2px">${esc(d.last_error)}</div>` : '';
+    const err = d.last_error ? `<div class="hint" style="font-size:11px;color:var(--warn);margin-top:2px">${esc(d.last_error)}</div>` : '';
     return `
-      <div style="padding:8px 12px;border:1px solid var(--border,#30363d);border-radius:8px;margin-bottom:6px">
+      <div style="padding:8px 12px;border:1px solid var(--line2);border-radius:8px;margin-bottom:6px">
         <div style="display:flex;gap:10px;align-items:center">
           <span style="font-weight:600;color:${col};text-transform:uppercase;font-size:12px">${esc(d.status)}</span>
           <code>${esc(d.event_type)}</code>
