@@ -426,6 +426,8 @@ path until a stable Vercel callback API ships.
 
 ### Phase 13: Hosted SaaS — aep.dev (Q3 2026)
 
+**Status: ✅ Complete (A–E)**
+
 **Objective:** Remove the self-hosting barrier and make AEP a product people depend on daily.
 
 - **Free tier**: unlimited events for individuals up to 5 GB storage, 30-day retention, 1 project
@@ -443,6 +445,8 @@ path until a stable Vercel callback API ships.
 - ✅ Zero-downtime deployments
 
 ### Phase 14: Compliance & Audit Suite (Q3 2026)
+
+**Status: ✅ Complete (A–G)**
 
 **Objective:** Own the enterprise compliance story that no other agent observability tool addresses.
 
