@@ -248,7 +248,7 @@ PORT=8787 npm run ingest
 ```bash
 aep emit --type task.created --source agent://my-agent --session ses_123 --trace trc_456
 aep session ses_123 --type task.created --q "search term"
-aep export ses_123 --format json|csv --out export.json
+aep export ses_123 --format jsonl|csv|parquet --compression none|gzip|brotli --sink local|s3 --all-tenants
 aep workflow trc_456
 aep validate events.json
 ```
@@ -356,7 +356,7 @@ Typically indicates cross-tenant access attempt or insufficient scopes for the r
 | **[CONTRIBUTING.md](./CONTRIBUTING.md)** | Development setup, code style, contribution workflow |
 | **[SECURITY.md](./SECURITY.md)** | Threat model, vulnerability disclosure, production deployment checklist |
 | **[SETUP.md](./SETUP.md)** | Installation, configuration, troubleshooting |
-| **[OPERATIONS.md](./OPERATIONS.md)** | Operations & deployment: Postgres backend, projects/tiers/quotas, retention/pruning (cron + k8s CronJob) |
+| **[OPERATIONS.md](./OPERATIONS.md)** | Operations & deployment: Postgres backend, projects/tiers/quotas, retention/pruning (cron + k8s CronJob), S3/cloud export (Phase 17) |
 | **[CHANGELOG.md](./CHANGELOG.md)** | Version history (Phases 1-11) and breaking changes |
 | **[PRD.md](./PRD.md)** | Product vision, roadmap, and success metrics (Phases 12+) |
 | **[CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)** | Community standards and expectations |
@@ -489,9 +489,9 @@ MIT License: see [LICENSE](./LICENSE) for details.
 - [x] **Anthropic Claude Agent SDK auto-instrumentation** — [`aep.instrument()`](sdks/python/aep/instrument.py) · zero-code hook injection for `query()` / `ClaudeSDKClient` (Phase 12f)
 - [x] **Node.js / LangChain.js auto-instrumentation** — [`instrument()`](sdks/node/src/instrument.ts) · zero-code `CompiledStateGraph` callback injection for LangGraph (Phase 12g PR2)
 - [x] **Vercel AI SDK** — docs-only path through the OTEL bridge: `experimental_telemetry` → OTEL Collector → [`otelbridge/`](otelbridge/) AEP exporter (see [`docs/integrations/vercel-ai-sdk.md`](docs/integrations/vercel-ai-sdk.md))
-- [ ] Advanced filtering & visualization in dashboard
-- [ ] Webhook integration for alerts
-- [ ] S3/cloud export for long-term storage
+- [x] Advanced filtering & visualization in dashboard (Phase 15)
+- [x] Webhook integration for alerts (Phase 16)
+- [x] S3/cloud export for long-term storage (Phase 17: JSONL/CSV/Parquet, gzip/brotli, local + S3 sink, export-before-prune)
 
 ---
 
