@@ -18,7 +18,12 @@ const { parseArgs } = require("../../src/prune");
  * which tenants had pruneEventsBefore called, so tests can assert the
  * export-before-prune safety gate actually blocks deletion.
  */
-function fakeDb({ projects = [], deleteResult = { events_deleted: 5, sessions_deleted: 2 }, counts = {} } = {}) {
+function fakeDb({
+  projects = [],
+  deleteResult = { events_deleted: 5, sessions_deleted: 2 },
+  counts = {},
+  eventTenants = []
+} = {}) {
   const pruned = [];
   return {
     pruned,
@@ -31,6 +36,9 @@ function fakeDb({ projects = [], deleteResult = { events_deleted: 5, sessions_de
     async pruneEventsBefore(tenantId, cutoff) {
       pruned.push({ tenantId, cutoff });
       return deleteResult;
+    },
+    async listEventTenantIds() {
+      return eventTenants;
     }
   };
 }
@@ -183,5 +191,30 @@ describe("retention.pruneAll export-before-prune (injected db)", () => {
     assert.deepEqual(db.pruned, [{ tenantId: "t1", cutoff: computeCutoff(30, now) }]);
     assert.equal(summary.exportBeforePrune, false);
     assert.equal(summary.events_deleted, 5);
+  });
+});
+
+describe("retention.pruneAll orphan tenants (issue #122)", () => {
+  const now = Date.parse("2026-06-14T00:00:00.000Z");
+
+  test("reports tenants with events but no project; never prunes them", async () => {
+    // t1 has a project (and is pruned); alpha/beta have events but no project.
+    const db = fakeDb({
+      projects: [{ id: "p1", tenant_id: "t1", retention_days: 30 }],
+      eventTenants: ["alpha", "beta", "t1"]
+    });
+    const summary = await pruneAll({ db, now });
+    // Orphans surfaced, sorted, and NOT pruned (no retention policy for them).
+    assert.deepEqual(summary.orphan_tenants, ["alpha", "beta"]);
+    assert.deepEqual(db.pruned, [{ tenantId: "t1", cutoff: computeCutoff(30, now) }]);
+  });
+
+  test("no orphan tenants when every event tenant has a project", async () => {
+    const db = fakeDb({
+      projects: [{ id: "p1", tenant_id: "t1", retention_days: 30 }],
+      eventTenants: ["t1"]
+    });
+    const summary = await pruneAll({ db, now });
+    assert.deepEqual(summary.orphan_tenants, []);
   });
 });

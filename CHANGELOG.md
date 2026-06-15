@@ -4,6 +4,35 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Export & prune cover tenants with events but no project (issue #122) — 2026-06-15
+
+A key's `tenant_id` is independent of its bound project's `tenant_id`: a key
+minted with only a `tenantId` binds to the seeded `default` project but stores
+events under its own tenant. The bulk lifecycle jobs enumerated the **project
+registry**, so a tenant that had events but no project row was **silently
+skipped** by export and never pruned.
+
+- **New read-only storage method `listEventTenantIds()`** (interface + SQLite +
+  Postgres, dialect-identical: distinct non-NULL `events.tenant_id`, sorted). No
+  schema change, no migration.
+- **Export** (`src/export/index.js`, `src/export.js`): a full run now reports
+  "orphan" tenants (events but no project) in the summary's `orphan_tenants` and
+  warns about them; **`--all-tenants` (or `EXPORT_ALL_TENANTS=1`)** unions them
+  into the export set. Default behavior for project-backed tenants is unchanged.
+- **Prune** (`src/retention.js`, `src/prune.js`): orphan tenants have no
+  retention policy and cannot be pruned, but `pruneAll` now reports them in
+  `orphan_tenants` and logs a warning so the silent skip is visible (fix is
+  operational — create a project for the tenant).
+- Untagged events (NULL `tenant_id`) remain out of scope (no single-tenant
+  slice); documented as a follow-up alongside per-project event tagging.
+- **OPERATIONS.md §4 + §7** document orphan-tenant behavior and `--all-tenants`.
+- Unit tests cover the events-without-project case for both jobs; a real-backend
+  integration test (in `server.test.js`, so the Postgres parity job runs it too)
+  exercises export + prune end-to-end. No new CI job. Quota metering and
+  per-project event tagging are tracked separately as follow-ups.
+
+---
+
 ## Retention export-before-prune + ops docs (Phase 17-D) — 2026-06-14
 
 Phase 17 (S3/Cloud Export) PR-D — the final slice. Wires the export module into

@@ -646,6 +646,17 @@ class PostgresBackend extends StorageBackend {
     return Number(rows[0].n);
   }
 
+  async listEventTenantIds() {
+    // Distinct tenants that actually have events (issue #122) — see the SQLite
+    // backend for the dialect-identical query and the NULL-exclusion rationale.
+    const { rows } = await this._pool.query(
+      `SELECT DISTINCT tenant_id FROM events
+       WHERE tenant_id IS NOT NULL
+       ORDER BY tenant_id ASC`
+    );
+    return rows.map((r) => r.tenant_id);
+  }
+
   // ----- retention / pruning (Phase 13 PR-D) -----
 
   async countEventsBefore(tenantId, cutoff) {

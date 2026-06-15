@@ -168,6 +168,23 @@ class StorageBackend {
     throw new Error("StorageBackend.getProjectEventCount() not implemented");
   }
 
+  /**
+   * Return the distinct non-NULL `tenant_id` values present in the `events`
+   * table, sorted ascending.  The bulk lifecycle jobs (export / prune) use this
+   * to discover tenants that have events but no project row — a key's tenant_id
+   * can differ from its bound project's tenant_id, so enumerating the project
+   * registry alone silently misses such "orphan" tenants (see issue #122).
+   *
+   * Events with a NULL tenant_id (untagged) are excluded: they are not
+   * addressable as a single-tenant slice (getEventsForQuery(null) means "all
+   * tenants"), matching the existing read-API / export scoping.
+   *
+   * @returns {Promise<string[]>}
+   */
+  async listEventTenantIds() {
+    throw new Error("StorageBackend.listEventTenantIds() not implemented");
+  }
+
   // ----- retention / pruning (Phase 13 PR-D) -----
 
   /**

@@ -200,6 +200,10 @@ async function getProjectEventCount(tenantId) {
   return getBackend().getProjectEventCount(tenantId);
 }
 
+async function listEventTenantIds() {
+  return getBackend().listEventTenantIds();
+}
+
 async function countEventsBefore(tenantId, cutoff) {
   return getBackend().countEventsBefore(tenantId, cutoff);
 }
@@ -321,6 +325,7 @@ module.exports = {
   getProject,
   listProjects,
   getProjectEventCount,
+  listEventTenantIds,
   // Retention / pruning (Phase 13 PR-D)
   countEventsBefore,
   pruneEventsBefore,

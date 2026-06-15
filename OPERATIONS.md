@@ -368,6 +368,23 @@ npm run prune -- --help                # usage
   differing-retention projects onto one tenant until per-project event tagging
   lands.
 
+### Orphan tenants — events but no project (issue #122)
+
+A key minted with only a `tenantId` (no `projectId`) binds to the seeded
+`default` project, but its events are stored under the **key's** `tenant_id`. So
+a tenant can have events while having **no project row of its own** — and with
+no project there is no `retention_days` policy, so such a tenant is **never
+pruned** (data quietly accumulates forever).
+
+The prune job cannot fix this on its own (there is no retention window to apply),
+but it **no longer hides it**: `pruneAll` discovers the distinct tenants present
+in the `events` table and logs a `warn` line — `"retention: tenants have events
+but no project …"` — listing them, and reports them in the summary's
+`orphan_tenants` array (the `aep prune` CLI prints a `⚠️` line on stderr). The
+fix is operational: **create a project for that tenant** (`POST /admin/projects`
+with its `tenantId` + a tier) so its retention policy applies on the next run.
+See the export job (§7) for covering the same tenants' data in cold storage.
+
 ### Idempotency & observability
 
 - **Idempotent.** Re-running prune is safe: a second run immediately after a
@@ -604,7 +621,8 @@ so export integrates cleanly as **export-before-prune** (below).
 ### The export job
 
 ```bash
-npm run export                                   # all tenants → ./exports (jsonl, gzip)
+npm run export                                   # project tenants → ./exports (jsonl, gzip)
+npm run export -- --all-tenants                  # also tenants with events but no project
 npm run export -- --tenant dev                   # one tenant
 npm run export -- --since 2026-01-01T00:00:00Z --until 2026-04-01T00:00:00Z
 npm run export -- --format parquet               # jsonl | csv | parquet
@@ -618,6 +636,23 @@ One object is written per tenant (`<prefix>/<tenant>/aep-events-<tenant>-<ts>.<e
 tenants with no events in the window are skipped. Export is **scoped by
 `tenant_id`** (same caveat as quota/retention). It uses the **same storage
 backend as the server** (`STORAGE_BACKEND` + `DATABASE_PATH` / `DATABASE_URL`).
+
+#### Tenants with events but no project (issue #122)
+
+A full run (no `--tenant`) enumerates tenants from the **project registry**. A
+key's `tenant_id` can differ from its bound project's, so a tenant may have
+events but **no project row** (see §4). By default such "orphan" tenants are
+**not exported** — they are reported in the summary's `orphan_tenants` and a
+`⚠️` warning is printed on stderr so the silent miss is visible. To cover them:
+
+- `npm run export -- --all-tenants` (or `EXPORT_ALL_TENANTS=1`) unions the
+  distinct `events.tenant_id` values into the export set, so orphan tenants are
+  archived alongside project-backed ones; **or**
+- `npm run export -- --tenant <id>` to export one orphan tenant on demand.
+
+Events with a **NULL `tenant_id`** (untagged) are still not reachable by a full
+run even with `--all-tenants` (there is no single-tenant slice for them); export
+each by creating tenant-scoped keys, or wait for per-project event tagging.
 
 | Format | Extension | Compression |
 |--------|-----------|-------------|

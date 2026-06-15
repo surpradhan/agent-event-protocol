@@ -1763,6 +1763,83 @@ describe("Retention / pruning", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Orphan tenants: events but no project row (issue #122)
+// Exercises the real storage backend (so the Postgres parity job validates the
+// dialect-identical listEventTenantIds SQL), end-to-end through the export +
+// prune jobs. All assertions use non-destructive dry-runs.
+// ---------------------------------------------------------------------------
+
+describe("orphan tenants (events but no project, issue #122)", () => {
+  const { runExport } = require("../../src/export/index");
+  const { pruneAll } = require("../../src/retention");
+
+  // A key minted with only a tenantId binds to the seeded `default` project, so
+  // its events land under a tenant that has NO project row of its own.
+  async function makeOrphanTenant() {
+    const tenant = "tenant-orphan-" + crypto.randomUUID().slice(0, 8);
+    const kRes = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: tenant, scopes: ["read", "write"] }),
+    });
+    const key = (await kRes.json()).key;
+    const r = await ingest(
+      makeEvent({
+        id: `evt_orphan_${crypto.randomUUID().replace(/-/g, "")}`,
+        session_id: `ses_orphan_${tenant}`,
+        trace_id: `trc_orphan_${tenant}`,
+      }),
+      key
+    );
+    assert.equal(r.status, 202, "orphan tenant event accepted");
+    return tenant;
+  }
+
+  test("listEventTenantIds includes a tenant that has events but no project", async () => {
+    const tenant = await makeOrphanTenant();
+    const eventTenants = await db.listEventTenantIds();
+    assert.ok(eventTenants.includes(tenant), "event tenant is discovered");
+    // It must NOT appear in the project registry.
+    const projects = await db.listProjects();
+    assert.ok(!projects.some(p => p.tenant_id === tenant), "no project row for the tenant");
+  });
+
+  test("export reports the orphan tenant and skips it by default", async () => {
+    const tenant = await makeOrphanTenant();
+    const summary = await runExport({ dryRun: true });
+    assert.equal(summary.allTenants, false);
+    assert.ok(summary.orphan_tenants.includes(tenant), "orphan reported");
+    assert.equal(
+      summary.details.find(d => d.tenant_id === tenant),
+      undefined,
+      "orphan not exported by default"
+    );
+  });
+
+  test("export with allTenants includes the orphan tenant", async () => {
+    const tenant = await makeOrphanTenant();
+    const summary = await runExport({ dryRun: true, allTenants: true });
+    assert.equal(summary.allTenants, true);
+    const detail = summary.details.find(d => d.tenant_id === tenant);
+    assert.ok(detail, "orphan included with --all-tenants");
+    assert.ok(detail.events >= 1, "orphan's events counted");
+  });
+
+  test("prune reports the orphan tenant (never pruned — no retention policy)", async () => {
+    const tenant = await makeOrphanTenant();
+    const summary = await pruneAll({ dryRun: true });
+    assert.ok(summary.orphan_tenants.includes(tenant), "orphan reported by prune");
+    // The mechanism it can't be pruned: there is no project row carrying a
+    // retention policy for this tenant (prune iterates the project registry).
+    const projects = await db.listProjects();
+    assert.ok(
+      !projects.some(p => p.tenant_id === tenant),
+      "orphan tenant has no project, so no retention policy can target it"
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // GET /sessions/:id/audit-bundle  +  GET /workflows/:traceId/audit-bundle
 // Phase 14 PR-B — tamper-evident, HMAC-signed audit bundles over HTTP.
 // ---------------------------------------------------------------------------
