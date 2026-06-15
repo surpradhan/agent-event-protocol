@@ -474,6 +474,8 @@ path until a stable Vercel callback API ships.
 
 ### Phase 16: Webhooks & Alerts (Q4 2026)
 
+**Status: ✅ Complete (A–D)**
+
 **Objective:** Trigger external actions based on events or patterns.
 
 - Webhook registration: `POST /webhooks` with event filters and target URL
