@@ -112,6 +112,16 @@ function ok(label, data) {
   }
 }
 
+/** Format an ISO-8601 timestamp for human-readable CLI list output:
+ *  "2026-06-12T14:32:01.000Z" → "2026-06-12 14:32:01Z" (UTC, millis dropped).
+ *  Returns the raw value unchanged if it isn't a parseable date. */
+function fmtTs(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  return d.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "Z");
+}
+
 function printUsage() {
   console.log(`
 \x1b[1mAEP CLI — Agent Event Protocol\x1b[0m
@@ -166,6 +176,7 @@ Optional flags:
   --idem    <key>        idempotency_key
   --payload <json>       Payload JSON string (default: {})
   --labels  <json>       Labels JSON object string
+  --json                 Print the raw server response as JSON (for scripting)
 `);
 }
 
@@ -211,6 +222,15 @@ async function cmdEmit(flags, serverUrl, apiKey) {
     Authorization: `Bearer ${apiKey}`,
   });
 
+  if (flags.json) {
+    // Machine-readable: emit the raw server response, preserve the failure exit
+    // code so scripts can branch on $? as well as on the JSON body.
+    console.log(JSON.stringify(res.body, null, 2));
+    const okStatus = res.status === 202 || (res.status === 200 && res.body && res.body.duplicate);
+    if (!okStatus) process.exit(1);
+    return;
+  }
+
   if (res.status === 202) {
     ok("Event accepted", res.body);
   } else if (res.status === 200 && res.body?.duplicate) {
@@ -236,6 +256,7 @@ Usage:
 Flags:
   --type <type>   Filter to a specific event type (e.g. tool.called)
   --q    <text>   Full-text search query
+  --json          Print the raw events array as JSON (for scripting)
 `);
 }
 
@@ -257,6 +278,11 @@ async function cmdSession(positional, flags, serverUrl, apiKey) {
 
   if (res.status !== 200) {
     die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+  }
+
+  if (flags.json) {
+    console.log(JSON.stringify(res.body, null, 2));
+    return;
   }
 
   const { events } = res.body;
@@ -863,7 +889,7 @@ async function cmdAnalyticsQuery(flags, serverUrl, apiKey) {
     const rows = res.body.saved_queries || [];
     if (flags.json) return show(res.body);
     if (rows.length === 0) { console.log("(no saved queries)"); return; }
-    for (const q of rows) console.log(`  \x1b[36m${q.id}\x1b[0m  \x1b[1m${q.name}\x1b[0m  (${q.created_at})`);
+    for (const q of rows) console.log(`  \x1b[36m${q.id}\x1b[0m  \x1b[1m${q.name}\x1b[0m  (${fmtTs(q.created_at)})`);
     return;
   }
 
@@ -991,7 +1017,7 @@ function parseEventTypesFlag(raw) {
 function printWebhook(w) {
   const state = w.enabled ? "\x1b[32menabled\x1b[0m" : "\x1b[90mdisabled\x1b[0m";
   console.log(`  \x1b[36m${w.id}\x1b[0m  ${state}  ${w.target_url}`);
-  console.log(`    events: ${w.event_types.join(", ")}  (created ${w.created_at})`);
+  console.log(`    events: ${w.event_types.join(", ")}  (created ${fmtTs(w.created_at)})`);
 }
 
 async function cmdWebhooks(positional, flags, serverUrl, apiKey) {
@@ -1067,7 +1093,7 @@ async function cmdWebhooks(positional, flags, serverUrl, apiKey) {
       const sevColor = { success: "\x1b[32m", failed: "\x1b[31m", pending: "\x1b[33m" };
       for (const d of rows) {
         const col = sevColor[d.status] || "";
-        console.log(`  ${col}${d.status}\x1b[0m  ${d.event_type}  attempts=${d.attempts}  code=${d.last_status_code ?? "-"}  ${d.created_at}`);
+        console.log(`  ${col}${d.status}\x1b[0m  ${d.event_type}  attempts=${d.attempts}  code=${d.last_status_code ?? "-"}  ${fmtTs(d.created_at)}`);
         if (d.last_error) console.log(`    error: ${d.last_error}`);
       }
       return;
