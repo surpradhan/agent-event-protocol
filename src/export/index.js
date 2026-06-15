@@ -156,6 +156,10 @@ async function writeRecords({ records, format = DEFAULT_FORMAT, compression = DE
  * is set it additionally unions in the distinct `events.tenant_id` values, so
  * tenants whose key points at a different project's tenant are still covered.
  *
+ * Resolution is two cheap aggregate reads; the per-tenant event fan-out in
+ * `runExport` (one windowed read per resolved tenant) is unchanged — `allTenants`
+ * only widens the tenant set, it does not change the per-tenant query shape.
+ *
  * @param {object} db
  * @param {string|null} tenantId
  * @param {{ allTenants?: boolean }} [opts]
@@ -180,19 +184,6 @@ async function planTenants(db, tenantId, { allTenants = false } = {}) {
     : [...projectTenants];
 
   return { tenantIds, orphanTenants };
-}
-
-/**
- * Resolve the set of tenant ids to export.  Thin wrapper over `planTenants`
- * that returns just the tenant list (kept for API/test stability).
- *
- * @param {object} db
- * @param {string|null} tenantId
- * @param {{ allTenants?: boolean }} [opts]
- * @returns {Promise<string[]>}
- */
-async function resolveTenantIds(db, tenantId, opts = {}) {
-  return (await planTenants(db, tenantId, opts)).tenantIds;
 }
 
 /**
@@ -320,6 +311,5 @@ module.exports = {
   buildObjectKey,
   writeRecords,
   planTenants,
-  resolveTenantIds,
   runExport
 };

@@ -31,7 +31,6 @@ const {
   buildObjectKey,
   writeRecords,
   planTenants,
-  resolveTenantIds,
   runExport
 } = require("../../src/export/index");
 const { parseArgs } = require("../../src/export");
@@ -286,11 +285,11 @@ describe("runExport", () => {
     await assert.rejects(() => runExport({ db, dryRun: false }), /requires a sink/);
   });
 
-  test("resolveTenantIds dedupes project tenants", async () => {
+  test("planTenants dedupes project tenants and short-circuits a single tenant", async () => {
     const db = fakeDb({ projects: [{ tenant_id: "a" }, { tenant_id: "a" }, { tenant_id: "b" }] });
-    const ids = await resolveTenantIds(db, null);
-    assert.deepEqual(ids.sort(), ["a", "b"]);
-    assert.deepEqual(await resolveTenantIds(db, "x"), ["x"]);
+    const all = await planTenants(db, null);
+    assert.deepEqual(all.tenantIds.sort(), ["a", "b"]);
+    assert.deepEqual((await planTenants(db, "x")).tenantIds, ["x"]);
   });
 
   // ----- orphan tenants: events but no project row (issue #122) -----
