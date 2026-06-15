@@ -30,6 +30,7 @@ const {
   slugifyTenant,
   buildObjectKey,
   writeRecords,
+  planTenants,
   resolveTenantIds,
   runExport
 } = require("../../src/export/index");
@@ -207,13 +208,17 @@ describe("slugifyTenant / buildObjectKey", () => {
 
 // ---- runExport with an injected fake db -----------------------------------
 
-function fakeDb({ projects = [], eventsByTenant = {} } = {}) {
+function fakeDb({ projects = [], eventsByTenant = {}, eventTenants } = {}) {
   return {
     async listProjects() {
       return projects;
     },
     async getEventsForQuery(tenantId, _opts) {
       return eventsByTenant[tenantId] || [];
+    },
+    async listEventTenantIds() {
+      // Explicit override when given; otherwise the tenants that have events.
+      return eventTenants !== undefined ? eventTenants : Object.keys(eventsByTenant);
     }
   };
 }
@@ -287,6 +292,62 @@ describe("runExport", () => {
     assert.deepEqual(ids.sort(), ["a", "b"]);
     assert.deepEqual(await resolveTenantIds(db, "x"), ["x"]);
   });
+
+  // ----- orphan tenants: events but no project row (issue #122) -----
+
+  test("planTenants reports orphan tenants and excludes them by default", async () => {
+    const db = fakeDb({
+      projects: [{ tenant_id: "t1" }],
+      eventTenants: ["t1", "alpha", "beta"]
+    });
+    const plan = await planTenants(db, null);
+    assert.deepEqual(plan.tenantIds, ["t1"]);
+    assert.deepEqual(plan.orphanTenants, ["alpha", "beta"]);
+  });
+
+  test("planTenants with allTenants unions project + event tenants", async () => {
+    const db = fakeDb({
+      projects: [{ tenant_id: "t1" }],
+      eventTenants: ["t1", "alpha"]
+    });
+    const plan = await planTenants(db, null, { allTenants: true });
+    assert.deepEqual(plan.tenantIds.sort(), ["alpha", "t1"]);
+    assert.deepEqual(plan.orphanTenants, ["alpha"]);
+  });
+
+  test("planTenants for a single tenant computes no orphans", async () => {
+    const db = fakeDb({ projects: [{ tenant_id: "t1" }], eventTenants: ["t1", "alpha"] });
+    const plan = await planTenants(db, "alpha", { allTenants: true });
+    assert.deepEqual(plan.tenantIds, ["alpha"]);
+    assert.deepEqual(plan.orphanTenants, []);
+  });
+
+  test("runExport skips orphan tenants by default but reports them", async () => {
+    const db = fakeDb({
+      projects: [{ tenant_id: "t1" }],
+      eventsByTenant: { t1: SAMPLE_EVENTS, alpha: SAMPLE_EVENTS },
+      eventTenants: ["t1", "alpha"]
+    });
+    const summary = await runExport({ db, dryRun: true });
+    assert.equal(summary.allTenants, false);
+    assert.equal(summary.tenants_scanned, 1);
+    assert.deepEqual(summary.details.map((d) => d.tenant_id), ["t1"]);
+    assert.deepEqual(summary.orphan_tenants, ["alpha"]);
+  });
+
+  test("runExport with allTenants includes orphan tenants in the export", async () => {
+    const db = fakeDb({
+      projects: [{ tenant_id: "t1" }],
+      eventsByTenant: { t1: SAMPLE_EVENTS, alpha: SAMPLE_EVENTS },
+      eventTenants: ["t1", "alpha"]
+    });
+    const summary = await runExport({ db, dryRun: true, allTenants: true });
+    assert.equal(summary.allTenants, true);
+    assert.equal(summary.tenants_scanned, 2);
+    assert.equal(summary.events_exported, 6);
+    assert.deepEqual(summary.details.map((d) => d.tenant_id).sort(), ["alpha", "t1"]);
+    assert.deepEqual(summary.orphan_tenants, ["alpha"]);
+  });
 });
 
 describe("export CLI parseArgs", () => {
@@ -300,6 +361,12 @@ describe("export CLI parseArgs", () => {
     assert.equal(o.compression, "gzip");
     assert.equal(o.dryRun, false);
     assert.equal(o.json, false);
+    assert.equal(o.allTenants, false);
+  });
+
+  test("--all-tenants flag", () => {
+    assert.equal(parseArgs([...base, "--all-tenants"]).allTenants, true);
+    assert.equal(parseArgs(base).allTenants, false);
   });
 
   test("space-separated flags", () => {

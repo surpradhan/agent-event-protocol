@@ -27,10 +27,16 @@
  * -------------
  *   • `events` rows carry `tenant_id`, not `project_id`, so export is scoped by a
  *     project's `tenant_id` (carried from quota metering / retention).
- *   • A full export enumerates tenants from the project registry, so events with
- *     a NULL `tenant_id` (untagged) are not reachable by the all-tenants run.
- *     This matches the read API / prune scoping; per-project event tagging would
- *     remove it (a candidate for a later PR).
+ *   • A full export enumerates tenants from the project registry. A key's tenant
+ *     can differ from its bound project's tenant, so a tenant may have events but
+ *     no project row (issue #122): such "orphan" tenants are reported in the
+ *     summary's `orphan_tenants` and skipped by default (a warning is logged);
+ *     pass `--all-tenants` / `EXPORT_ALL_TENANTS=1` to union them in.
+ *   • Events with a NULL `tenant_id` (untagged) are still not reachable by a full
+ *     run (even with `--all-tenants`): `getEventsForQuery(null)` means "all
+ *     tenants", so there is no single-tenant slice for them. This matches the
+ *     read API / prune scoping; per-project event tagging would remove it (a
+ *     candidate for a later PR).
  *   • `runExport` materialises each tenant's window fully in memory (the DB read
  *     returns an array; the encode→compress→sink half then streams it). This is
  *     fine for the current scale and mirrors the analytics/customQuery readers;
@@ -141,22 +147,52 @@ async function writeRecords({ records, format = DEFAULT_FORMAT, compression = DE
 }
 
 /**
- * Resolve the set of tenant ids to export.  When `tenantId` is given, exports
- * just that tenant; otherwise derives the distinct tenants from the project
- * registry (mirrors how the prune job scopes work by project tenant).
+ * Plan the tenant set for a full export pass in a single DB pass, and report the
+ * "orphan" tenants — those that have events but no project row (issue #122).
+ *
+ * When `tenantId` is given, exports just that tenant (no orphan computation).
+ * Otherwise derives the distinct project tenants from the project registry
+ * (mirrors how the prune job scopes work by project tenant); when `allTenants`
+ * is set it additionally unions in the distinct `events.tenant_id` values, so
+ * tenants whose key points at a different project's tenant are still covered.
  *
  * @param {object} db
  * @param {string|null} tenantId
+ * @param {{ allTenants?: boolean }} [opts]
+ * @returns {Promise<{ tenantIds: string[], orphanTenants: string[] }>}
+ *          `orphanTenants` is the set of event tenants with no project row
+ *          (empty when `tenantId` is given).
+ */
+async function planTenants(db, tenantId, { allTenants = false } = {}) {
+  if (tenantId) return { tenantIds: [tenantId], orphanTenants: [] };
+
+  const projects = await db.listProjects();
+  const projectTenants = new Set();
+  for (const p of projects) {
+    if (p.tenant_id) projectTenants.add(p.tenant_id);
+  }
+
+  const eventTenants = await db.listEventTenantIds();
+  const orphanTenants = eventTenants.filter((t) => !projectTenants.has(t));
+
+  const tenantIds = allTenants
+    ? [...new Set([...projectTenants, ...eventTenants])]
+    : [...projectTenants];
+
+  return { tenantIds, orphanTenants };
+}
+
+/**
+ * Resolve the set of tenant ids to export.  Thin wrapper over `planTenants`
+ * that returns just the tenant list (kept for API/test stability).
+ *
+ * @param {object} db
+ * @param {string|null} tenantId
+ * @param {{ allTenants?: boolean }} [opts]
  * @returns {Promise<string[]>}
  */
-async function resolveTenantIds(db, tenantId) {
-  if (tenantId) return [tenantId];
-  const projects = await db.listProjects();
-  const seen = new Set();
-  for (const p of projects) {
-    if (p.tenant_id) seen.add(p.tenant_id);
-  }
-  return [...seen];
+async function resolveTenantIds(db, tenantId, opts = {}) {
+  return (await planTenants(db, tenantId, opts)).tenantIds;
 }
 
 /**
@@ -167,15 +203,21 @@ async function resolveTenantIds(db, tenantId) {
  * events and writes a single object to the sink.  Tenants with no events in the
  * window are skipped (no empty object is created).
  *
+ * Orphan tenants (issue #122): a key's tenant can differ from its bound
+ * project's tenant, so a tenant may have events but no project row.  A full run
+ * (`tenantId` unset) reports such tenants in `orphan_tenants`.  By default they
+ * are *not* exported (only a warning is logged); pass `allTenants` to union them
+ * into the export set.  A single-tenant run (`tenantId` set) is unaffected.
+ *
  * @param {{
  *   db?: object, tenantId?: string|null, since?: string|null, until?: string|null,
  *   format?: string, compression?: string, sink?: import('./sink').ExportSink,
- *   prefix?: string, now?: number|Date, dryRun?: boolean
+ *   prefix?: string, now?: number|Date, dryRun?: boolean, allTenants?: boolean
  * }} [opts]
  * @returns {Promise<{
- *   dryRun: boolean, format: string, compression: string,
+ *   dryRun: boolean, allTenants: boolean, format: string, compression: string,
  *   tenants_scanned: number, tenants_exported: number,
- *   events_exported: number, objects_written: number,
+ *   events_exported: number, objects_written: number, orphan_tenants: string[],
  *   details: Array<{ tenant_id: string, events: number, key: string|null,
  *                    location: string|null, bytes: number|null, skipped?: boolean }>
  * }>}
@@ -190,7 +232,8 @@ async function runExport({
   sink = null,
   prefix = "",
   now = Date.now(),
-  dryRun = false
+  dryRun = false,
+  allTenants = false
 } = {}) {
   // Validate format/compression up front so dry-run fails the same way a real
   // run would (and so key building below cannot throw mid-pass).
@@ -204,16 +247,36 @@ async function runExport({
   // the external compression layer + its filename extension do not apply.
   const effectiveCompression = isSelfCompressed(format) ? "none" : compression;
 
-  const tenantIds = await resolveTenantIds(db, tenantId);
+  const { tenantIds, orphanTenants } = await planTenants(db, tenantId, { allTenants });
+
+  // Surface tenants that have events but no project row. With --all-tenants they
+  // are included (info); otherwise they are skipped, so warn loudly so the
+  // silent miss (issue #122) is visible.
+  if (orphanTenants.length > 0) {
+    if (allTenants) {
+      logger.info(
+        { orphan_tenants: orphanTenants },
+        "export: including tenants that have events but no project (--all-tenants)"
+      );
+    } else {
+      logger.warn(
+        { orphan_tenants: orphanTenants },
+        "export: tenants have events but no project and were NOT exported — pass " +
+          "--all-tenants (or EXPORT_ALL_TENANTS=1) to include them, or --tenant <id> for one"
+      );
+    }
+  }
 
   const summary = {
     dryRun,
+    allTenants,
     format,
     compression: effectiveCompression,
     tenants_scanned: tenantIds.length,
     tenants_exported: 0,
     events_exported: 0,
     objects_written: 0,
+    orphan_tenants: orphanTenants,
     details: []
   };
 
@@ -256,6 +319,7 @@ module.exports = {
   slugifyTenant,
   buildObjectKey,
   writeRecords,
+  planTenants,
   resolveTenantIds,
   runExport
 };

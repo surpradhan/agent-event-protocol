@@ -344,6 +344,14 @@ class SqliteBackend extends StorageBackend {
         SELECT COUNT(*) AS n FROM events WHERE tenant_id = ?
       `),
 
+      // Distinct tenants that actually have events (issue #122): lets the bulk
+      // export / prune jobs discover tenants with no project row.
+      listEventTenantIds: db.prepare(`
+        SELECT DISTINCT tenant_id FROM events
+        WHERE tenant_id IS NOT NULL
+        ORDER BY tenant_id ASC
+      `),
+
       // ----- retention / pruning (Phase 13 PR-D) -----
 
       // Count events older than a cutoff for a tenant (dry-run / reporting).
@@ -764,6 +772,10 @@ class SqliteBackend extends StorageBackend {
 
   async getProjectEventCount(tenantId) {
     return this._stmts.getProjectEventCount.get(tenantId).n;
+  }
+
+  async listEventTenantIds() {
+    return this._stmts.listEventTenantIds.all().map((r) => r.tenant_id);
   }
 
   // ----- retention / pruning (Phase 13 PR-D) -----

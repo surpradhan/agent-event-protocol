@@ -193,13 +193,16 @@ describe("buildObjectKey for new formats", () => {
   });
 });
 
-function fakeDb({ projects = [], eventsByTenant = {} } = {}) {
+function fakeDb({ projects = [], eventsByTenant = {}, eventTenants } = {}) {
   return {
     async listProjects() {
       return projects;
     },
     async getEventsForQuery(tenantId) {
       return eventsByTenant[tenantId] || [];
+    },
+    async listEventTenantIds() {
+      return eventTenants !== undefined ? eventTenants : Object.keys(eventsByTenant);
     }
   };
 }

@@ -49,7 +49,8 @@ const DEFAULT_OUT_DIR = "./exports";
  * @returns {{ tenantId: string|null, since: string|null, until: string|null,
  *             out: string, prefix: string, format: string, compression: string,
  *             sink: string|null, bucket: string|null, region: string|null,
- *             endpoint: string|null, dryRun: boolean, json: boolean, help: boolean }}
+ *             endpoint: string|null, allTenants: boolean, dryRun: boolean,
+ *             json: boolean, help: boolean }}
  */
 function parseArgs(argv) {
   const args = argv.slice(2);
@@ -65,6 +66,7 @@ function parseArgs(argv) {
     bucket: null,
     region: null,
     endpoint: null,
+    allTenants: args.includes("--all-tenants"),
     dryRun: args.includes("--dry-run"),
     json: args.includes("--json"),
     help: args.includes("--help") || args.includes("-h")
@@ -167,6 +169,8 @@ Usage:
   npm run export -- --bucket <name>       S3 bucket (sink=s3; env EXPORT_S3_BUCKET)
   npm run export -- --region <r>          S3 region (env EXPORT_S3_REGION / AWS_REGION)
   npm run export -- --endpoint <url>      S3-compatible endpoint (env EXPORT_S3_ENDPOINT)
+  npm run export -- --all-tenants         Also export tenants with events but no
+                                          project (env EXPORT_ALL_TENANTS=1)
   npm run export -- --prefix <key>        Key prefix within the sink
   npm run export -- --since <iso>         Only events with time >= since
   npm run export -- --until <iso>         Only events with time <  until
@@ -177,6 +181,10 @@ Usage:
 
 One object is written per tenant; tenants with no events in the window are skipped.
 Export is scoped by each tenant_id (see src/export/index.js).
+
+By default a full run enumerates tenants from the project registry. Tenants that
+have events but no project row (issue #122) are reported and skipped with a
+warning; --all-tenants (or EXPORT_ALL_TENANTS=1) unions them into the export set.
 
 Compression (gzip/brotli) wraps the text formats (jsonl, csv). Parquet is columnar
 and self-compressed (internal GZIP), so --compression does not apply to it.
@@ -235,6 +243,16 @@ function printHuman(summary, destLabel) {
       );
     }
   }
+  // Orphan tenants: events but no project row (issue #122). Surfaced on stderr so
+  // it stands out and does not pollute --json / piped stdout.
+  const orphans = summary.orphan_tenants || [];
+  if (orphans.length > 0 && !summary.allTenants) {
+    console.error(
+      `⚠️  ${orphans.length} tenant(s) have events but no project and were NOT exported: ` +
+      `${orphans.join(", ")}. Pass --all-tenants (or EXPORT_ALL_TENANTS=1) to include them, ` +
+      `or --tenant <id> to export one.`
+    );
+  }
 }
 
 async function main() {
@@ -259,6 +277,10 @@ async function main() {
   const sinkConfig = resolveSinkConfig(opts);
   const sink = opts.dryRun ? null : createSink(sinkConfig);
 
+  // Include tenants that have events but no project (issue #122) when the flag
+  // or EXPORT_ALL_TENANTS=1 is set; otherwise they are reported and skipped.
+  const allTenants = opts.allTenants || process.env.EXPORT_ALL_TENANTS === "1";
+
   await db.init();
   try {
     const summary = await runExport({
@@ -269,7 +291,8 @@ async function main() {
       compression: opts.compression,
       prefix: opts.prefix,
       sink,
-      dryRun: opts.dryRun
+      dryRun: opts.dryRun,
+      allTenants
     });
 
     if (opts.json) {

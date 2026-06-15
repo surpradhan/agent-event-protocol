@@ -18,6 +18,12 @@
  * shortest applicable window would over-prune the others' data.  Per-project
  * event tagging would remove this caveat — a candidate for a later PR.
  *
+ * Orphan tenants (issue #122): a key's tenant can differ from its bound
+ * project's tenant, so a tenant may have events but no project row at all. With
+ * no project there is no retention policy, so such a tenant is never pruned —
+ * `pruneAll` reports them in `orphan_tenants` and logs a warning so the silent
+ * skip is visible. The fix is operational: create a project for that tenant.
+ *
  * Safety
  * ------
  *   • A project with `retention_days` NULL, 0, or negative means "keep forever"
@@ -90,6 +96,7 @@ function computeCutoff(retentionDays, now = Date.now()) {
  *   events_deleted: number,
  *   sessions_deleted: number,
  *   export_failures: number,
+ *   orphan_tenants: string[],
  *   details: Array<{
  *     project_id: string, tenant_id: string, retention_days: number,
  *     cutoff: string, events_deleted: number, sessions_deleted: number,
@@ -111,6 +118,25 @@ async function pruneAll({
 
   const projects = await database.listProjects();
 
+  // Orphan tenants (issue #122): a key's tenant can differ from its bound
+  // project's tenant, so a tenant may have events but no project row — and with
+  // no project there is no retention_days policy to apply, so such a tenant can
+  // never be pruned. We cannot act on it here (no policy), but we surface it so
+  // the silent skip (data that quietly accumulates forever) is visible.
+  const projectTenants = new Set();
+  for (const p of projects) {
+    if (p.tenant_id) projectTenants.add(p.tenant_id);
+  }
+  const eventTenants = await database.listEventTenantIds();
+  const orphanTenants = eventTenants.filter((t) => !projectTenants.has(t));
+  if (orphanTenants.length > 0) {
+    logger.warn(
+      { orphan_tenants: orphanTenants },
+      "retention: tenants have events but no project — never pruned (no retention policy). " +
+        "Create a project per tenant to apply retention to their data"
+    );
+  }
+
   const summary = {
     dryRun,
     exportBeforePrune,
@@ -119,6 +145,7 @@ async function pruneAll({
     events_deleted: 0,
     sessions_deleted: 0,
     export_failures: 0,
+    orphan_tenants: orphanTenants,
     details: []
   };
 

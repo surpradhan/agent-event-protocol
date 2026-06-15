@@ -66,6 +66,10 @@ Usage:
 Projects with retention_days NULL / 0 / negative are kept forever (never pruned).
 Retention is scoped by each project's tenant_id (see src/retention.js).
 
+Tenants that have events but no project row (issue #122) have no retention policy
+and are never pruned; they are reported with a warning so the silent skip is
+visible. Create a project for such a tenant to apply retention to its data.
+
 --export-before-prune (or PRUNE_EXPORT_BEFORE_DELETE=1) archives each project's
 expired events (those older than its cutoff) to cold storage BEFORE deleting them.
 If a project's export fails, its events are NOT deleted (safety gate). Configure
@@ -85,6 +89,15 @@ function printHuman(summary, destLabel) {
   );
   if (summary.export_failures > 0) {
     console.log(`  ⚠️  ${summary.export_failures} project(s) skipped — cold-storage export failed (not deleted).`);
+  }
+  // Orphan tenants: events but no project row, hence no retention policy (issue
+  // #122). On stderr so it stands out and never pollutes --json / piped stdout.
+  const orphans = summary.orphan_tenants || [];
+  if (orphans.length > 0) {
+    console.error(
+      `⚠️  ${orphans.length} tenant(s) have events but no project — never pruned (no retention ` +
+      `policy): ${orphans.join(", ")}. Create a project for each to apply retention.`
+    );
   }
   for (const d of summary.details) {
     if (d.export_error) {
