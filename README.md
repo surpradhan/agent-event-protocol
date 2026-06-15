@@ -357,7 +357,7 @@ Typically indicates cross-tenant access attempt or insufficient scopes for the r
 | **[SECURITY.md](./SECURITY.md)** | Threat model, vulnerability disclosure, production deployment checklist |
 | **[SETUP.md](./SETUP.md)** | Installation, configuration, troubleshooting |
 | **[OPERATIONS.md](./OPERATIONS.md)** | Operations & deployment: Postgres backend, projects/tiers/quotas, retention/pruning (cron + k8s CronJob), S3/cloud export (Phase 17) |
-| **[CHANGELOG.md](./CHANGELOG.md)** | Version history (Phases 1-11) and breaking changes |
+| **[CHANGELOG.md](./CHANGELOG.md)** | Version history (Phases 1–17) and breaking changes |
 | **[PRD.md](./PRD.md)** | Product vision, roadmap, and success metrics (Phases 12+) |
 | **[CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)** | Community standards and expectations |
 
