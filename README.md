@@ -248,7 +248,8 @@ PORT=8787 npm run ingest
 ```bash
 aep emit --type task.created --source agent://my-agent --session ses_123 --trace trc_456
 aep session ses_123 --type task.created --q "search term"
-aep export ses_123 --format jsonl|csv|parquet --compression none|gzip|brotli --sink local|s3 --all-tenants
+aep export ses_123 --format json|csv --out export.json
+npm run export -- --format jsonl|csv|parquet --compression none|gzip|brotli --sink local|s3 --all-tenants
 aep workflow trc_456
 aep validate events.json
 ```

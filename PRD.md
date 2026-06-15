@@ -462,6 +462,8 @@ path until a stable Vercel callback API ships.
 
 ### Phase 15: Advanced Dashboard Features (Q4 2026)
 
+**Status: ✅ Complete (A–D)**
+
 **Objective:** Enhance real-time visualization and analytics.
 
 - **Advanced filtering**: filter by agent role, event type, payload fields, custom labels
