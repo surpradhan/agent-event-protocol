@@ -1249,7 +1249,7 @@ describe("Security — SSE Connection Limits", () => {
   after(async () => {
     for (const conn of allConns) conn.body?.cancel?.();
     // Give the server's close-handler a tick to decrement the counters.
-    await new Promise(r => setImmediate(r));
+    await new Promise(r => setTimeout(r, 0));
   });
 
   test("SSE connection limit is enforced per-tenant", async () => {
