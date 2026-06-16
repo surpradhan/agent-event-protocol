@@ -3111,6 +3111,132 @@ describe("GET /analytics/anomalies", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Analytics CSV export — ?format=csv on all three analytics endpoints (Wave 3 #20)
+// ---------------------------------------------------------------------------
+
+describe("GET /analytics/policy-blocked?format=csv", () => {
+  test("?format=csv returns 200 with text/csv content-type", async () => {
+    const res = await fetch(`${baseUrl}/analytics/policy-blocked?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const ct = res.headers.get("content-type") || "";
+    assert.ok(ct.includes("text/csv"), `Expected text/csv, got '${ct}'`);
+  });
+
+  test("?format=csv response has correct column headers", async () => {
+    const res = await fetch(`${baseUrl}/analytics/policy-blocked?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    const headerRow = text.split("\n")[0];
+    assert.equal(headerRow, "id,time,source,session_id,trace_id,agent_role,policy,reason,action_blocked");
+  });
+
+  test("?format=csv has a Content-Disposition attachment header with policy-blocked in filename", async () => {
+    const res = await fetch(`${baseUrl}/analytics/policy-blocked?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    const cd = res.headers.get("content-disposition") || "";
+    assert.ok(cd.includes("attachment"), `Expected attachment disposition, got '${cd}'`);
+    assert.ok(cd.includes("policy-blocked"), `Expected policy-blocked in filename, got '${cd}'`);
+  });
+
+  test("?format=csv includes seeded policy.blocked event in data rows", async () => {
+    // Seed a policy.blocked event so the CSV has at least one data row.
+    await ingest(makeEvent({
+      type: "policy.blocked",
+      session_id: "ses_csv_pb_seed",
+      trace_id: "trc_csv_pb_seed",
+      agent_role: "orchestrator",
+      payload: { policy: "pii_guard", reason: "PII detected", action_blocked: "tool.called/send_email" },
+    }));
+    const res = await fetch(`${baseUrl}/analytics/policy-blocked?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    const lines = text.trim().split("\n");
+    // Must have header + at least one data row.
+    assert.ok(lines.length >= 2, `Expected at least 2 lines (header + data), got ${lines.length}`);
+    // Each data row must have 9 comma-separated fields (matching the column set).
+    const dataLine = lines[1];
+    const cells = dataLine.split(",");
+    assert.equal(cells.length, 9, `Expected 9 fields in data row, got ${cells.length}: ${dataLine}`);
+  });
+
+  test("?format=csv returns 400 for unknown format value", async () => {
+    const res = await fetch(`${baseUrl}/analytics/policy-blocked?format=xml`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.error, "Bad Request");
+  });
+});
+
+describe("GET /analytics/performance?format=csv", () => {
+  test("?format=csv returns 200 with text/csv content-type", async () => {
+    const res = await fetch(`${baseUrl}/analytics/performance?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const ct = res.headers.get("content-type") || "";
+    assert.ok(ct.includes("text/csv"), `Expected text/csv, got '${ct}'`);
+  });
+
+  test("?format=csv response has correct column headers", async () => {
+    const res = await fetch(`${baseUrl}/analytics/performance?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    const headerRow = text.split("\n")[0];
+    assert.equal(headerRow, "kind,op_type,name,source,session_id,trace_id,status,duration_ms,started_at,ended_at");
+  });
+
+  test("?format=csv has a Content-Disposition attachment header with performance in filename", async () => {
+    const res = await fetch(`${baseUrl}/analytics/performance?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    const cd = res.headers.get("content-disposition") || "";
+    assert.ok(cd.includes("attachment"), `Expected attachment disposition, got '${cd}'`);
+    assert.ok(cd.includes("performance"), `Expected performance in filename, got '${cd}'`);
+  });
+});
+
+describe("GET /analytics/anomalies?format=csv", () => {
+  test("?format=csv returns 200 with text/csv content-type", async () => {
+    const res = await fetch(`${baseUrl}/analytics/anomalies?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const ct = res.headers.get("content-type") || "";
+    assert.ok(ct.includes("text/csv"), `Expected text/csv, got '${ct}'`);
+  });
+
+  test("?format=csv response has correct column headers", async () => {
+    const res = await fetch(`${baseUrl}/analytics/anomalies?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    const headerRow = text.split("\n")[0];
+    assert.equal(headerRow, "trace_id,max_score,severity,metrics,flags");
+  });
+
+  test("?format=csv has a Content-Disposition attachment header with anomalies in filename", async () => {
+    const res = await fetch(`${baseUrl}/analytics/anomalies?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    const cd = res.headers.get("content-disposition") || "";
+    assert.ok(cd.includes("attachment"), `Expected attachment disposition, got '${cd}'`);
+    assert.ok(cd.includes("anomalies"), `Expected anomalies in filename, got '${cd}'`);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Webhooks (Phase 16-A) — registration & management
 // ---------------------------------------------------------------------------
 
