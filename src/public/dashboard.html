@@ -669,6 +669,102 @@
     }
     .payload-toggle:hover { color: var(--accent); border-color: var(--accent); }
     .payload-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    /* ── Webhook create form ── */
+    .wh-create-form {
+      border: 1px solid rgba(0,255,200,0.22);
+      border-radius: 10px; padding: 14px 16px;
+      background: rgba(0,255,200,0.03);
+      margin-bottom: 14px;
+      display: flex; flex-direction: column; gap: 12px;
+    }
+    .wh-create-form label {
+      display: flex; flex-direction: column; gap: 4px;
+      font-size: 11px; color: var(--muted);
+    }
+    .wh-create-form input[type="text"],
+    .wh-create-form input[type="url"] {
+      background: rgba(255,255,255,0.05); border: 1px solid var(--line2);
+      border-radius: 7px; padding: 7px 10px; font-size: 12px;
+      color: var(--ink); font-family: 'Inter', sans-serif;
+      outline: none; width: 100%;
+    }
+    .wh-create-form input[type="text"]:focus,
+    .wh-create-form input[type="url"]:focus {
+      border-color: rgba(0,255,200,0.4);
+      box-shadow: 0 0 0 3px rgba(0,255,200,0.07);
+    }
+    .wh-create-types {
+      display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 4px;
+    }
+    .wh-type-chip {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 11px; color: var(--ink);
+      cursor: pointer; user-select: none;
+    }
+    .wh-type-chip input[type="checkbox"] {
+      width: 13px; height: 13px; accent-color: var(--accent);
+      cursor: pointer; flex-shrink: 0;
+    }
+    .wh-wildcard-row {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+    }
+    .wh-form-actions {
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px;
+    }
+    .wh-form-msg {
+      font-size: 12px; margin-top: 2px;
+    }
+    .wh-form-msg.err { color: #fca5a5; }
+    .wh-form-msg.ok  { color: #6ee7b7; }
+
+    /* ── Webhook list row ── */
+    .wh-row {
+      border: 1px solid var(--line2); border-radius: 8px;
+      padding: 10px 12px; margin-bottom: 8px;
+      background: rgba(255,255,255,0.02);
+      transition: background .12s, border-color .12s;
+    }
+    .wh-row:hover { background: rgba(0,255,200,0.04); }
+    .wh-row-head {
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    }
+    .wh-row-actions {
+      display: flex; gap: 6px; align-items: center; margin-left: auto;
+      flex-shrink: 0;
+    }
+    .btn-toggle {
+      border: 1px solid rgba(0,255,200,0.3); border-radius: 6px;
+      background: rgba(0,255,200,0.06); color: var(--accent);
+      font-size: 11px; font-weight: 600; font-family: 'Inter', sans-serif;
+      padding: 3px 10px; cursor: pointer; white-space: nowrap;
+      transition: background .15s, border-color .15s, box-shadow .15s;
+    }
+    .btn-toggle:hover { background: rgba(0,255,200,0.13); box-shadow: 0 0 10px rgba(0,255,200,0.1); }
+    .btn-toggle.disabled-state {
+      border-color: var(--line2); color: var(--muted);
+      background: transparent;
+    }
+    .btn-toggle.disabled-state:hover { border-color: rgba(0,255,200,0.2); color: var(--ink); }
+    .btn-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .btn-del-wh {
+      border: 1px solid rgba(239,68,68,0.3); border-radius: 6px;
+      background: rgba(239,68,68,0.06); color: #fca5a5;
+      font-size: 11px; font-weight: 600; font-family: 'Inter', sans-serif;
+      padding: 3px 10px; cursor: pointer; white-space: nowrap;
+      transition: background .15s, border-color .15s;
+    }
+    .btn-del-wh:hover { background: rgba(239,68,68,0.14); border-color: rgba(239,68,68,0.55); }
+    .btn-del-wh:focus-visible { outline: 2px solid #f87171; outline-offset: 2px; }
+    .wh-signing-secret {
+      margin-top: 8px; padding: 8px 10px;
+      background: rgba(0,0,0,0.28); border: 1px solid rgba(0,255,200,0.12);
+      border-radius: 7px; font-size: 11px; color: #7fffd4;
+      font-family: 'JetBrains Mono', monospace; word-break: break-all;
+    }
+    .wh-signing-secret .hint {
+      display: block; margin-bottom: 4px; font-family: 'Inter', sans-serif; font-size: 11px;
+    }
   </style>
 </head>
 <body>
@@ -996,8 +1092,41 @@
           <div class="panel-title">Webhooks</div>
           <div class="hint" style="font-size:11px;margin-top:2px">Registered outbound endpoints for this tenant. Click one to see its recent delivery attempts. Delivery is gated server-side by <code>WEBHOOKS_ENABLED</code>; payloads are HMAC-signed (<code>X-AEP-Signature</code>).</div>
         </div>
-        <button class="btn secondary" onclick="loadWebhooks()">Refresh</button>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn secondary" onclick="whToggleCreateForm()" id="wh-new-btn" aria-expanded="false">+ New webhook</button>
+          <button class="btn secondary" onclick="loadWebhooks()">Refresh</button>
+        </div>
       </div>
+
+      <!-- Collapsible create form -->
+      <div id="wh-create-wrap" style="display:none">
+        <form class="wh-create-form" id="wh-create-form" onsubmit="whCreateSubmit(event)" novalidate>
+          <label for="wh-url">Target URL <span style="color:var(--warn)">*</span>
+            <input type="url" id="wh-url" placeholder="https://example.com/hook" autocomplete="off" required />
+          </label>
+          <label for="wh-label">Label <span class="hint">(optional)</span>
+            <input type="text" id="wh-label" placeholder="e.g. my-hook" autocomplete="off" />
+          </label>
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Event types</div>
+            <div class="wh-wildcard-row">
+              <label class="wh-type-chip" style="font-weight:600">
+                <input type="checkbox" id="wh-et-all" onchange="whAllTypesChange(this)" />
+                All events (*)
+              </label>
+            </div>
+            <div class="wh-create-types" id="wh-type-checkboxes">
+              <!-- populated by JS -->
+            </div>
+          </div>
+          <div class="wh-form-actions">
+            <button type="submit" class="btn" id="wh-submit-btn">Create</button>
+            <button type="button" class="btn secondary" onclick="whToggleCreateForm()">Cancel</button>
+          </div>
+          <div id="wh-form-msg" class="wh-form-msg" style="display:none"></div>
+        </form>
+      </div>
+
       <div id="wh-list"><div class="empty">No webhooks registered for this tenant.</div></div>
     </div>
     <div class="card reject-panel" id="wh-deliveries-card" style="display:none">
@@ -2520,8 +2649,125 @@ function renderAnomalies(a) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Webhooks (Phase 16-D) — registrations + recent delivery attempts
+// Webhooks (Phase 16-D / Wave 3 #12) — create, list, toggle, delete + deliveries
 // ─────────────────────────────────────────────────────────────────────────────
+const WH_CORE_TYPES = [
+  'task.created', 'task.updated', 'task.completed', 'task.failed',
+  'tool.called', 'tool.result',
+  'memory.read', 'memory.write',
+  'handoff.started', 'handoff.completed',
+  'policy.blocked', 'error.raised'
+];
+
+// Populate event-type checkboxes once on first use.
+(function whInitCheckboxes() {
+  const wrap = document.getElementById('wh-type-checkboxes');
+  if (!wrap) return;
+  wrap.innerHTML = WH_CORE_TYPES.map(t => `
+    <label class="wh-type-chip">
+      <input type="checkbox" class="wh-et-specific" value="${esc(t)}" />
+      ${esc(t)}
+    </label>`).join('');
+  // Wire specific checkboxes: if any specific one is checked, uncheck "all"
+  wrap.addEventListener('change', () => {
+    const anyChecked = [...wrap.querySelectorAll('.wh-et-specific')].some(c => c.checked);
+    if (anyChecked) document.getElementById('wh-et-all').checked = false;
+  });
+})();
+
+function whAllTypesChange(allChk) {
+  if (allChk.checked) {
+    // Uncheck all specific types when "all" is selected
+    document.querySelectorAll('.wh-et-specific').forEach(c => { c.checked = false; });
+  }
+}
+
+// Toggle the create-form visibility.
+function whToggleCreateForm() {
+  const wrap = document.getElementById('wh-create-wrap');
+  const btn  = document.getElementById('wh-new-btn');
+  const open = wrap.style.display === 'none';
+  wrap.style.display = open ? '' : 'none';
+  btn.setAttribute('aria-expanded', String(open));
+  if (open) {
+    document.getElementById('wh-url').focus();
+    whFormMsg('', '');
+  } else {
+    // Closing: reset all form fields (including dynamic checkboxes inside the form).
+    document.getElementById('wh-create-form').reset();
+  }
+}
+
+// Show/clear inline form message.
+function whFormMsg(text, kind) {
+  const el = document.getElementById('wh-form-msg');
+  el.textContent = text;
+  el.className = 'wh-form-msg' + (kind ? ' ' + kind : '');
+  el.style.display = text ? '' : 'none';
+}
+
+// Handle form submission: POST /webhooks.
+async function whCreateSubmit(ev) {
+  ev.preventDefault();
+  const url   = document.getElementById('wh-url').value.trim();
+  const label = document.getElementById('wh-label').value.trim();
+  if (!url) { whFormMsg('Target URL is required.', 'err'); return; }
+
+  // Determine event_types
+  const allChk = document.getElementById('wh-et-all');
+  const specific = [...document.querySelectorAll('.wh-et-specific')].filter(c => c.checked).map(c => c.value);
+  const eventTypes = allChk.checked ? ['*'] : specific.length ? specific : null;
+  if (!eventTypes) {
+    whFormMsg('Select at least one event type, or check "All events".', 'err');
+    return;
+  }
+
+  const body = { target_url: url, event_types: eventTypes };
+  if (label) body.label = label;
+
+  const submitBtn = document.getElementById('wh-submit-btn');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Creating…';
+  whFormMsg('', '');
+
+  const tok = getToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (tok) headers['Authorization'] = 'Bearer ' + tok;
+
+  try {
+    const r = await fetch('/webhooks', { method: 'POST', headers, body: JSON.stringify(body) });
+    if (r.status === 401) { clearToken(); showAuthOverlay('Session expired.'); return; }
+    const data = await r.json();
+    if (!r.ok) {
+      const msg = (data.details && data.details.join(', ')) || data.message || ('HTTP ' + r.status);
+      whFormMsg(msg, 'err');
+      return;
+    }
+    // Success: show signing secret (one-time), collapse form, reload list.
+    const secret = data.signing_secret || '';
+    whFormMsg(
+      secret
+        ? 'Webhook created. Save your signing secret — it will not be shown again.'
+        : 'Webhook created.',
+      'ok'
+    );
+    // Reset form fields.
+    document.getElementById('wh-url').value = '';
+    document.getElementById('wh-label').value = '';
+    document.getElementById('wh-et-all').checked = false;
+    document.querySelectorAll('.wh-et-specific').forEach(c => { c.checked = false; });
+    // Reload list (the secret banner is displayed inside the first row if present).
+    window._whPendingSecret = secret ? { id: data.id, secret } : null;
+    await loadWebhooks();
+    // Keep form open so the message + newly created webhook are visible simultaneously.
+  } catch (e) {
+    whFormMsg('Request failed: ' + e.message, 'err');
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Create';
+  }
+}
+
 async function loadWebhooks() {
   const list = document.getElementById('wh-list');
   try {
@@ -2540,20 +2786,124 @@ function renderWebhooks(webhooks) {
     return;
   }
   list.innerHTML = webhooks.map(w => {
-    const state = w.enabled
-      ? '<span style="color:var(--accent)">enabled</span>'
-      : '<span class="hint">disabled</span>';
+    const enabledLabel = w.enabled ? 'enabled' : 'disabled';
+    const enabledColor = w.enabled ? 'var(--accent)' : 'var(--muted)';
     const types = (w.event_types || []).map(esc).join(', ');
+    const toggleLabel = w.enabled ? 'Disable' : 'Enable';
+    const toggleClass = w.enabled ? 'btn-toggle' : 'btn-toggle disabled-state';
+    // Signing secret banner (shown once after creation, cleared on next loadWebhooks).
+    let secretBanner = '';
+    if (window._whPendingSecret && window._whPendingSecret.id === w.id) {
+      secretBanner = `
+        <div class="wh-signing-secret" role="alert">
+          <span class="hint">Signing secret (shown once — copy now):</span>
+          <span id="wh-secret-${esc(w.id)}">${esc(window._whPendingSecret.secret)}</span>
+          <button id="wh-secret-btn-${esc(w.id)}" class="copy-btn" onclick="whCopySecret('${esc(w.id)}')" aria-label="Copy signing secret" title="Copy signing secret">⎘</button>
+        </div>`;
+      window._whPendingSecret = null; // consumed
+    }
     return `
-      <div class="wh-row" onclick="loadWebhookDeliveries('${esc(w.id)}')" style="cursor:pointer;padding:10px 12px;border:1px solid var(--line2);border-radius:8px;margin-bottom:8px">
-        <div style="display:flex;gap:10px;align-items:center">
-          <code>${esc(w.id)}</code> ${state}
-          <span class="hint" style="margin-left:auto">${esc(w.created_at)}</span>
+      <div class="wh-row" id="wh-row-${esc(w.id)}">
+        <div class="wh-row-head">
+          <code>${esc(w.id)}</code>
+          <span style="color:${enabledColor};font-size:11px;font-weight:600">${enabledLabel}</span>
+          <span class="hint" style="font-size:11px">${esc(ago(w.created_at))}</span>
+          <div class="wh-row-actions">
+            <button class="${toggleClass}"
+              onclick="whToggleEnabled('${esc(w.id)}', ${!w.enabled})"
+              aria-label="${esc(toggleLabel)} webhook ${esc(w.id)}">${esc(toggleLabel)}</button>
+            <button class="btn-del-wh"
+              onclick="whDelete('${esc(w.id)}')"
+              aria-label="Delete webhook ${esc(w.id)}">Delete</button>
+          </div>
         </div>
-        <div style="margin-top:4px;word-break:break-all">${esc(w.target_url)}</div>
-        <div class="hint" style="font-size:11px;margin-top:2px">events: ${types}</div>
+        <div style="margin-top:5px;word-break:break-all;font-size:12px;color:var(--ink);cursor:pointer"
+             onclick="loadWebhookDeliveries('${esc(w.id)}')"
+             title="View deliveries for this webhook">${esc(w.target_url)}</div>
+        <div class="hint" style="font-size:11px;margin-top:3px">events: ${types}</div>
+        ${secretBanner}
       </div>`;
   }).join('');
+}
+
+function whCopySecret(id) {
+  const el = document.getElementById('wh-secret-' + id);
+  if (!el) return;
+  const btn = document.getElementById('wh-secret-btn-' + id);
+  const text = el.textContent;
+  const orig = btn.textContent;
+  const finish = ok => {
+    btn.textContent = ok ? '✓' : '✗';
+    setTimeout(() => { if (btn.isConnected) btn.textContent = orig; }, 1400);
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(() => finish(true)).catch(() => finish(false));
+  } else {
+    try {
+      const ta = Object.assign(document.createElement('textarea'), { value: text, style: 'position:fixed;opacity:0' });
+      document.body.appendChild(ta); ta.select();
+      finish(document.execCommand('copy')); ta.remove();
+    } catch (_) { finish(false); }
+  }
+}
+
+// Show/clear a row-level message (below the webhook row).
+function whRowMsg(id, msg, type) {
+  const old = document.getElementById('wh-row-msg-' + id);
+  if (old) old.remove();
+  if (!msg) return;
+  const div = document.createElement('div');
+  div.id = 'wh-row-msg-' + id;
+  div.className = 'wh-form-msg' + (type ? ' ' + type : '');
+  div.textContent = msg;
+  const row = document.getElementById('wh-row-' + id);
+  if (row) row.appendChild(div);
+}
+
+// PATCH /webhooks/:id — toggle enabled state.
+async function whToggleEnabled(id, newEnabled) {
+  const tok = getToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (tok) headers['Authorization'] = 'Bearer ' + tok;
+  try {
+    const r = await fetch('/webhooks/' + encodeURIComponent(id), {
+      method: 'PATCH', headers, body: JSON.stringify({ enabled: newEnabled })
+    });
+    if (r.status === 401) { clearToken(); showAuthOverlay('Session expired.'); return; }
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      whRowMsg(id, 'Could not update webhook: ' + (data.message || data.error || ('HTTP ' + r.status)), 'err');
+      return;
+    }
+    whRowMsg(id, '', '');
+    await loadWebhooks();
+  } catch (e) {
+    whRowMsg(id, 'Request failed: ' + e.message, 'err');
+  }
+}
+
+// DELETE /webhooks/:id — delete with confirmation.
+async function whDelete(id) {
+  if (!confirm('Delete webhook ' + id + '?\n\nThis cannot be undone.')) return;
+  const tok = getToken();
+  const headers = tok ? { 'Authorization': 'Bearer ' + tok } : {};
+  try {
+    const r = await fetch('/webhooks/' + encodeURIComponent(id), { method: 'DELETE', headers });
+    if (r.status === 401) { clearToken(); showAuthOverlay('Session expired.'); return; }
+    if (!r.ok && r.status !== 204) {
+      const data = await r.json().catch(() => ({}));
+      whRowMsg(id, 'Could not delete webhook: ' + (data.message || data.error || ('HTTP ' + r.status)), 'err');
+      return;
+    }
+    // If deleted webhook was the selected one, hide deliveries panel.
+    if (window._whSelected === id) {
+      window._whSelected = null;
+      document.getElementById('wh-deliveries-card').style.display = 'none';
+    }
+    await loadWebhooks();
+  } catch (e) {
+    whRowMsg(id, 'Request failed: ' + e.message, 'err');
+  }
 }
 
 const WH_STATUS_COLOR = { success: 'var(--accent)', failed: 'var(--warn)', pending: 'var(--warm)' };
