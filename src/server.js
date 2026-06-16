@@ -93,6 +93,40 @@ const MAX_SSE_CONNECTIONS = parseInt(process.env.MAX_SSE_CONNECTIONS || '1000', 
 const MAX_SSE_PER_TENANT = parseInt(process.env.MAX_SSE_PER_TENANT || '100', 10);
 
 // ---------------------------------------------------------------------------
+// SSE one-time tickets — short-lived auth tokens so the API key / dashboard
+// token never appears in the /stream URL (and thus in server access logs).
+// Each ticket is a random UUID valid for 30 s and consumed on first use.
+// ---------------------------------------------------------------------------
+const SSE_TICKET_TTL_MS = 30_000;
+const sseTickets = new Map(); // ticket → { tenantId, isAdmin, expiresAt }
+
+// Sweep expired-but-unconsumed tickets every 60 s so the Map does not grow
+// unboundedly if callers obtain tickets but never open the SSE stream.
+const _sseTicketSweep = setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of sseTickets) {
+    if (now > v.expiresAt) sseTickets.delete(k);
+  }
+}, 60_000);
+_sseTicketSweep.unref(); // don't prevent clean process exit
+
+function requireSseAccess(req, res, next) {
+  const ticket = req.query.ticket ? String(req.query.ticket) : null;
+  if (ticket) {
+    const record = sseTickets.get(ticket);
+    if (!record || Date.now() > record.expiresAt) {
+      sseTickets.delete(ticket);
+      return res.status(401).json({ error: "Invalid or expired SSE ticket" });
+    }
+    sseTickets.delete(ticket); // one-time use
+    req.tenant_id = record.tenantId;
+    req.is_admin  = record.isAdmin;
+    return next();
+  }
+  return requireReadAccess(req, res, next);
+}
+
+// ---------------------------------------------------------------------------
 // In-memory rejection log — last 200 rejected events (schema/signature fails)
 // ---------------------------------------------------------------------------
 const recentRejections = [];
@@ -1261,9 +1295,21 @@ app.get("/metrics/prometheus", async (_req, res) => {
   res.send(getPrometheusText(dbStats));
 });
 
+// POST /auth/sse-ticket — exchange an API key / dashboard token for a short-lived
+// one-time SSE ticket so the long-lived credential never appears in the stream URL.
+app.post("/auth/sse-ticket", requireReadAccess, (req, res) => {
+  const ticket = crypto.randomUUID();
+  sseTickets.set(ticket, {
+    tenantId:  req.tenant_id,
+    isAdmin:   req.is_admin || false,
+    expiresAt: Date.now() + SSE_TICKET_TTL_MS
+  });
+  return res.status(200).json({ ticket, expires_in: SSE_TICKET_TTL_MS / 1000 });
+});
+
 // GET /stream — Server-Sent Events endpoint for real-time dashboard updates
 // Enforces connection limits: global and per-tenant
-app.get("/stream", requireReadAccess, (req, res) => {
+app.get("/stream", requireSseAccess, (req, res) => {
   const tenantId = req.tenant_id || "default";
 
   // ATOMIC: Create connection ID and reserve slot BEFORE any limit checks

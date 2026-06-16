@@ -1226,7 +1226,7 @@ function submitAuthToken() {
   fetchJson('/metrics').then(() => {
     hideAuthOverlay();
     loadAll();
-    initSSE();
+    initSSE().catch(() => {});
   }).catch(() => {
     clearToken();
     document.getElementById('auth-input').value = '';
@@ -1237,6 +1237,8 @@ function submitAuthToken() {
 // ─────────────────────────────────────────────────────────────────────────────
 // State
 // ─────────────────────────────────────────────────────────────────────────────
+// Must stay in sync with the view IDs handled in switchMain() below.
+const VALID_VIEWS = ['sessions','workflows','rejected','analytics','performance','custom','anomalies','webhooks'];
 let mainView      = 'sessions';
 let subView       = 'timeline';
 let wfSubView     = 'tree';   // Workflows tab: 'tree' | 'graph'
@@ -1366,16 +1368,41 @@ function toIso(localVal) { return localVal ? new Date(localVal).toISOString() : 
 // ─────────────────────────────────────────────────────────────────────────────
 // SSE / Real-time
 // ─────────────────────────────────────────────────────────────────────────────
-function initSSE() {
+async function initSSE() {
   if (sseConn) sseConn.close();
-  // EventSource doesn't support custom headers; pass token as query param.
-  const tok     = getToken();
-  const sseUrl  = tok ? '/stream?token=' + encodeURIComponent(tok) : '/stream';
+  const tok = getToken();
+  let sseUrl = '/stream';
+  if (tok) {
+    try {
+      // Exchange the long-lived token for a short-lived one-time ticket so the
+      // credential never appears in the stream URL (and server access logs).
+      const r = await fetch('/auth/sse-ticket', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + tok }
+      });
+      if (r.ok) {
+        const { ticket } = await r.json();
+        sseUrl = '/stream?ticket=' + encodeURIComponent(ticket);
+      } else {
+        sseUrl = '/stream?token=' + encodeURIComponent(tok);
+      }
+    } catch(_) {
+      sseUrl = '/stream?token=' + encodeURIComponent(tok);
+    }
+  }
   sseConn = new EventSource(sseUrl);
 
   sseConn.addEventListener('connected', () => setLive(true));
   sseConn.onopen  = () => setLive(true);
-  sseConn.onerror = () => setLive(false);
+  sseConn.onerror = () => {
+    setLive(false);
+    // If EventSource closed permanently (e.g. 401 from a consumed ticket on
+    // reconnect), manually re-initialise so a fresh ticket is exchanged.
+    if (sseConn && sseConn.readyState === EventSource.CLOSED) {
+      sseConn = null;
+      setTimeout(() => initSSE().catch(() => {}), 3000);
+    }
+  };
 
   sseConn.addEventListener('event.received', e => {
     try {
@@ -1426,6 +1453,7 @@ async function refreshSessions() {
 // ─────────────────────────────────────────────────────────────────────────────
 function switchMain(v) {
   mainView = v;
+  history.replaceState(null, '', '#' + v);
   document.getElementById('view-sessions').style.display  = v === 'sessions'  ? '' : 'none';
   document.getElementById('view-workflows').style.display = v === 'workflows' ? '' : 'none';
   document.getElementById('view-rejected').style.display  = v === 'rejected'  ? '' : 'none';
@@ -3016,6 +3044,26 @@ document.getElementById('dag-wrap').addEventListener('keydown', e => {
     const g = e.target.closest('g[data-eid]');
     if (g) { e.preventDefault(); dagClick(g.dataset.eid); }
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hash routing — deep-link tab state via location.hash (#sessions, #workflows…)
+// ─────────────────────────────────────────────────────────────────────────────
+(function applyInitialHash() {
+  const h = location.hash.slice(1);
+  if (VALID_VIEWS.includes(h)) {
+    // Call switchMain immediately so the correct tab is visible without a
+    // sessions→target flash — DOM is fully rendered by script-parse time.
+    switchMain(h);
+  } else if (!location.hash) {
+    // No hash yet — write the default so the address bar is always meaningful.
+    history.replaceState(null, '', '#' + mainView);
+  }
+})();
+
+window.addEventListener('hashchange', () => {
+  const h = location.hash.slice(1);
+  if (VALID_VIEWS.includes(h) && h !== mainView) switchMain(h);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
