@@ -195,18 +195,7 @@ Related to #456
 
 ## 🎯 Areas We're Looking For Help
 
-### High Priority (Incremental Improvements)
-- **Advanced Analytics**: Add query builder and time-series analysis to dashboard
-- **Webhooks**: Implement alert & notification integrations for key events
-- **S3 Export**: Enable long-term storage via cloud providers (S3, GCS, Azure Blob)
-- **Mobile Dashboard**: React Native version for iOS/Android viewing
-
-### Greenfield Projects (Starting from Scratch)
-These are larger initiatives requiring new repositories and core implementation work:
-- **Python SDK**: Port core logic to Python (pip install aep): requires new repo and multiprocess architecture
-- **Go SDK**: Lightweight Go client library: requires new repo and concurrent design
-- **Kubernetes Operator**: Auto-instrumentation for K8s workloads: requires K8s API expertise
-- **OTEL Bridge**: OpenTelemetry integration: requires new package following OTEL standards
+For the current roadmap and open work items, see the [Roadmap section in README.md](./README.md#-roadmap) and the [PRD](./PRD.md). The Good First Issues list below is current as of the last doc update — check the GitHub issue tracker for the freshest picture.
 
 ### Good First Issues (For New Contributors)
 Look for issues tagged with `good-first-issue` label on GitHub:
@@ -372,7 +361,7 @@ test("validateEvent rejects null input", () => {
 ## 🎓 Learning Resources
 
 ### Understanding AEP
-- [Agent Event Protocol specification](./AEP_PRD.md)
+- [Product roadmap & specification](./PRD.md)
 - [Setup guide with examples](./SETUP.md)
 - [Demo scenarios](./examples/demos/)
 
