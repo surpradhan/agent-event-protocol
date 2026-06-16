@@ -1437,7 +1437,8 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
       return res.status(401).json({
         accepted: false,
         error:    "Signature verification failed",
-        detail:   sanitizeInput(error)
+        message:  sanitizeInput(error),
+        detail:   sanitizeInput(error)   // kept for backward compat
       });
     }
 
@@ -1466,7 +1467,12 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
       { event_id: event.id, errors },
       "event rejected: schema validation failed"
     );
-    return res.status(400).json({ accepted: false, errors });
+    return res.status(400).json({
+      accepted: false,
+      error:   "Validation Error",
+      message: `Schema validation failed (${errors.length} error${errors.length === 1 ? "" : "s"})`,
+      errors
+    });
   }
 
   // ------------------------------------------------------------------

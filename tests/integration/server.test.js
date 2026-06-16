@@ -191,6 +191,8 @@ describe("POST /events — ingest", () => {
     assert.equal(body.accepted, false);
     assert.ok(Array.isArray(body.errors));
     assert.ok(body.errors.length > 0);
+    assert.equal(body.error, "Validation Error");
+    assert.ok(typeof body.message === "string" && body.message.includes("Schema validation failed"));
   });
 
   test("returns 400 for an unknown event type", async () => {
@@ -780,6 +782,9 @@ describe("per-event signature acceptance — v2 only (issue #65 Phase E)", () =>
     // chars; the message is ≤99 so it arrives intact).
     assert.match(body.detail, /canon/);
     assert.match(body.detail, /AEP SDK/);
+    // message mirrors detail for cross-API consistency
+    assert.equal(body.message, body.detail);
+    assert.equal(body.error, "Signature verification failed");
     // Hard reject, not an accepted-v1 ingest → no RFC 8594 headers.
     assert.equal(res.headers.get("deprecation"), null);
     assert.equal(res.headers.get("sunset"), null);
