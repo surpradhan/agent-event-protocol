@@ -172,7 +172,7 @@ app.use(express.json({ limit: "1mb" }));
 // Lightweight request log line for every response (skip SSE noise)
 app.use((req, res, next) => {
   res.on("finish", () => {
-    if (req.path === "/stream") return; // exclude long-lived SSE connections
+    if (req.path.replace(/^\/v\d+/, "") === "/stream") return; // exclude long-lived SSE connections (/stream or /v1/stream)
     logger.info(
       {
         method:    req.method,
@@ -191,6 +191,19 @@ app.use((req, res, next) => {
 // early; it records only requests that resolve to an API key (set later by the
 // per-route auth middleware, available by the time `finish` fires).
 app.use(accessLog);
+
+// Advertise the API version on every response so clients can detect which
+// spec they are talking to without parsing URL structure.
+app.use((_req, res, next) => { res.setHeader("API-Version", "1"); next(); });
+
+// ---------------------------------------------------------------------------
+// Versioned API router — mounted at both "/" (legacy paths) and "/v1".
+// Consumer-facing routes are registered here so callers can use either
+// "/events" (backward-compat) or "/v1/events" (explicit version).
+// Infra routes (/health, /ready, /metrics/prometheus) and UI/admin routes
+// (/dashboard, /docs, /admin/*) stay directly on `app`.
+// ---------------------------------------------------------------------------
+const v1 = express.Router();
 
 // ---------------------------------------------------------------------------
 // Server-Sent Events — real-time push to dashboard clients
@@ -405,7 +418,7 @@ app.use(express.static(path.join(__dirname, "public")));
  *
  * Response: { sessions: [...], next_cursor: string|null }
  */
-app.get("/sessions", requireReadAccess, validateQueryParams, async (req, res) => {
+v1.get("/sessions", requireReadAccess, validateQueryParams, async (req, res) => {
   const { limit, cursor } = req.query;
   const result = await db.getPaginatedSessions(req.tenant_id, { limit, cursor });
 
@@ -425,7 +438,7 @@ app.get("/sessions", requireReadAccess, validateQueryParams, async (req, res) =>
  *   { session_id, trace_id, source, parent_session_id, agent_role,
  *     event_count, started_at, updated_at }
  */
-app.get("/sessions/:sessionId", requireReadAccess, validatePathParams, async (req, res) => {
+v1.get("/sessions/:sessionId", requireReadAccess, validatePathParams, async (req, res) => {
   const session = await db.getSession(req.params.sessionId, req.tenant_id);
   if (!session) {
     return res.status(404).json({ error: "Session not found" });
@@ -448,7 +461,7 @@ app.get("/sessions/:sessionId", requireReadAccess, validatePathParams, async (re
  * applied after the cursor window, so a page may contain fewer than `limit`
  * items; iterate until next_cursor is null.
  */
-app.get("/sessions/:sessionId/events", requireReadAccess, validatePathParams, validateQueryParams, async (req, res) => {
+v1.get("/sessions/:sessionId/events", requireReadAccess, validatePathParams, validateQueryParams, async (req, res) => {
   // validateQueryParams coerces any repeated param (?type=a&type=b) to a single
   // value (last wins) before this handler runs, so type/q/limit/cursor are scalars.
   const { type = "", q = "", limit, cursor } = req.query;
@@ -469,7 +482,7 @@ app.get("/sessions/:sessionId/events", requireReadAccess, validatePathParams, va
 });
 
 // GET /sessions/:sessionId/tree — session and all descendants as a recursive tree
-app.get("/sessions/:sessionId/tree", requireReadAccess, validatePathParams, async (req, res) => {
+v1.get("/sessions/:sessionId/tree", requireReadAccess, validatePathParams, async (req, res) => {
   const tree = await db.getSessionTree(req.params.sessionId, req.tenant_id);
   if (!tree) {
     return res.status(404).json({ error: "Session not found", session_id: req.params.sessionId });
@@ -484,7 +497,7 @@ app.get("/sessions/:sessionId/tree", requireReadAccess, validatePathParams, asyn
 });
 
 // GET /sessions/:sessionId/export — download as JSON or CSV
-app.get("/sessions/:sessionId/export", requireReadAccess, validatePathParams, validateQueryParams, async (req, res) => {
+v1.get("/sessions/:sessionId/export", requireReadAccess, validatePathParams, validateQueryParams, async (req, res) => {
   const sessionId = req.params.sessionId;
   // validateQueryParams coerces any repeated param (?format=csv&format=json) to a
   // single value (last wins) before this handler, so format/type/q are scalars.
@@ -512,7 +525,7 @@ app.get("/sessions/:sessionId/export", requireReadAccess, validatePathParams, va
 });
 
 // GET /workflows/:traceId — all sessions sharing a trace_id assembled into a tree
-app.get("/workflows/:traceId", requireReadAccess, validatePathParams, async (req, res) => {
+v1.get("/workflows/:traceId", requireReadAccess, validatePathParams, async (req, res) => {
   const workflow = await db.getWorkflow(req.params.traceId, req.tenant_id);
   if (!workflow) {
     return res.status(404).json({ error: "Workflow not found", trace_id: req.params.traceId });
@@ -534,7 +547,7 @@ app.get("/workflows/:traceId", requireReadAccess, validatePathParams, async (req
 // dashboard can render one interactive DAG spanning the workflow.  Read- + tenant-
 // scoped exactly like /workflows/:traceId; the DB returns the raw (tenant-scoped)
 // envelopes and the pure buildWorkflowGraph (src/workflowGraph.js) shapes them.
-app.get("/workflows/:traceId/graph", requireReadAccess, validatePathParams, async (req, res) => {
+v1.get("/workflows/:traceId/graph", requireReadAccess, validatePathParams, async (req, res) => {
   const traceId = req.params.traceId;
 
   // 404 iff the trace has no sessions for this tenant — same semantics as
@@ -588,7 +601,7 @@ function sendAuditBundle(req, res, bundle, secret, baseName) {
 }
 
 // GET /sessions/:sessionId/audit-bundle — signed audit bundle for one session
-app.get("/sessions/:sessionId/audit-bundle", requireReadAccess, validatePathParams, async (req, res) => {
+v1.get("/sessions/:sessionId/audit-bundle", requireReadAccess, validatePathParams, async (req, res) => {
   const secret = auditSecretOr503(res);
   if (!secret) return;
 
@@ -626,7 +639,7 @@ app.get("/sessions/:sessionId/audit-bundle", requireReadAccess, validatePathPara
 });
 
 // GET /workflows/:traceId/audit-bundle — signed audit bundle for a whole trace
-app.get("/workflows/:traceId/audit-bundle", requireReadAccess, validatePathParams, async (req, res) => {
+v1.get("/workflows/:traceId/audit-bundle", requireReadAccess, validatePathParams, async (req, res) => {
   const secret = auditSecretOr503(res);
   if (!secret) return;
 
@@ -787,7 +800,7 @@ async function assembleComplianceEvidence(req, { session, trace, since, until })
  *   since / until — optional ISO-8601 window for the policy-enforcement evidence
  *   format — json (default) | pdf
  */
-app.get("/compliance/report", requireReadAccess, validateQueryParams, async (req, res) => {
+v1.get("/compliance/report", requireReadAccess, validateQueryParams, async (req, res) => {
   const framework = typeof req.query.framework === "string" ? req.query.framework.toLowerCase() : "";
   if (!isValidFramework(framework)) {
     return res.status(400).json({
@@ -844,7 +857,7 @@ app.get("/compliance/report", requireReadAccess, validateQueryParams, async (req
 });
 
 // GET /metrics — counters + session count + workflow metrics (JSON)
-app.get("/metrics", requireReadAccess, async (req, res) => {
+v1.get("/metrics", requireReadAccess, async (req, res) => {
   const dbStats = await db.getMetrics(req.tenant_id);
   // Signature-form telemetry (issue #65) is process-wide / server-scoped, not
   // tenant-filtered — surfaced alongside the DB counters for convenience.
@@ -885,7 +898,7 @@ function parseIsoBound(raw) {
  *
  * Tenant-scoped from the API key; no cross-tenant leakage.
  */
-app.get("/analytics/policy-blocked", requireReadAccess, validateQueryParams, async (req, res) => {
+v1.get("/analytics/policy-blocked", requireReadAccess, validateQueryParams, async (req, res) => {
   const since = parseIsoBound(req.query.since);
   const until = parseIsoBound(req.query.until);
   if (!since.ok || !until.ok) {
@@ -938,7 +951,7 @@ app.get("/analytics/policy-blocked", requireReadAccess, validateQueryParams, asy
  *
  * Tenant-scoped from the API key; no cross-tenant leakage.
  */
-app.get("/analytics/performance", requireReadAccess, validateQueryParams, async (req, res) => {
+v1.get("/analytics/performance", requireReadAccess, validateQueryParams, async (req, res) => {
   const since = parseIsoBound(req.query.since);
   const until = parseIsoBound(req.query.until);
   if (!since.ok || !until.ok) {
@@ -989,7 +1002,7 @@ app.get("/analytics/performance", requireReadAccess, validateQueryParams, async 
  *   threshold  — modified-z cutoff (> 0, default 3.5; smaller = more sensitive)
  *   limit      — max anomalies returned (1–1000, default 50)
  */
-app.get("/analytics/anomalies", requireReadAccess, validateQueryParams, async (req, res) => {
+v1.get("/analytics/anomalies", requireReadAccess, validateQueryParams, async (req, res) => {
   const since = parseIsoBound(req.query.since);
   const until = parseIsoBound(req.query.until);
   if (!since.ok || !until.ok) {
@@ -1069,7 +1082,7 @@ async function executeCustomQuery(tenantId, spec) {
  * POST /analytics/query — run an ad-hoc custom-analytics query.
  * Body: a query spec (see src/customQuery.js). Read- + tenant-scoped.
  */
-app.post("/analytics/query", requireReadAccess, async (req, res) => {
+v1.post("/analytics/query", requireReadAccess, async (req, res) => {
   const { ok, errors, normalized } = validateQuerySpec(req.body);
   if (!ok) {
     return res.status(400).json({ error: "Bad Request", message: "Invalid query spec", details: errors });
@@ -1083,7 +1096,7 @@ app.post("/analytics/query", requireReadAccess, async (req, res) => {
  * Body: { name, spec }. Requires a WRITE-scoped key (mutates tenant data).
  * 400 invalid spec/name, 409 duplicate name.
  */
-app.post("/analytics/saved-queries", requireApiKey("write"), async (req, res) => {
+v1.post("/analytics/saved-queries", requireApiKey("write"), async (req, res) => {
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const name = typeof body.name === "string" ? body.name.trim() : "";
   if (!name) {
@@ -1119,7 +1132,7 @@ app.post("/analytics/saved-queries", requireApiKey("write"), async (req, res) =>
 /**
  * GET /analytics/saved-queries — list the tenant's saved queries (newest first).
  */
-app.get("/analytics/saved-queries", requireReadAccess, async (req, res) => {
+v1.get("/analytics/saved-queries", requireReadAccess, async (req, res) => {
   const queries = await db.listSavedQueries(req.tenant_id);
   res.json({ saved_queries: queries });
 });
@@ -1127,7 +1140,7 @@ app.get("/analytics/saved-queries", requireReadAccess, async (req, res) => {
 /**
  * GET /analytics/saved-queries/:id — fetch one saved query (tenant-scoped). 404 if absent.
  */
-app.get("/analytics/saved-queries/:id", requireReadAccess, validatePathParams, async (req, res) => {
+v1.get("/analytics/saved-queries/:id", requireReadAccess, validatePathParams, async (req, res) => {
   const saved = await db.getSavedQuery(req.params.id, req.tenant_id);
   if (!saved) return res.status(404).json({ error: "Not Found", message: "Saved query not found" });
   res.json(saved);
@@ -1137,7 +1150,7 @@ app.get("/analytics/saved-queries/:id", requireReadAccess, validatePathParams, a
  * POST /analytics/saved-queries/:id/run — run a saved query by id (tenant-scoped).
  * Re-validates the stored spec defensively before executing. 404 if absent.
  */
-app.post("/analytics/saved-queries/:id/run", requireReadAccess, validatePathParams, async (req, res) => {
+v1.post("/analytics/saved-queries/:id/run", requireReadAccess, validatePathParams, async (req, res) => {
   const saved = await db.getSavedQuery(req.params.id, req.tenant_id);
   if (!saved) return res.status(404).json({ error: "Not Found", message: "Saved query not found" });
   const { ok, errors, normalized } = validateQuerySpec(saved.spec);
@@ -1152,7 +1165,7 @@ app.post("/analytics/saved-queries/:id/run", requireReadAccess, validatePathPara
  * DELETE /analytics/saved-queries/:id — remove a saved query (tenant-scoped).
  * Requires a WRITE-scoped key. 404 if absent.
  */
-app.delete("/analytics/saved-queries/:id", requireApiKey("write"), validatePathParams, async (req, res) => {
+v1.delete("/analytics/saved-queries/:id", requireApiKey("write"), validatePathParams, async (req, res) => {
   const removed = await db.deleteSavedQuery(req.params.id, req.tenant_id);
   if (!removed) return res.status(404).json({ error: "Not Found", message: "Saved query not found" });
   res.status(204).end();
@@ -1178,7 +1191,7 @@ function webhookAllowlist() {
  * POST /webhooks — register a webhook. Requires a WRITE-scoped key.
  * Body: { target_url, event_types?, enabled? }. 400 on invalid URL/filter/SSRF.
  */
-app.post("/webhooks", requireApiKey("write"), async (req, res) => {
+v1.post("/webhooks", requireApiKey("write"), async (req, res) => {
   const result = validateCreateWebhook(req.body, { allowlist: webhookAllowlist() });
   if (!result.ok) {
     return res.status(400).json({ error: "Bad Request", message: "Invalid webhook", details: result.errors });
@@ -1204,7 +1217,7 @@ app.post("/webhooks", requireApiKey("write"), async (req, res) => {
 /**
  * GET /webhooks — list the tenant's webhooks (newest first).
  */
-app.get("/webhooks", requireReadAccess, async (req, res) => {
+v1.get("/webhooks", requireReadAccess, async (req, res) => {
   const webhooks = await db.listWebhooks(req.tenant_id);
   res.json({ webhooks });
 });
@@ -1212,7 +1225,7 @@ app.get("/webhooks", requireReadAccess, async (req, res) => {
 /**
  * GET /webhooks/:id — fetch one webhook (tenant-scoped). 404 if absent.
  */
-app.get("/webhooks/:id", requireReadAccess, validatePathParams, async (req, res) => {
+v1.get("/webhooks/:id", requireReadAccess, validatePathParams, async (req, res) => {
   const webhook = await db.getWebhook(req.params.id, req.tenant_id);
   if (!webhook) return res.status(404).json({ error: "Not Found", message: "Webhook not found" });
   res.json(webhook);
@@ -1222,7 +1235,7 @@ app.get("/webhooks/:id", requireReadAccess, validatePathParams, async (req, res)
  * PATCH /webhooks/:id — partial update (target_url / event_types / enabled).
  * Requires a WRITE-scoped key. 400 on invalid fields, 404 if absent.
  */
-app.patch("/webhooks/:id", requireApiKey("write"), validatePathParams, async (req, res) => {
+v1.patch("/webhooks/:id", requireApiKey("write"), validatePathParams, async (req, res) => {
   const result = validateUpdateWebhook(req.body, { allowlist: webhookAllowlist() });
   if (!result.ok) {
     return res.status(400).json({ error: "Bad Request", message: "Invalid webhook update", details: result.errors });
@@ -1241,7 +1254,7 @@ app.patch("/webhooks/:id", requireApiKey("write"), validatePathParams, async (re
  * DELETE /webhooks/:id — remove a webhook (tenant-scoped).
  * Requires a WRITE-scoped key. 404 if absent.
  */
-app.delete("/webhooks/:id", requireApiKey("write"), validatePathParams, async (req, res) => {
+v1.delete("/webhooks/:id", requireApiKey("write"), validatePathParams, async (req, res) => {
   const removed = await db.deleteWebhook(req.params.id, req.tenant_id);
   if (!removed) return res.status(404).json({ error: "Not Found", message: "Webhook not found" });
   res.status(204).end();
@@ -1256,7 +1269,7 @@ app.delete("/webhooks/:id", requireApiKey("write"), validatePathParams, async (r
  *   until — ISO-8601 exclusive upper bound on created_at (created_at <  until)
  *   limit — max rows (1–1000, default 100)
  */
-app.get("/webhooks/:id/deliveries", requireReadAccess, validatePathParams, validateQueryParams, async (req, res) => {
+v1.get("/webhooks/:id/deliveries", requireReadAccess, validatePathParams, validateQueryParams, async (req, res) => {
   // 404 (not 403) when the webhook isn't the tenant's — don't leak existence.
   const webhook = await db.getWebhook(req.params.id, req.tenant_id);
   if (!webhook) return res.status(404).json({ error: "Not Found", message: "Webhook not found" });
@@ -1297,7 +1310,7 @@ app.get("/metrics/prometheus", async (_req, res) => {
 
 // POST /auth/sse-ticket — exchange an API key / dashboard token for a short-lived
 // one-time SSE ticket so the long-lived credential never appears in the stream URL.
-app.post("/auth/sse-ticket", requireReadAccess, (req, res) => {
+v1.post("/auth/sse-ticket", requireReadAccess, (req, res) => {
   const ticket = crypto.randomUUID();
   sseTickets.set(ticket, {
     tenantId:  req.tenant_id,
@@ -1309,7 +1322,7 @@ app.post("/auth/sse-ticket", requireReadAccess, (req, res) => {
 
 // GET /stream — Server-Sent Events endpoint for real-time dashboard updates
 // Enforces connection limits: global and per-tenant
-app.get("/stream", requireSseAccess, (req, res) => {
+v1.get("/stream", requireSseAccess, (req, res) => {
   const tenantId = req.tenant_id || "default";
 
   // ATOMIC: Create connection ID and reserve slot BEFORE any limit checks
@@ -1444,7 +1457,7 @@ app.get("/stream", requireSseAccess, (req, res) => {
 
 // POST /events — ingest a single event
 // Rate limiting is applied per-key AFTER authentication resolves req.api_key_id.
-app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async (req, res) => {
+v1.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async (req, res) => {
   await db.incrementCounter("received");
 
   const event = req.body;
@@ -1595,7 +1608,7 @@ function broadcastSse(eventName, data, senderTenantId) {
 // ---------------------------------------------------------------------------
 
 // GET /rejections — return recent rejected events (most-recent first, tenant-scoped)
-app.get("/rejections", requireReadAccess, (req, res) => {
+v1.get("/rejections", requireReadAccess, (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 100, MAX_REJECTIONS);
   // Filter to this tenant's rejections if a specific tenant, or all if admin/dashboard
   const filtered = req.tenant_id
@@ -1845,6 +1858,15 @@ app.get("/admin/projects/:id", requireAdminAuth, async (req, res) => {
   }
   res.json({ project: await serializeProject(row, true) });
 });
+
+// ---------------------------------------------------------------------------
+// Mount the versioned API router
+// ---------------------------------------------------------------------------
+// /v1/* — explicit version prefix (new callers)
+app.use("/v1", v1);
+// /* — backward-compat (existing callers) — runs after all app-level routes
+// above so /health, /ready, /dashboard, etc. are handled before the router.
+app.use(v1);
 
 // ---------------------------------------------------------------------------
 // Start + graceful shutdown

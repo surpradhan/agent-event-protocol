@@ -53,7 +53,7 @@ function accessLog(req, res, next) {
         apiKeyId,
         tenantId: req.tenant_id ?? null,
         method: req.method,
-        path: req.path,
+        path: req.path, // req.path is already version-stripped by Express (e.g. /events, never /v1/events)
         status: res.statusCode,
         ts: new Date().toISOString()
       })
