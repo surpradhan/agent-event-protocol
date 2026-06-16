@@ -240,6 +240,16 @@
       color: var(--accent); border-bottom-color: var(--accent);
       text-shadow: 0 0 18px rgba(0,255,200,0.4);
     }
+    .tab-group-label {
+      font-size: 9px; font-weight: 700; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--muted); opacity: 0.55;
+      align-self: flex-end; padding: 0 4px 12px 10px;
+      pointer-events: none; user-select: none; white-space: nowrap;
+    }
+    .tab-sep {
+      width: 1px; background: var(--line2);
+      margin: 6px; align-self: stretch; flex-shrink: 0;
+    }
 
     /* ── Layout ── */
     .layout { display: grid; grid-template-columns: 320px 1fr; gap: 14px; }
@@ -791,16 +801,23 @@
     <div class="card"><div class="k">Workflows</div><div id="m-workflows" class="v" aria-live="polite" aria-atomic="true">0</div></div>
   </div>
 
-  <!-- Main tabs -->
+  <!-- Main tabs — grouped by concern (Wave 3 finding #5) -->
+  <!-- aria-selected kept on buttons as a styling/AT hint; full WAI-ARIA tablist
+       pattern (roving tabindex + arrow keys) is tracked as a follow-up issue. -->
   <div class="main-tabs">
-    <button class="tab-btn active" id="tab-sessions"   onclick="switchMain('sessions')">Sessions</button>
-    <button class="tab-btn"        id="tab-workflows"  onclick="switchMain('workflows')">Workflows</button>
-    <button class="tab-btn"        id="tab-rejected"   onclick="switchMain('rejected')">Rejected<span id="rejected-badge" class="tab-badge" style="display:none">0</span></button>
-    <button class="tab-btn"        id="tab-analytics"  onclick="switchMain('analytics')">Policy Analytics</button>
-    <button class="tab-btn"        id="tab-performance" onclick="switchMain('performance')">Performance</button>
-    <button class="tab-btn"        id="tab-custom"     onclick="switchMain('custom')">Custom Analytics</button>
-    <button class="tab-btn"        id="tab-anomalies"  onclick="switchMain('anomalies')">Anomalies<span id="anomalies-badge" class="tab-badge" style="display:none">0</span></button>
-    <button class="tab-btn"        id="tab-webhooks"   onclick="switchMain('webhooks')">Webhooks</button>
+    <span class="tab-group-label" role="presentation" aria-hidden="true">Observe</span>
+    <button class="tab-btn active" id="tab-sessions"    aria-selected="true"  onclick="switchMain('sessions')">Sessions</button>
+    <button class="tab-btn"        id="tab-workflows"   aria-selected="false" onclick="switchMain('workflows')">Workflows</button>
+    <span class="tab-sep" role="presentation" aria-hidden="true"></span>
+    <span class="tab-group-label" role="presentation" aria-hidden="true">Analyze</span>
+    <button class="tab-btn"        id="tab-analytics"   aria-selected="false" onclick="switchMain('analytics')">Policy Analytics</button>
+    <button class="tab-btn"        id="tab-performance" aria-selected="false" onclick="switchMain('performance')">Performance</button>
+    <button class="tab-btn"        id="tab-anomalies"   aria-selected="false" onclick="switchMain('anomalies')">Anomalies<span id="anomalies-badge" class="tab-badge" style="display:none">0</span></button>
+    <button class="tab-btn"        id="tab-custom"      aria-selected="false" onclick="switchMain('custom')">Custom Analytics</button>
+    <span class="tab-sep" role="presentation" aria-hidden="true"></span>
+    <span class="tab-group-label" role="presentation" aria-hidden="true">Ops</span>
+    <button class="tab-btn"        id="tab-rejected"    aria-selected="false" onclick="switchMain('rejected')">Rejected<span id="rejected-badge" class="tab-badge" style="display:none">0</span></button>
+    <button class="tab-btn"        id="tab-webhooks"    aria-selected="false" onclick="switchMain('webhooks')">Webhooks</button>
   </div>
 
   <!-- ═══ Sessions view ═══ -->
@@ -1462,14 +1479,12 @@ function switchMain(v) {
   document.getElementById('view-custom').style.display = v === 'custom' ? '' : 'none';
   document.getElementById('view-anomalies').style.display = v === 'anomalies' ? '' : 'none';
   document.getElementById('view-webhooks').style.display = v === 'webhooks' ? '' : 'none';
-  document.getElementById('tab-sessions').className   = 'tab-btn' + (v === 'sessions'  ? ' active' : '');
-  document.getElementById('tab-workflows').className  = 'tab-btn' + (v === 'workflows' ? ' active' : '');
-  document.getElementById('tab-rejected').className   = 'tab-btn' + (v === 'rejected'  ? ' active' : '');
-  document.getElementById('tab-analytics').className  = 'tab-btn' + (v === 'analytics' ? ' active' : '');
-  document.getElementById('tab-performance').className = 'tab-btn' + (v === 'performance' ? ' active' : '');
-  document.getElementById('tab-custom').className = 'tab-btn' + (v === 'custom' ? ' active' : '');
-  document.getElementById('tab-anomalies').className = 'tab-btn' + (v === 'anomalies' ? ' active' : '');
-  document.getElementById('tab-webhooks').className = 'tab-btn' + (v === 'webhooks' ? ' active' : '');
+  for (const id of VALID_VIEWS) {
+    const btn = document.getElementById('tab-' + id);
+    const active = id === v;
+    btn.className        = 'tab-btn' + (active ? ' active' : '');
+    btn.setAttribute('aria-selected', String(active));
+  }
   if (v === 'rejected') loadRejections();
   if (v === 'analytics') loadAnalytics();
   if (v === 'performance') loadPerformance();
