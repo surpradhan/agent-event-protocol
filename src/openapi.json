@@ -1606,6 +1606,12 @@
       }
     },
     "/admin/keys": {
+      "servers": [
+        {
+          "url": "http://localhost:8787",
+          "description": "Root only — /admin/* routes are not versioned under /v1"
+        }
+      ],
       "post": {
         "tags": ["Admin"],
         "summary": "Create a new API key",
@@ -1705,6 +1711,12 @@
       }
     },
     "/admin/keys/{id}": {
+      "servers": [
+        {
+          "url": "http://localhost:8787",
+          "description": "Root only — /admin/* routes are not versioned under /v1"
+        }
+      ],
       "delete": {
         "tags": ["Admin"],
         "summary": "Revoke an API key",
@@ -1749,6 +1761,12 @@
       }
     },
     "/admin/keys/{id}/access-log": {
+      "servers": [
+        {
+          "url": "http://localhost:8787",
+          "description": "Root only — /admin/* routes are not versioned under /v1"
+        }
+      ],
       "get": {
         "tags": ["Admin"],
         "summary": "API-key usage audit trail",
@@ -1830,6 +1848,12 @@
       }
     },
     "/admin/projects": {
+      "servers": [
+        {
+          "url": "http://localhost:8787",
+          "description": "Root only — /admin/* routes are not versioned under /v1"
+        }
+      ],
       "post": {
         "tags": ["Admin"],
         "summary": "Create a project on a subscription tier",
@@ -1919,6 +1943,12 @@
       }
     },
     "/admin/projects/{id}": {
+      "servers": [
+        {
+          "url": "http://localhost:8787",
+          "description": "Root only — /admin/* routes are not versioned under /v1"
+        }
+      ],
       "get": {
         "tags": ["Admin"],
         "summary": "Get a single project (with current usage)",
