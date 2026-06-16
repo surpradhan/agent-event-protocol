@@ -231,6 +231,13 @@ describe("escapeCsvCell — RFC-4180 quoting", () => {
     assert.equal(escapeCsvCell("line1\nline2"), '"line1\nline2"');
   });
 
+  test("quotes cells containing bare \\r", () => {
+    assert.equal(escapeCsvCell("line1\rline2"), '"line1\rline2"');
+  });
+  test("quotes cells containing CRLF", () => {
+    assert.equal(escapeCsvCell("line1\r\nline2"), '"line1\r\nline2"');
+  });
+
   test("values containing double-quotes are wrapped and inner quotes doubled", () => {
     assert.equal(escapeCsvCell('say "hi"'), '"say ""hi"""');
     assert.equal(escapeCsvCell('"'), '""""');

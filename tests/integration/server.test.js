@@ -3142,6 +3142,38 @@ describe("GET /analytics/policy-blocked?format=csv", () => {
     assert.ok(cd.includes("attachment"), `Expected attachment disposition, got '${cd}'`);
     assert.ok(cd.includes("policy-blocked"), `Expected policy-blocked in filename, got '${cd}'`);
   });
+
+  test("?format=csv includes seeded policy.blocked event in data rows", async () => {
+    // Seed a policy.blocked event so the CSV has at least one data row.
+    await ingest(makeEvent({
+      type: "policy.blocked",
+      session_id: "ses_csv_pb_seed",
+      trace_id: "trc_csv_pb_seed",
+      agent_role: "orchestrator",
+      payload: { policy: "pii_guard", reason: "PII detected", action_blocked: "tool.called/send_email" },
+    }));
+    const res = await fetch(`${baseUrl}/analytics/policy-blocked?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    const lines = text.trim().split("\n");
+    // Must have header + at least one data row.
+    assert.ok(lines.length >= 2, `Expected at least 2 lines (header + data), got ${lines.length}`);
+    // Each data row must have 9 comma-separated fields (matching the column set).
+    const dataLine = lines[1];
+    const cells = dataLine.split(",");
+    assert.equal(cells.length, 9, `Expected 9 fields in data row, got ${cells.length}: ${dataLine}`);
+  });
+
+  test("?format=csv returns 400 for unknown format value", async () => {
+    const res = await fetch(`${baseUrl}/analytics/policy-blocked?format=xml`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.error, "Bad Request");
+  });
 });
 
 describe("GET /analytics/performance?format=csv", () => {

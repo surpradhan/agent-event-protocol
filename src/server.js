@@ -872,6 +872,9 @@ app.get("/analytics/policy-blocked", requireReadAccess, validateQueryParams, asy
   const summary = summarizePolicyBlocked(events, { now: new Date(), limit });
 
   const format = (req.query.format || "json").toLowerCase();
+  if (format !== "json" && format !== "csv") {
+    return res.status(400).json({ error: "Bad Request", message: "Query parameter 'format' must be 'json' or 'csv'" });
+  }
   if (format === "csv") {
     const date = new Date().toISOString().slice(0, 10);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -922,6 +925,9 @@ app.get("/analytics/performance", requireReadAccess, validateQueryParams, async 
   const summary = summarizePerformance(events, { now: new Date(), limit });
 
   const format = (req.query.format || "json").toLowerCase();
+  if (format !== "json" && format !== "csv") {
+    return res.status(400).json({ error: "Bad Request", message: "Query parameter 'format' must be 'json' or 'csv'" });
+  }
   if (format === "csv") {
     const date = new Date().toISOString().slice(0, 10);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -982,6 +988,9 @@ app.get("/analytics/anomalies", requireReadAccess, validateQueryParams, async (r
   const result = detectAnomalies(events, { now: new Date(), threshold, limit });
 
   const format = (req.query.format || "json").toLowerCase();
+  if (format !== "json" && format !== "csv") {
+    return res.status(400).json({ error: "Bad Request", message: "Query parameter 'format' must be 'json' or 'csv'" });
+  }
   if (format === "csv") {
     const date = new Date().toISOString().slice(0, 10);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");

@@ -142,19 +142,21 @@ function summarizePolicyBlocked(events, { now = new Date(), limit = 20 } = {}) {
 
 /**
  * Escape a single CSV cell value per RFC-4180: wrap in double-quotes when the
- * value contains a comma, newline, or double-quote; escape embedded
+ * value contains a comma, CR, newline, or double-quote; escape embedded
  * double-quotes by doubling them.
  * @param {*} value
  * @returns {string}
  */
 function escapeCsvCell(value) {
   const str = String(value ?? "");
-  if (str.includes(",") || str.includes("\n") || str.includes('"')) {
+  if (str.includes(",") || str.includes("\r") || str.includes("\n") || str.includes('"')) {
     return `"${str.replace(/"/g, '""')}"`;
   }
   return str;
 }
 
+// Uses LF line endings (matching the Phase 17 JSONL/CSV export convention).
+// RFC-4180 mandates CRLF, but major parsers (pandas, Numbers, Excel) accept LF.
 /**
  * Encode an array of row objects into an RFC-4180 CSV string.
  *
