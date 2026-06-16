@@ -9,7 +9,7 @@
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { summarizePolicyBlocked, UNSPECIFIED } = require("../../src/analytics");
+const { summarizePolicyBlocked, UNSPECIFIED, toCsvAnalytics, escapeCsvCell } = require("../../src/analytics");
 
 /** Build a policy.blocked event envelope with sensible defaults. */
 function ev({ id = "evt_x", time = "2026-06-01T00:00:00Z", source = "agent://a", policy, reason, action_blocked, session_id = "ses_1", trace_id = "trc_1", agent_role = "orchestrator" } = {}) {
@@ -199,5 +199,126 @@ describe("summarizePolicyBlocked — recent list", () => {
   test("non-finite limit falls back to the default of 20", () => {
     const many = Array.from({ length: 25 }, (_, i) => ev({ id: `e${i}`, time: `2026-06-${String((i % 28) + 1).padStart(2, "0")}T00:00:00Z` }));
     assert.equal(summarizePolicyBlocked(many, { now: NOW, limit: NaN }).recent.length, 20);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// escapeCsvCell — RFC-4180 cell escaping
+// ---------------------------------------------------------------------------
+
+describe("escapeCsvCell — RFC-4180 quoting", () => {
+  test("plain strings pass through unchanged", () => {
+    assert.equal(escapeCsvCell("hello"), "hello");
+    assert.equal(escapeCsvCell("no special chars"), "no special chars");
+  });
+
+  test("null and undefined coerce to empty string", () => {
+    assert.equal(escapeCsvCell(null), "");
+    assert.equal(escapeCsvCell(undefined), "");
+  });
+
+  test("numbers coerce to their string representation", () => {
+    assert.equal(escapeCsvCell(42), "42");
+    assert.equal(escapeCsvCell(3.14), "3.14");
+  });
+
+  test("values containing commas are double-quoted", () => {
+    assert.equal(escapeCsvCell("a,b"), '"a,b"');
+    assert.equal(escapeCsvCell("x,y,z"), '"x,y,z"');
+  });
+
+  test("values containing newlines are double-quoted", () => {
+    assert.equal(escapeCsvCell("line1\nline2"), '"line1\nline2"');
+  });
+
+  test("values containing double-quotes are wrapped and inner quotes doubled", () => {
+    assert.equal(escapeCsvCell('say "hi"'), '"say ""hi"""');
+    assert.equal(escapeCsvCell('"'), '""""');
+  });
+
+  test("value with both comma and quote triggers quoting and doubling", () => {
+    assert.equal(escapeCsvCell('a,"b"'), '"a,""b"""');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toCsvAnalytics — RFC-4180 encoder for analytics row objects
+// ---------------------------------------------------------------------------
+
+describe("toCsvAnalytics — CSV encoding", () => {
+  const FIELDS = ["id", "count", "label"];
+
+  test("empty rows array returns just a header line", () => {
+    const csv = toCsvAnalytics([], FIELDS);
+    assert.equal(csv, "id,count,label\n");
+  });
+
+  test("non-array rows returns just a header line", () => {
+    assert.equal(toCsvAnalytics(null, FIELDS), "id,count,label\n");
+    assert.equal(toCsvAnalytics(undefined, FIELDS), "id,count,label\n");
+  });
+
+  test("single row is encoded with header + data row", () => {
+    const csv = toCsvAnalytics([{ id: "e1", count: 3, label: "pii_guard" }], FIELDS);
+    const lines = csv.trim().split("\n");
+    assert.equal(lines[0], "id,count,label");
+    assert.equal(lines[1], "e1,3,pii_guard");
+  });
+
+  test("multiple rows produce one line each after the header", () => {
+    const rows = [
+      { id: "e1", count: 1, label: "a" },
+      { id: "e2", count: 2, label: "b" }
+    ];
+    const csv = toCsvAnalytics(rows, FIELDS);
+    const lines = csv.trim().split("\n");
+    assert.equal(lines.length, 3); // header + 2 rows
+    assert.equal(lines[1], "e1,1,a");
+    assert.equal(lines[2], "e2,2,b");
+  });
+
+  test("cells with commas are quoted", () => {
+    const rows = [{ id: "e1", count: 5, label: "a,b" }];
+    const csv = toCsvAnalytics(rows, FIELDS);
+    assert.ok(csv.includes('"a,b"'), `Expected quoted cell, got: ${csv}`);
+  });
+
+  test("cells with embedded double-quotes are escaped by doubling", () => {
+    const rows = [{ id: 'say "hi"', count: 1, label: "x" }];
+    const csv = toCsvAnalytics(rows, FIELDS);
+    assert.ok(csv.includes('"say ""hi"""'), `Expected escaped quotes, got: ${csv}`);
+  });
+
+  test("nested objects are JSON-stringified into the cell", () => {
+    const rows = [{ id: "e1", count: 1, label: { nested: true } }];
+    const csv = toCsvAnalytics(rows, FIELDS);
+    // JSON.stringify({nested:true}) → '{"nested":true}' which contains double-quotes, so
+    // the cell is wrapped in double-quotes and the inner quotes are doubled per RFC-4180.
+    assert.ok(csv.includes('"{""nested"":true}"'), `Expected RFC-4180-escaped JSON cell, got: ${csv}`);
+  });
+
+  test("nested arrays are JSON-stringified into the cell", () => {
+    const rows = [{ id: "e1", count: 1, label: [1, 2, 3] }];
+    const csv = toCsvAnalytics(rows, FIELDS);
+    assert.ok(csv.includes("[1,2,3]"), `Expected JSON array cell, got: ${csv}`);
+  });
+
+  test("null field values in rows become empty cells", () => {
+    const rows = [{ id: "e1", count: null, label: "x" }];
+    const csv = toCsvAnalytics(rows, FIELDS);
+    const dataLine = csv.trim().split("\n")[1];
+    assert.equal(dataLine, "e1,,x");
+  });
+
+  test("missing field keys in a row become empty cells", () => {
+    const rows = [{ id: "e1" }]; // count and label missing
+    const csv = toCsvAnalytics(rows, FIELDS);
+    const dataLine = csv.trim().split("\n")[1];
+    assert.equal(dataLine, "e1,,");
+  });
+
+  test("output always ends with a trailing newline", () => {
+    assert.ok(toCsvAnalytics([], FIELDS).endsWith("\n"));
+    assert.ok(toCsvAnalytics([{ id: "x", count: 0, label: "y" }], FIELDS).endsWith("\n"));
   });
 });

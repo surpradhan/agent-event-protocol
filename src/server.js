@@ -10,7 +10,7 @@ const db                       = require("./db");
 const { verifySignature } = require("./signature");
 const { buildAuditBundle, verifyAuditBundle } = require("./audit");
 const { renderAuditBundlePdf } = require("./audit-pdf");
-const { summarizePolicyBlocked } = require("./analytics");
+const { summarizePolicyBlocked, toCsvAnalytics } = require("./analytics");
 const { summarizePerformance } = require("./performance");
 const { detectAnomalies } = require("./anomalies");
 const { validateQuerySpec, runQuery } = require("./customQuery");
@@ -871,6 +871,16 @@ app.get("/analytics/policy-blocked", requireReadAccess, validateQueryParams, asy
   const limit = req.query.limit !== undefined ? parseInt(req.query.limit, 10) : 20;
   const summary = summarizePolicyBlocked(events, { now: new Date(), limit });
 
+  const format = (req.query.format || "json").toLowerCase();
+  if (format === "csv") {
+    const date = new Date().toISOString().slice(0, 10);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="policy-blocked-${date}.csv"`);
+    // Flatten the summary into tabular rows: one row per recent event.
+    const fields = ["id", "time", "source", "session_id", "trace_id", "agent_role", "policy", "reason", "action_blocked"];
+    return res.send(toCsvAnalytics(summary.recent, fields));
+  }
+
   res.json({ ...summary, window: { since: since.value, until: until.value } });
 });
 
@@ -910,6 +920,16 @@ app.get("/analytics/performance", requireReadAccess, validateQueryParams, async 
   // list to 20 when the caller omits it.
   const limit = req.query.limit !== undefined ? parseInt(req.query.limit, 10) : 20;
   const summary = summarizePerformance(events, { now: new Date(), limit });
+
+  const format = (req.query.format || "json").toLowerCase();
+  if (format === "csv") {
+    const date = new Date().toISOString().slice(0, 10);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="performance-${date}.csv"`);
+    // Flatten the summary into tabular rows: one row per slowest operation.
+    const fields = ["kind", "op_type", "name", "source", "session_id", "trace_id", "status", "duration_ms", "started_at", "ended_at"];
+    return res.send(toCsvAnalytics(summary.slowest, fields));
+  }
 
   res.json({ ...summary, window: { since: since.value, until: until.value } });
 });
@@ -960,6 +980,16 @@ app.get("/analytics/anomalies", requireReadAccess, validateQueryParams, async (r
   // validateQueryParams already bounds ?limit to [1,1000]; default to 50.
   const limit = req.query.limit !== undefined ? parseInt(req.query.limit, 10) : 50;
   const result = detectAnomalies(events, { now: new Date(), threshold, limit });
+
+  const format = (req.query.format || "json").toLowerCase();
+  if (format === "csv") {
+    const date = new Date().toISOString().slice(0, 10);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="anomalies-${date}.csv"`);
+    // Flatten the anomaly list: one row per anomalous trace; nested metrics/flags as JSON.
+    const fields = ["trace_id", "max_score", "severity", "metrics", "flags"];
+    return res.send(toCsvAnalytics(result.anomalies, fields));
+  }
 
   res.json({ ...result, window: { since: since.value, until: until.value } });
 });

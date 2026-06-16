@@ -3111,6 +3111,100 @@ describe("GET /analytics/anomalies", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Analytics CSV export — ?format=csv on all three analytics endpoints (Wave 3 #20)
+// ---------------------------------------------------------------------------
+
+describe("GET /analytics/policy-blocked?format=csv", () => {
+  test("?format=csv returns 200 with text/csv content-type", async () => {
+    const res = await fetch(`${baseUrl}/analytics/policy-blocked?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const ct = res.headers.get("content-type") || "";
+    assert.ok(ct.includes("text/csv"), `Expected text/csv, got '${ct}'`);
+  });
+
+  test("?format=csv response has correct column headers", async () => {
+    const res = await fetch(`${baseUrl}/analytics/policy-blocked?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    const headerRow = text.split("\n")[0];
+    assert.equal(headerRow, "id,time,source,session_id,trace_id,agent_role,policy,reason,action_blocked");
+  });
+
+  test("?format=csv has a Content-Disposition attachment header with policy-blocked in filename", async () => {
+    const res = await fetch(`${baseUrl}/analytics/policy-blocked?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    const cd = res.headers.get("content-disposition") || "";
+    assert.ok(cd.includes("attachment"), `Expected attachment disposition, got '${cd}'`);
+    assert.ok(cd.includes("policy-blocked"), `Expected policy-blocked in filename, got '${cd}'`);
+  });
+});
+
+describe("GET /analytics/performance?format=csv", () => {
+  test("?format=csv returns 200 with text/csv content-type", async () => {
+    const res = await fetch(`${baseUrl}/analytics/performance?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const ct = res.headers.get("content-type") || "";
+    assert.ok(ct.includes("text/csv"), `Expected text/csv, got '${ct}'`);
+  });
+
+  test("?format=csv response has correct column headers", async () => {
+    const res = await fetch(`${baseUrl}/analytics/performance?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    const headerRow = text.split("\n")[0];
+    assert.equal(headerRow, "kind,op_type,name,source,session_id,trace_id,status,duration_ms,started_at,ended_at");
+  });
+
+  test("?format=csv has a Content-Disposition attachment header with performance in filename", async () => {
+    const res = await fetch(`${baseUrl}/analytics/performance?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    const cd = res.headers.get("content-disposition") || "";
+    assert.ok(cd.includes("attachment"), `Expected attachment disposition, got '${cd}'`);
+    assert.ok(cd.includes("performance"), `Expected performance in filename, got '${cd}'`);
+  });
+});
+
+describe("GET /analytics/anomalies?format=csv", () => {
+  test("?format=csv returns 200 with text/csv content-type", async () => {
+    const res = await fetch(`${baseUrl}/analytics/anomalies?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const ct = res.headers.get("content-type") || "";
+    assert.ok(ct.includes("text/csv"), `Expected text/csv, got '${ct}'`);
+  });
+
+  test("?format=csv response has correct column headers", async () => {
+    const res = await fetch(`${baseUrl}/analytics/anomalies?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    const headerRow = text.split("\n")[0];
+    assert.equal(headerRow, "trace_id,max_score,severity,metrics,flags");
+  });
+
+  test("?format=csv has a Content-Disposition attachment header with anomalies in filename", async () => {
+    const res = await fetch(`${baseUrl}/analytics/anomalies?format=csv`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    const cd = res.headers.get("content-disposition") || "";
+    assert.ok(cd.includes("attachment"), `Expected attachment disposition, got '${cd}'`);
+    assert.ok(cd.includes("anomalies"), `Expected anomalies in filename, got '${cd}'`);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Webhooks (Phase 16-A) — registration & management
 // ---------------------------------------------------------------------------
 
