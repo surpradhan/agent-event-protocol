@@ -2038,7 +2038,7 @@ function updateRejectReasonFilter() {
   for (const r of reasons) {
     const opt = document.createElement('option');
     opt.value = r;
-    // Convert snake_case to "Title Case" for display (e.g. schema_invalid → Schema invalid)
+    // Convert snake_case to "Sentence case" for display (e.g. schema_invalid → Schema invalid)
     opt.textContent = r.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase());
     sel.appendChild(opt);
   }
@@ -2074,7 +2074,7 @@ function renderRejections() {
     const errText = r.errors ? JSON.stringify(r.errors, null, 2) : (r.detail || '');
     // Lookup table with a safe fallback so future reason codes render correctly
     const REASON_LABELS = { schema_invalid: 'Schema invalid', signature_invalid: 'Signature invalid' };
-    const reasonLabel = REASON_LABELS[r.reason] ?? r.reason.replace(/_/g, ' ');
+    const reasonLabel = REASON_LABELS[r.reason] ?? r.reason.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase());
     el.setAttribute('role', 'button');
     el.setAttribute('tabindex', '0');
     el.setAttribute('aria-label', `Rejection: ${reasonLabel}`);
