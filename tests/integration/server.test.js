@@ -4062,3 +4062,54 @@ describe("SSE — rejection.received broadcast", () => {
     assert.equal(received, false, "rejection.received must NOT arrive on a cross-tenant SSE stream");
   });
 });
+
+// ---------------------------------------------------------------------------
+// SSE ticket endpoint (Wave 3 finding #18)
+// ---------------------------------------------------------------------------
+describe("POST /auth/sse-ticket", () => {
+  test("returns a ticket for a valid read key", async () => {
+    const res = await fetch(`${baseUrl}/auth/sse-ticket`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${readKey}` }
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(typeof body.ticket === "string" && body.ticket.length > 10);
+    assert.ok(typeof body.expires_in === "number" && body.expires_in > 0);
+  });
+
+  test("ticket is accepted by /stream and consumed (one-time use)", async () => {
+    const ticketRes = await fetch(`${baseUrl}/auth/sse-ticket`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${readKey}` }
+    });
+    const { ticket } = await ticketRes.json();
+
+    // First use: /stream should accept the ticket
+    const sseRes = await fetch(`${baseUrl}/stream?ticket=${encodeURIComponent(ticket)}`, {
+      headers: { Accept: "text/event-stream" }
+    });
+    assert.equal(sseRes.status, 200);
+    await sseRes.body.cancel();
+
+    // Second use: ticket must be rejected (already consumed)
+    const sseRes2 = await fetch(`${baseUrl}/stream?ticket=${encodeURIComponent(ticket)}`, {
+      headers: { Accept: "text/event-stream" }
+    });
+    assert.equal(sseRes2.status, 401);
+    const body2 = await sseRes2.json();
+    assert.ok(body2.error.includes("expired") || body2.error.includes("Invalid"));
+  });
+
+  test("returns 401 for an invalid ticket", async () => {
+    const res = await fetch(`${baseUrl}/stream?ticket=not-a-real-ticket`, {
+      headers: { Accept: "text/event-stream" }
+    });
+    assert.equal(res.status, 401);
+  });
+
+  test("returns 401 without a key", async () => {
+    const res = await fetch(`${baseUrl}/auth/sse-ticket`, { method: "POST" });
+    assert.equal(res.status, 401);
+  });
+});

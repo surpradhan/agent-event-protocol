@@ -1237,6 +1237,7 @@ function submitAuthToken() {
 // ─────────────────────────────────────────────────────────────────────────────
 // State
 // ─────────────────────────────────────────────────────────────────────────────
+const VALID_VIEWS = ['sessions','workflows','rejected','analytics','performance','custom','anomalies','webhooks'];
 let mainView      = 'sessions';
 let subView       = 'timeline';
 let wfSubView     = 'tree';   // Workflows tab: 'tree' | 'graph'
@@ -1366,11 +1367,28 @@ function toIso(localVal) { return localVal ? new Date(localVal).toISOString() : 
 // ─────────────────────────────────────────────────────────────────────────────
 // SSE / Real-time
 // ─────────────────────────────────────────────────────────────────────────────
-function initSSE() {
+async function initSSE() {
   if (sseConn) sseConn.close();
-  // EventSource doesn't support custom headers; pass token as query param.
-  const tok     = getToken();
-  const sseUrl  = tok ? '/stream?token=' + encodeURIComponent(tok) : '/stream';
+  const tok = getToken();
+  let sseUrl = '/stream';
+  if (tok) {
+    try {
+      // Exchange the long-lived token for a short-lived one-time ticket so the
+      // credential never appears in the stream URL (and server access logs).
+      const r = await fetch('/auth/sse-ticket', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + tok }
+      });
+      if (r.ok) {
+        const { ticket } = await r.json();
+        sseUrl = '/stream?ticket=' + encodeURIComponent(ticket);
+      } else {
+        sseUrl = '/stream?token=' + encodeURIComponent(tok);
+      }
+    } catch(_) {
+      sseUrl = '/stream?token=' + encodeURIComponent(tok);
+    }
+  }
   sseConn = new EventSource(sseUrl);
 
   sseConn.addEventListener('connected', () => setLive(true));
@@ -1426,6 +1444,7 @@ async function refreshSessions() {
 // ─────────────────────────────────────────────────────────────────────────────
 function switchMain(v) {
   mainView = v;
+  history.replaceState(null, '', '#' + v);
   document.getElementById('view-sessions').style.display  = v === 'sessions'  ? '' : 'none';
   document.getElementById('view-workflows').style.display = v === 'workflows' ? '' : 'none';
   document.getElementById('view-rejected').style.display  = v === 'rejected'  ? '' : 'none';
@@ -3019,12 +3038,33 @@ document.getElementById('dag-wrap').addEventListener('keydown', e => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Hash routing — deep-link tab state via location.hash (#sessions, #workflows…)
+// ─────────────────────────────────────────────────────────────────────────────
+(function applyInitialHash() {
+  const h = location.hash.slice(1);
+  if (VALID_VIEWS.includes(h)) mainView = h;
+  // If no hash yet, write the default so the address bar is always meaningful.
+  if (!location.hash) history.replaceState(null, '', '#' + mainView);
+})();
+
+window.addEventListener('hashchange', () => {
+  const h = location.hash.slice(1);
+  if (VALID_VIEWS.includes(h) && h !== mainView) switchMain(h);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Boot
 // ─────────────────────────────────────────────────────────────────────────────
 // Attempt initial data load.  If the server requires auth and we have no
 // token, loadAll's first fetchJson will trigger the auth overlay automatically.
 // If DASHBOARD_TOKEN is not configured (dev mode), the overlay is never shown.
-loadAll().then(() => initSSE()).catch(() => {
+loadAll().then(() => {
+  // Apply the active tab from the hash (must run after initial render so views
+  // are visible and view-switching side-effects (loadRejections etc.) fire).
+  const h = location.hash.slice(1);
+  if (VALID_VIEWS.includes(h)) switchMain(h);
+  return initSSE();
+}).catch(() => {
   // Auth overlay will have been shown inside fetchJson; don't init SSE yet.
   // initSSE is called by submitAuthToken on successful sign-in.
 });
