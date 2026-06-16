@@ -100,6 +100,16 @@ const MAX_SSE_PER_TENANT = parseInt(process.env.MAX_SSE_PER_TENANT || '100', 10)
 const SSE_TICKET_TTL_MS = 30_000;
 const sseTickets = new Map(); // ticket → { tenantId, isAdmin, expiresAt }
 
+// Sweep expired-but-unconsumed tickets every 60 s so the Map does not grow
+// unboundedly if callers obtain tickets but never open the SSE stream.
+const _sseTicketSweep = setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of sseTickets) {
+    if (now > v.expiresAt) sseTickets.delete(k);
+  }
+}, 60_000);
+_sseTicketSweep.unref(); // don't prevent clean process exit
+
 function requireSseAccess(req, res, next) {
   const ticket = req.query.ticket ? String(req.query.ticket) : null;
   if (ticket) {

@@ -1226,7 +1226,7 @@ function submitAuthToken() {
   fetchJson('/metrics').then(() => {
     hideAuthOverlay();
     loadAll();
-    initSSE();
+    initSSE().catch(() => {});
   }).catch(() => {
     clearToken();
     document.getElementById('auth-input').value = '';
@@ -1237,6 +1237,7 @@ function submitAuthToken() {
 // ─────────────────────────────────────────────────────────────────────────────
 // State
 // ─────────────────────────────────────────────────────────────────────────────
+// Must stay in sync with the view IDs handled in switchMain() below.
 const VALID_VIEWS = ['sessions','workflows','rejected','analytics','performance','custom','anomalies','webhooks'];
 let mainView      = 'sessions';
 let subView       = 'timeline';
@@ -3042,9 +3043,14 @@ document.getElementById('dag-wrap').addEventListener('keydown', e => {
 // ─────────────────────────────────────────────────────────────────────────────
 (function applyInitialHash() {
   const h = location.hash.slice(1);
-  if (VALID_VIEWS.includes(h)) mainView = h;
-  // If no hash yet, write the default so the address bar is always meaningful.
-  if (!location.hash) history.replaceState(null, '', '#' + mainView);
+  if (VALID_VIEWS.includes(h)) {
+    // Call switchMain immediately so the correct tab is visible without a
+    // sessions→target flash — DOM is fully rendered by script-parse time.
+    switchMain(h);
+  } else if (!location.hash) {
+    // No hash yet — write the default so the address bar is always meaningful.
+    history.replaceState(null, '', '#' + mainView);
+  }
 })();
 
 window.addEventListener('hashchange', () => {
@@ -3058,13 +3064,7 @@ window.addEventListener('hashchange', () => {
 // Attempt initial data load.  If the server requires auth and we have no
 // token, loadAll's first fetchJson will trigger the auth overlay automatically.
 // If DASHBOARD_TOKEN is not configured (dev mode), the overlay is never shown.
-loadAll().then(() => {
-  // Apply the active tab from the hash (must run after initial render so views
-  // are visible and view-switching side-effects (loadRejections etc.) fire).
-  const h = location.hash.slice(1);
-  if (VALID_VIEWS.includes(h)) switchMain(h);
-  return initSSE();
-}).catch(() => {
+loadAll().then(() => initSSE()).catch(() => {
   // Auth overlay will have been shown inside fetchJson; don't init SSE yet.
   // initSSE is called by submitAuthToken on successful sign-in.
 });

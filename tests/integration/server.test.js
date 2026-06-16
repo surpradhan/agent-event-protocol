@@ -4112,4 +4112,14 @@ describe("POST /auth/sse-ticket", () => {
     const res = await fetch(`${baseUrl}/auth/sse-ticket`, { method: "POST" });
     assert.equal(res.status, 401);
   });
+
+  test("/stream still accepts ?token= (backward compat — no ticket needed)", async () => {
+    // When no ?ticket= param is present, requireSseAccess falls through to
+    // requireReadAccess which accepts Authorization: Bearer for API keys.
+    const res = await fetch(`${baseUrl}/stream`, {
+      headers: { Authorization: `Bearer ${readKey}`, Accept: "text/event-stream" }
+    });
+    assert.equal(res.status, 200);
+    await res.body.cancel();
+  });
 });
