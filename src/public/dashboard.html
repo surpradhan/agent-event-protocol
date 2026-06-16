@@ -1099,10 +1099,11 @@ function togglePayload(btn) {
   const show = pre.hidden;
   pre.hidden = !show;
   btn.textContent = show ? '▼ payload' : '▶ payload';
+  btn.setAttribute('aria-expanded', String(show));
 }
 function setSessionTitle(id) {
   const el = document.getElementById('session-title');
-  el.innerHTML = `${esc(short(id, 30))} <button class="copy-btn" onclick="copyId(this)" data-copy="${esc(id)}" title="Copy session ID">⎘</button>`;
+  el.innerHTML = `${esc(short(id, 30))} <button class="copy-btn" onclick="copyId(this)" data-copy="${esc(id)}" aria-label="Copy session ID" title="Copy session ID">⎘</button>`;
 }
 const debouncedRefreshSessions = debounce(() => refreshSessions(), 600);
 
@@ -1594,9 +1595,9 @@ function renderTimeline(events) {
         <span class="event-type">${esc(e.type)}</span>
         <span class="badge ${st.b}">${new Date(e.time).toLocaleTimeString()}</span>
       </div>
-      <div class="hint">id: ${esc(short(e.id, 22))} <button class="copy-btn" onclick="event.stopPropagation();copyId(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.stopPropagation();}" data-copy="${esc(e.id)}" title="Copy event ID">⎘</button></div>
+      <div class="hint">id: ${esc(short(e.id, 22))} <button class="copy-btn" onclick="event.stopPropagation();copyId(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.stopPropagation();}" data-copy="${esc(e.id)}" aria-label="Copy event ID" title="Copy event ID">⎘</button></div>
       <div class="hint">causation: ${esc(e.causation_id ? short(e.causation_id, 22) : '–')}</div>
-      <button class="payload-toggle" onclick="event.stopPropagation();togglePayload(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.stopPropagation();}">▶ payload</button>
+      <button class="payload-toggle" aria-expanded="false" onclick="event.stopPropagation();togglePayload(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.stopPropagation();}">▶ payload</button>
       <pre class="payload-body" hidden>${esc(JSON.stringify(e.payload, null, 2))}</pre>`;
     const activateEvent = () => { activeIdx = i; renderTimeline(curEvents); };
     el.setAttribute('role', 'button');
