@@ -1267,6 +1267,7 @@ async function cmdAdmin(positional, flags, serverUrl) {
     return;
   }
 
+  if (!action) { adminHelp(); return; }
   const adminToken = resolveAdminToken(flags);
   const auth = { Authorization: `Bearer ${adminToken}` };
 
@@ -1435,16 +1436,21 @@ async function cmdInit(flags, serverUrl) {
     payload: { message: "aep init test event" },
   };
   let verified = false;
+  let verifyStatus = null;
+  let verifyBody = null;
   try {
     const res = await request("POST", `${host}/events`, testEvent, {
       Authorization: `Bearer ${apiKey}`,
     });
+    verifyStatus = res.status;
+    verifyBody = res.body;
     verified = res.status === 202 || (res.status === 200 && res.body && res.body.duplicate);
   } catch (_) {
     verified = false;
   }
   if (!verified) {
-    console.error(`\x1b[31m✗\x1b[0m Test event was not accepted. The key may not have write scope.`);
+    console.error(`\x1b[31m✗\x1b[0m Test event was not accepted (HTTP ${verifyStatus || "network error"}).`);
+    if (verifyBody) console.error(JSON.stringify(verifyBody));
     process.exit(1);
   }
   console.log(`\x1b[32m✓\x1b[0m Test event accepted.`);
@@ -1597,8 +1603,9 @@ async function cmdExportBulk(positional, flags) {
       const orphans = summary.orphan_tenants || [];
       if (orphans.length > 0 && !allTenants) {
         console.error(
-          `Warning: ${orphans.length} tenant(s) have events but no project and were NOT exported: ` +
-          `${orphans.join(", ")}. Pass --all-tenants to include them.`
+          `⚠️  ${orphans.length} tenant(s) have events but no project and were NOT exported: ` +
+          `${orphans.join(", ")}. Pass --all-tenants (or EXPORT_ALL_TENANTS=1) to include them, ` +
+          `or --tenant <id> to export one.`
         );
       }
     }
@@ -1681,6 +1688,7 @@ async function main() {
       case "export": {
         // "aep export bulk" dispatches to the bulk DB export; anything else is
         // the session-events export (original behaviour, preserved for compat).
+        // "bulk" is a reserved sub-command; server-generated session IDs use ses_<uuid> so collision won't occur in practice
         if (positional[1] === "bulk") {
           await cmdExportBulk(positional, flags);
         } else {
