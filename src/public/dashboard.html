@@ -1040,6 +1040,12 @@ async function fetchJson(url) {
 }
 function setMetric(id, v) { document.getElementById(id).textContent = v; }
 function short(id, n = 20) { return id && id.length > n ? id.slice(0, n - 1) + '…' : (id || ''); }
+// Extract a short display name from a source URI (e.g. "agent://my-agent/v1" → "my-agent")
+function srcLabel(src) {
+  if (!src) return '—';
+  try { const h = new URL(src).hostname; if (h) return h; } catch (_) {}
+  return src.replace(/^[a-z][a-z0-9+\-.]*:\/\//i, '').split('/')[0] || src;
+}
 function esc(s) {
   // Escapes both quote styles so values are safe in double- AND single-quoted
   // attribute/inline-handler contexts (e.g. onclick="fn('${esc(id)}')").
@@ -1094,7 +1100,7 @@ function nudge(id) {
 }
 async function refreshSessions() {
   try {
-    const d = await fetchJson('/sessions');
+    const d = await fetchJson('/sessions?limit=500');
     const sessions = d.sessions || [];
     /* FIX 1: keep SESSIONS metric card in sync on every live refresh */
     setMetric('m-sessions', d.total ?? sessions.length);
@@ -1178,10 +1184,13 @@ function renderSessions(sessions) {
     /* FIX 4: make the full row keyboard-accessible */
     el.setAttribute('role', 'button');
     el.setAttribute('tabindex', '0');
-    el.setAttribute('aria-label', `Session ${s.session_id}, ${s.source}, ${s.event_count} events`);
+    el.setAttribute('aria-label', `Session ${s.session_id}, ${srcLabel(s.source)}, ${s.event_count} events`);
     el.innerHTML = `
       <div class="item-main" title="${esc(s.session_id)}">${esc(short(s.session_id))}</div>
-      <div class="item-sub">${esc(s.source)} · ${s.event_count} event${s.event_count !== 1 ? 's' : ''}</div>
+      <div class="item-sub">
+        ${s.agent_role ? `<span class="role-tag">${esc(s.agent_role)}</span>` : ''}
+        ${esc(srcLabel(s.source))} · ${s.event_count} event${s.event_count !== 1 ? 's' : ''}
+      </div>
       <div class="item-sub">Updated ${ago(s.updated_at)}</div>`;
     const activate = () => {
       selSession = s.session_id; activeIdx = -1; stopPlay();
@@ -2383,11 +2392,13 @@ async function loadAll() {
   // Show loading state while fetching
   document.querySelectorAll('.metric-grid .v').forEach(el => { el.style.opacity = '0.35'; el.style.transition = 'opacity .3s'; });
   try {
-    const [metrics, sd] = await Promise.all([fetchJson('/metrics'), fetchJson('/sessions')]);
+    const [metrics, sd] = await Promise.all([fetchJson('/metrics'), fetchJson('/sessions?limit=500')]);
     setMetric('m-sessions',  metrics.session_count || 0);
     setMetric('m-received',  metrics.received      || 0);
     setMetric('m-accepted',  metrics.accepted       || 0);
-    setMetric('m-rejected',  metrics.rejected       || 0);
+    const rejCount = metrics.rejected || 0;
+    setMetric('m-rejected', rejCount);
+    document.getElementById('m-rejected').style.color = rejCount > 0 ? 'var(--warn)' : '';
     setMetric('m-workflows', metrics.workflow_count || 0);
 
     const sessions = sd.sessions || [];
