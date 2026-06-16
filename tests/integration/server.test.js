@@ -3769,13 +3769,17 @@ describe("SSE — rejection.received broadcast", () => {
       "SSE endpoint should return text/event-stream"
     );
 
-    // Collect raw SSE bytes into a string, resolve as soon as we see the event
+    // Collect raw SSE bytes into a string, resolve as soon as we see the event.
+    // Hoist reader so the timeout handler can cancel it to stop the dangling read loop.
+    const reader = sseRes.body.getReader();
     let resolve, reject;
     const found = new Promise((res, rej) => { resolve = res; reject = rej; });
-    const timer = setTimeout(() => reject(new Error("rejection.received SSE not received within timeout")), timeoutMs);
+    const timer = setTimeout(() => {
+      reader.cancel().catch(() => {});
+      reject(new Error("rejection.received SSE not received within timeout"));
+    }, timeoutMs);
 
     (async () => {
-      const reader = sseRes.body.getReader();
       let buf = "";
       try {
         while (true) {
@@ -3857,5 +3861,71 @@ describe("SSE — rejection.received broadcast", () => {
     assert.equal(payload.type, "rejection.received", "SSE message type should be rejection.received");
     assert.equal(payload.reason, "signature_invalid", "reason should be signature_invalid");
     assert.ok(typeof payload.total === "number" && payload.total >= 1, "total should be a positive number");
+  });
+
+  test("rejection.received is NOT broadcast to a different tenant's SSE stream", async () => {
+    // Negative isolation: SSE subscriber is tenant-test (readKey); rejection fires
+    // for tenant-other-sse-isolation — it must not reach the subscriber.
+    const otherKeyRes = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({
+        tenantId: "tenant-other-sse-isolation",
+        label: "sse-isolation-test",
+        scopes: ["read", "write"],
+      }),
+    });
+    const otherWriteKey = (await otherKeyRes.json()).key;
+
+    // Open SSE stream as tenant-test
+    const sseRes = await fetch(`${baseUrl}/stream`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(sseRes.status, 200);
+
+    let received = false;
+    const reader = sseRes.body.getReader();
+
+    // Read loop — set received=true if any rejection.received arrives
+    const readerDone = (async () => {
+      let buf = "";
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += Buffer.from(value).toString();
+          const messages = buf.split(/\n\n/);
+          buf = messages.pop();
+          for (const msg of messages) {
+            const eventLine = msg.split("\n").find(l => l.startsWith("event: "));
+            if (eventLine && eventLine.slice(7).trim() === "rejection.received") {
+              received = true;
+            }
+          }
+        }
+      } catch { /* cancelled */ }
+    })();
+
+    // Post a bad event using the OTHER tenant's key
+    const badEvent = {
+      specversion: "0.2.0",
+      id: `evt_sse_iso_${crypto.randomUUID().replace(/-/g, "")}`,
+      type: "task.created",
+      session_id: "ses_sse_isolation_test",
+      // missing required fields → schema_invalid for tenant-other-sse-isolation
+    };
+    const res = await fetch(`${baseUrl}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${otherWriteKey}` },
+      body: JSON.stringify(badEvent),
+    });
+    assert.equal(res.status, 400, "Bad event should be rejected 400");
+
+    // Wait for any cross-tenant bleed to arrive, then cancel
+    await new Promise(r => setTimeout(r, 500));
+    await reader.cancel().catch(() => {});
+    await readerDone;
+
+    assert.equal(received, false, "rejection.received must NOT arrive on a cross-tenant SSE stream");
   });
 });
