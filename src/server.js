@@ -110,6 +110,21 @@ function pushRejection({ event_id, event_type, session_id, reason, detail, error
     errors:     errors || null
   });
   if (recentRejections.length > MAX_REJECTIONS) recentRejections.shift();
+  // Broadcast to SSE clients so the dashboard badge and metric card update in
+  // real time without polling.  broadcastSse is defined later in this file but
+  // pushRejection is only *called* from the /events handler (also later), so
+  // the forward reference is safe at call-time.
+  // tenant_id is always a concrete string from requireApiKey("write"); || "default"
+  // matches the stored record at line 107 for consistency.
+  // Note: GET /rejections with a dashboard token returns the unfiltered list;
+  // SSE is always per-tenant since /stream requires an API key.
+  const tenantId = tenant_id || "default";
+  const perTenantTotal = recentRejections.filter(r => r.tenant_id === tenantId).length;
+  broadcastSse(
+    "rejection.received",
+    { type: "rejection.received", reason, total: perTenantTotal },
+    tenantId
+  );
 }
 
 // ---------------------------------------------------------------------------
