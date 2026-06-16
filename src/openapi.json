@@ -653,10 +653,7 @@
                   "oneOf": [
                     { "$ref": "#/components/schemas/ErrorResponse" },
                     { "$ref": "#/components/schemas/SignatureError" }
-                  ],
-                  "discriminator": {
-                    "propertyName": "detail"
-                  }
+                  ]
                 }
               }
             }
