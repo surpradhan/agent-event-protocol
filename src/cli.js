@@ -1267,6 +1267,7 @@ async function cmdAdmin(positional, flags, serverUrl) {
     return;
   }
 
+  // Invariant: resolveAdminToken is never called on the bare help path.
   if (!action) { adminHelp(); return; }
   const adminToken = resolveAdminToken(flags);
   const auth = { Authorization: `Bearer ${adminToken}` };
@@ -1287,6 +1288,7 @@ async function cmdAdmin(positional, flags, serverUrl) {
         return;
       }
       const k = res.body;
+      if (!k || !k.key) die("Server returned 201 but response body is missing 'key'.");
       console.log(`\x1b[32m✓\x1b[0m API key created`);
       console.log(`  key: \x1b[1m${k.key}\x1b[0m`);
       console.log(`  id:  ${k.id}`);
@@ -1462,7 +1464,7 @@ async function cmdInit(flags, serverUrl) {
   console.log("");
   console.log("\x1b[1mSetup complete!\x1b[0m  Add to your shell profile:");
   console.log("");
-  console.log(`  export AEP_API_KEY=${apiKey}`);
+  console.log(`  export AEP_API_KEY="${apiKey}"`);
   console.log("");
   console.log(`Dashboard: \x1b[36m${dashboardUrl}\x1b[0m`);
   console.log("");
@@ -1601,7 +1603,7 @@ async function cmdExportBulk(positional, flags) {
         }
       }
       const orphans = summary.orphan_tenants || [];
-      if (orphans.length > 0 && !allTenants) {
+      if (orphans.length > 0 && !summary.allTenants) {
         console.error(
           `⚠️  ${orphans.length} tenant(s) have events but no project and were NOT exported: ` +
           `${orphans.join(", ")}. Pass --all-tenants (or EXPORT_ALL_TENANTS=1) to include them, ` +
@@ -1688,7 +1690,7 @@ async function main() {
       case "export": {
         // "aep export bulk" dispatches to the bulk DB export; anything else is
         // the session-events export (original behaviour, preserved for compat).
-        // "bulk" is a reserved sub-command; server-generated session IDs use ses_<uuid> so collision won't occur in practice
+        // "bulk" is intercepted here before cmdExport sees positional[1]
         if (positional[1] === "bulk") {
           await cmdExportBulk(positional, flags);
         } else {
