@@ -452,6 +452,7 @@ v1.get("/sessions/:sessionId", requireReadAccess, validatePathParams, async (req
  * Query params:
  *   type    — filter by event type (exact match)
  *   q       — free-text search across id, type, causation_id, payload
+ *   role    — filter by agent role (exact match)
  *   limit   — page size (1–1000, default 100)
  *   cursor  — opaque pagination token from a previous response's next_cursor
  *
@@ -463,10 +464,10 @@ v1.get("/sessions/:sessionId", requireReadAccess, validatePathParams, async (req
  */
 v1.get("/sessions/:sessionId/events", requireReadAccess, validatePathParams, validateQueryParams, async (req, res) => {
   // validateQueryParams coerces any repeated param (?type=a&type=b) to a single
-  // value (last wins) before this handler runs, so type/q/limit/cursor are scalars.
-  const { type = "", q = "", limit, cursor } = req.query;
+  // value (last wins) before this handler runs, so type/q/role/limit/cursor are scalars.
+  const { type = "", q = "", role = "", limit, cursor } = req.query;
   const result = await db.getPaginatedEvents(req.params.sessionId, {
-    type, q, tenantId: req.tenant_id, limit, cursor
+    type, q, role, tenantId: req.tenant_id, limit, cursor
   });
 
   // Validate tenant ownership of returned events (defense-in-depth against SQL injection)
@@ -500,14 +501,14 @@ v1.get("/sessions/:sessionId/tree", requireReadAccess, validatePathParams, async
 v1.get("/sessions/:sessionId/export", requireReadAccess, validatePathParams, validateQueryParams, async (req, res) => {
   const sessionId = req.params.sessionId;
   // validateQueryParams coerces any repeated param (?format=csv&format=json) to a
-  // single value (last wins) before this handler, so format/type/q are scalars.
+  // single value (last wins) before this handler, so format/type/q/role are scalars.
   // Routing through it also newly applies the shared q/type length + cursor/limit
   // 400s to /export (parity with /events). /export ignores cursor/limit, so a
   // VALID one is a no-op — but an INVALID ?cursor=/?limit= now 400s instead of
   // being silently ignored. Intentional (no legitimate export client sends them).
   const format = (req.query.format || "json").toLowerCase();
-  const { type = "", q = "" } = req.query;
-  const events = await db.getSessionEvents(sessionId, { type, q, tenantId: req.tenant_id });
+  const { type = "", q = "", role = "" } = req.query;
+  const events = await db.getSessionEvents(sessionId, { type, q, role, tenantId: req.tenant_id });
 
   // Validate tenant ownership of events (defense-in-depth against SQL injection)
   if (!validateTenantOwnership(events, req.tenant_id, "session_events")) {

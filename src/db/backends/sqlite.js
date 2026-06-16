@@ -600,25 +600,32 @@ class SqliteBackend extends StorageBackend {
     return this._insertEventTx(event, tenantId);
   }
 
-  async getSessionEvents(sessionId, { type = "", q = "", tenantId = null } = {}) {
-    let rows;
+  async getSessionEvents(sessionId, { type = "", q = "", role = "", tenantId = null } = {}) {
+    let sql = `
+      SELECT raw_payload
+      FROM   events
+      WHERE  session_id = ?
+    `;
+    const params = [sessionId];
 
-    if (tenantId) {
-      // Tenant-scoped: only return events belonging to this tenant.
-      if (type) {
-        rows = this._stmts.getEventsBySessionTypeTenant.all(sessionId, type, tenantId);
-      } else {
-        rows = this._stmts.getEventsBySessionTenant.all(sessionId, tenantId);
-      }
-    } else {
-      // Full access (admin/dashboard): no tenant filter.
-      if (type) {
-        rows = this._stmts.getEventsBySessionAndType.all(sessionId, type);
-      } else {
-        rows = this._stmts.getEventsBySession.all(sessionId);
-      }
+    if (type) {
+      sql += " AND type = ?";
+      params.push(type);
     }
 
+    if (role) {
+      sql += " AND agent_role = ?";
+      params.push(role);
+    }
+
+    if (tenantId) {
+      sql += " AND tenant_id = ?";
+      params.push(tenantId);
+    }
+
+    sql += " ORDER BY time ASC";
+
+    const rows = this._db.prepare(sql).all(...params);
     const events = rows.map(r => JSON.parse(r.raw_payload));
     return applyTextFilter(events, q);
   }
@@ -1105,7 +1112,7 @@ class SqliteBackend extends StorageBackend {
     };
   }
 
-  async getPaginatedEvents(sessionId, { type = "", q = "", tenantId = null, limit = 100, cursor = null } = {}) {
+  async getPaginatedEvents(sessionId, { type = "", q = "", role = "", tenantId = null, limit = 100, cursor = null } = {}) {
     const pageSize = Math.min(Math.max(1, parseInt(limit, 10) || 100), 1000);
     const decoded  = decodeCursor(cursor);
 
@@ -1117,6 +1124,7 @@ class SqliteBackend extends StorageBackend {
       WHERE  session_id = ?
         AND  (? IS NULL OR tenant_id = ?)
         AND  (? = '' OR type = ?)
+        AND  (? = '' OR agent_role = ?)
         AND  (? IS NULL OR time > ? OR (time = ? AND id > ?))
       ORDER  BY time ASC, id ASC
       LIMIT  ?
@@ -1128,6 +1136,8 @@ class SqliteBackend extends StorageBackend {
       tenantId,                           // used if tenant filter is active
       type || "",                         // type check: value or empty string
       type,                               // used if type filter is active
+      role || "",                         // role check: value or empty string
+      role,                               // used if role filter is active
       decoded?.time,                      // cursor check: filter or NULL
       decoded?.time,                      // used if cursor filter is active (time >)
       decoded?.time,                      // used if cursor filter AND same time (time =)

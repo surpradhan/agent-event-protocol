@@ -12,6 +12,7 @@
  *   DB binding (which would throw → 500). See coerceArrayParams below.
  * - ?q (free-text search): max 200 characters
  * - ?type: max 100 characters
+ * - ?role: max 100 characters
  * - ?cursor: must be valid base64url
  * - ?limit: must be positive integer
  * - session_id and trace_id in path: must be UUID v4 format
@@ -121,6 +122,17 @@ function validateQueryParams(req, res, next) {
       return res.status(400).json({
         error: "Bad Request",
         message: "Query parameter 'type' exceeds maximum length of 100 characters"
+      });
+    }
+  }
+
+  // Validate ?role (agent role filter)
+  if (req.query.role !== undefined) {
+    const role = String(req.query.role);
+    if (role.length > 100) {
+      return res.status(400).json({
+        error: "Bad Request",
+        message: "Query parameter 'role' exceeds maximum length of 100 characters"
       });
     }
   }
