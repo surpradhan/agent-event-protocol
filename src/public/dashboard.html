@@ -1075,14 +1075,27 @@ const debounce = (fn, ms) => {
   let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 };
 function copyId(btn) {
-  navigator.clipboard.writeText(btn.dataset.copy).then(() => {
-    const orig = btn.textContent;
-    btn.textContent = '✓';
-    setTimeout(() => { btn.textContent = orig; }, 1200);
-  }).catch(() => {});
+  const text = btn.dataset.copy;
+  const orig = btn.textContent;
+  const finish = ok => {
+    btn.textContent = ok ? '✓' : '✗';
+    setTimeout(() => { if (btn.isConnected) btn.textContent = orig; }, 1200);
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(() => finish(true)).catch(() => finish(false));
+  } else {
+    // execCommand fallback for HTTP (non-secure) contexts
+    try {
+      const ta = Object.assign(document.createElement('textarea'), { value: text, style: 'position:fixed;opacity:0' });
+      document.body.appendChild(ta); ta.select();
+      finish(document.execCommand('copy'));
+      ta.remove();
+    } catch (_) { finish(false); }
+  }
 }
 function togglePayload(btn) {
   const pre = btn.nextElementSibling;
+  if (!pre) return;
   const show = pre.hidden;
   pre.hidden = !show;
   btn.textContent = show ? '▼ payload' : '▶ payload';
@@ -1581,10 +1594,10 @@ function renderTimeline(events) {
         <span class="event-type">${esc(e.type)}</span>
         <span class="badge ${st.b}">${new Date(e.time).toLocaleTimeString()}</span>
       </div>
-      <div class="hint">id: ${esc(short(e.id, 22))} <button class="copy-btn" onclick="event.stopPropagation();copyId(this)" data-copy="${esc(e.id)}" title="Copy event ID">⎘</button></div>
+      <div class="hint">id: ${esc(short(e.id, 22))} <button class="copy-btn" onclick="event.stopPropagation();copyId(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.stopPropagation();}" data-copy="${esc(e.id)}" title="Copy event ID">⎘</button></div>
       <div class="hint">causation: ${esc(e.causation_id ? short(e.causation_id, 22) : '–')}</div>
-      <button class="payload-toggle" onclick="event.stopPropagation();togglePayload(this)">▶ payload</button>
-      <pre hidden>${esc(JSON.stringify(e.payload, null, 2))}</pre>`;
+      <button class="payload-toggle" onclick="event.stopPropagation();togglePayload(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.stopPropagation();}">▶ payload</button>
+      <pre class="payload-body" hidden>${esc(JSON.stringify(e.payload, null, 2))}</pre>`;
     const activateEvent = () => { activeIdx = i; renderTimeline(curEvents); };
     el.setAttribute('role', 'button');
     el.setAttribute('tabindex', '0');
