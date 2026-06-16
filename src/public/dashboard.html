@@ -2692,6 +2692,10 @@ function whToggleCreateForm() {
   if (open) {
     document.getElementById('wh-url').focus();
     whFormMsg('', '');
+  } else {
+    // Closing: reset form fields and uncheck specific-type checkboxes.
+    document.getElementById('wh-create-form').reset();
+    document.querySelectorAll('.wh-et-cb').forEach(c => { c.checked = false; });
   }
 }
 
@@ -2713,7 +2717,11 @@ async function whCreateSubmit(ev) {
   // Determine event_types
   const allChk = document.getElementById('wh-et-all');
   const specific = [...document.querySelectorAll('.wh-et-specific')].filter(c => c.checked).map(c => c.value);
-  const eventTypes = allChk.checked ? ['*'] : specific.length ? specific : ['*'];
+  const eventTypes = allChk.checked ? ['*'] : specific.length ? specific : null;
+  if (!eventTypes) {
+    whFormMsg('Select at least one event type, or check "All events".', 'err');
+    return;
+  }
 
   const body = { target_url: url, event_types: eventTypes };
   if (label) body.label = label;
@@ -2791,7 +2799,7 @@ function renderWebhooks(webhooks) {
         <div class="wh-signing-secret" role="alert">
           <span class="hint">Signing secret (shown once — copy now):</span>
           <span id="wh-secret-${esc(w.id)}">${esc(window._whPendingSecret.secret)}</span>
-          <button class="copy-btn" onclick="whCopySecret('${esc(w.id)}')" aria-label="Copy signing secret" title="Copy signing secret">⎘</button>
+          <button id="wh-secret-btn-${esc(w.id)}" class="copy-btn" onclick="whCopySecret('${esc(w.id)}')" aria-label="Copy signing secret" title="Copy signing secret">⎘</button>
         </div>`;
       window._whPendingSecret = null; // consumed
     }
@@ -2800,7 +2808,7 @@ function renderWebhooks(webhooks) {
         <div class="wh-row-head">
           <code>${esc(w.id)}</code>
           <span style="color:${enabledColor};font-size:11px;font-weight:600">${enabledLabel}</span>
-          <span class="hint" style="font-size:11px">${ago(w.created_at)}</span>
+          <span class="hint" style="font-size:11px">${esc(ago(w.created_at))}</span>
           <div class="wh-row-actions">
             <button class="${toggleClass}"
               onclick="whToggleEnabled('${esc(w.id)}', ${!w.enabled})"
@@ -2822,7 +2830,7 @@ function renderWebhooks(webhooks) {
 function whCopySecret(id) {
   const el = document.getElementById('wh-secret-' + id);
   if (!el) return;
-  const btn = el.nextElementSibling;
+  const btn = document.getElementById('wh-secret-btn-' + id);
   const text = el.textContent;
   const orig = btn.textContent;
   const finish = ok => {
@@ -2840,6 +2848,19 @@ function whCopySecret(id) {
   }
 }
 
+// Show/clear a row-level message (below the webhook row).
+function whRowMsg(id, msg, type) {
+  const old = document.getElementById('wh-row-msg-' + id);
+  if (old) old.remove();
+  if (!msg) return;
+  const div = document.createElement('div');
+  div.id = 'wh-row-msg-' + id;
+  div.className = 'wh-form-msg' + (type ? ' ' + type : '');
+  div.textContent = msg;
+  const row = document.getElementById('wh-row-' + id);
+  if (row) row.appendChild(div);
+}
+
 // PATCH /webhooks/:id — toggle enabled state.
 async function whToggleEnabled(id, newEnabled) {
   const tok = getToken();
@@ -2852,12 +2873,13 @@ async function whToggleEnabled(id, newEnabled) {
     if (r.status === 401) { clearToken(); showAuthOverlay('Session expired.'); return; }
     if (!r.ok) {
       const data = await r.json().catch(() => ({}));
-      alert('Could not update webhook: ' + (data.message || ('HTTP ' + r.status)));
+      whRowMsg(id, 'Could not update webhook: ' + (data.message || data.error || ('HTTP ' + r.status)), 'err');
       return;
     }
+    whRowMsg(id, '', '');
     await loadWebhooks();
   } catch (e) {
-    alert('Request failed: ' + e.message);
+    whRowMsg(id, 'Request failed: ' + e.message, 'err');
   }
 }
 
@@ -2871,7 +2893,7 @@ async function whDelete(id) {
     if (r.status === 401) { clearToken(); showAuthOverlay('Session expired.'); return; }
     if (!r.ok && r.status !== 204) {
       const data = await r.json().catch(() => ({}));
-      alert('Could not delete webhook: ' + (data.message || ('HTTP ' + r.status)));
+      whRowMsg(id, 'Could not delete webhook: ' + (data.message || data.error || ('HTTP ' + r.status)), 'err');
       return;
     }
     // If deleted webhook was the selected one, hide deliveries panel.
@@ -2881,7 +2903,7 @@ async function whDelete(id) {
     }
     await loadWebhooks();
   } catch (e) {
-    alert('Request failed: ' + e.message);
+    whRowMsg(id, 'Request failed: ' + e.message, 'err');
   }
 }
 
