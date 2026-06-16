@@ -123,3 +123,60 @@ describe("URL handling in CLI", () => {
     assert.equal(result.flags.key, "aep_test_key_123");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests for parseArgs routing of new commands (admin keys, init, export bulk)
+// ---------------------------------------------------------------------------
+
+describe("parseArgs routing for new commands", () => {
+  test("aep admin keys create --label foo routes correctly", () => {
+    const result = parseArgs(["node", "cli.js", "admin", "keys", "create", "--label", "foo"]);
+    assert.equal(result.positional[0], "admin");
+    assert.equal(result.positional[1], "keys");
+    assert.equal(result.positional[2], "create");
+    assert.equal(result.flags.label, "foo");
+  });
+
+  test("aep admin keys delete some-id captures the id", () => {
+    const result = parseArgs(["node", "cli.js", "admin", "keys", "delete", "some-id"]);
+    assert.equal(result.positional[0], "admin");
+    assert.equal(result.positional[1], "keys");
+    assert.equal(result.positional[2], "delete");
+    assert.equal(result.positional[3], "some-id");
+  });
+
+  test("aep admin keys list routes correctly", () => {
+    const result = parseArgs(["node", "cli.js", "admin", "keys", "list"]);
+    assert.equal(result.positional[0], "admin");
+    assert.equal(result.positional[1], "keys");
+    assert.equal(result.positional[2], "list");
+    assert.deepEqual(result.flags, {});
+  });
+
+  test("aep export bulk --dir /x --format csv routes correctly", () => {
+    const result = parseArgs(["node", "cli.js", "export", "bulk", "--dir", "/x", "--format", "csv"]);
+    assert.equal(result.positional[0], "export");
+    assert.equal(result.positional[1], "bulk");
+    assert.equal(result.flags.dir, "/x");
+    assert.equal(result.flags.format, "csv");
+  });
+
+  test("aep init --admin-token tok routes correctly", () => {
+    const result = parseArgs(["node", "cli.js", "init", "--admin-token", "tok"]);
+    assert.equal(result.positional[0], "init");
+    assert.equal(result.flags["admin-token"], "tok");
+  });
+
+  test("aep admin keys with no action only routes to admin/keys", () => {
+    const result = parseArgs(["node", "cli.js", "admin", "keys"]);
+    assert.equal(result.positional[0], "admin");
+    assert.equal(result.positional[1], "keys");
+    assert.equal(result.positional[2], undefined);
+  });
+
+  test("aep export bulk --all-tenants passes the flag", () => {
+    const result = parseArgs(["node", "cli.js", "export", "bulk", "--all-tenants"]);
+    assert.equal(result.positional[1], "bulk");
+    assert.equal(result.flags["all-tenants"], true);
+  });
+});
