@@ -473,8 +473,11 @@
 
     /* ── Rejected full-width view ── */
     #view-rejected .reject-panel { max-width: 860px; }
-    .reject-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
-    .reject-toolbar input { flex: 1; }
+    .reject-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+    .reject-toolbar input[type="datetime-local"] { flex: 1; min-width: 160px; color-scheme: dark; }
+    .reject-toolbar input:not([type="datetime-local"]) { flex: 1; }
+    .qs-btns { display: flex; gap: 4px; flex-shrink: 0; }
+    .qs-btns .btn { padding: 4px 8px; font-size: 11px; }
 
     /* Policy analytics panel */
     .an-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 14px; }
@@ -772,8 +775,14 @@
         <button class="btn secondary" onclick="loadAnalytics()">Refresh</button>
       </div>
       <div class="reject-toolbar">
-        <input id="an-since" type="text" placeholder="Since (ISO-8601, optional)" autocomplete="off" />
-        <input id="an-until" type="text" placeholder="Until (ISO-8601, optional)" autocomplete="off" />
+        <input id="an-since" type="datetime-local" autocomplete="off" aria-label="Since (Policy)" />
+        <input id="an-until" type="datetime-local" autocomplete="off" aria-label="Until (Policy)" />
+        <div class="qs-btns">
+          <button class="btn secondary" onclick="setQuickRange('an',1);loadAnalytics()">1h</button>
+          <button class="btn secondary" onclick="setQuickRange('an',24);loadAnalytics()">24h</button>
+          <button class="btn secondary" onclick="setQuickRange('an',168);loadAnalytics()">7d</button>
+          <button class="btn secondary" onclick="clearRange('an');loadAnalytics()">Clear</button>
+        </div>
         <button class="btn secondary" onclick="loadAnalytics()">Apply</button>
       </div>
       <div id="an-body">
@@ -793,8 +802,14 @@
         <button class="btn secondary" onclick="loadPerformance()">Refresh</button>
       </div>
       <div class="reject-toolbar">
-        <input id="pf-since" type="text" placeholder="Since (ISO-8601, optional)" autocomplete="off" />
-        <input id="pf-until" type="text" placeholder="Until (ISO-8601, optional)" autocomplete="off" />
+        <input id="pf-since" type="datetime-local" autocomplete="off" aria-label="Since (Performance)" />
+        <input id="pf-until" type="datetime-local" autocomplete="off" aria-label="Until (Performance)" />
+        <div class="qs-btns">
+          <button class="btn secondary" onclick="setQuickRange('pf',1);loadPerformance()">1h</button>
+          <button class="btn secondary" onclick="setQuickRange('pf',24);loadPerformance()">24h</button>
+          <button class="btn secondary" onclick="setQuickRange('pf',168);loadPerformance()">7d</button>
+          <button class="btn secondary" onclick="clearRange('pf');loadPerformance()">Clear</button>
+        </div>
         <button class="btn secondary" onclick="loadPerformance()">Apply</button>
       </div>
       <div id="pf-body">
@@ -840,12 +855,22 @@
           <label>Limit
             <input id="cq-limit" type="number" min="1" max="1000" value="100" />
           </label>
-          <label>Since <span class="hint">(ISO-8601)</span>
-            <input id="cq-since" type="text" placeholder="optional" autocomplete="off" />
+          <label>Since
+            <input id="cq-since" type="datetime-local" autocomplete="off" style="color-scheme:dark" />
           </label>
-          <label>Until <span class="hint">(ISO-8601)</span>
-            <input id="cq-until" type="text" placeholder="optional" autocomplete="off" />
+          <label>Until
+            <input id="cq-until" type="datetime-local" autocomplete="off" style="color-scheme:dark" />
           </label>
+        </div>
+
+        <div style="margin:4px 0 8px;display:flex;gap:4px;align-items:center">
+          <span class="hint" style="font-size:11px">Quick range:</span>
+          <div class="qs-btns">
+            <button class="btn secondary" onclick="setQuickRange('cq',1)">1h</button>
+            <button class="btn secondary" onclick="setQuickRange('cq',24)">24h</button>
+            <button class="btn secondary" onclick="setQuickRange('cq',168)">7d</button>
+            <button class="btn secondary" onclick="clearRange('cq')">Clear</button>
+          </div>
         </div>
 
         <div class="cq-actions">
@@ -875,8 +900,14 @@
         <button class="btn secondary" onclick="loadAnomalies()">Refresh</button>
       </div>
       <div class="reject-toolbar">
-        <input id="ad-since" type="text" placeholder="Since (ISO-8601, optional)" autocomplete="off" />
-        <input id="ad-until" type="text" placeholder="Until (ISO-8601, optional)" autocomplete="off" />
+        <input id="ad-since" type="datetime-local" autocomplete="off" aria-label="Since (Anomalies)" />
+        <input id="ad-until" type="datetime-local" autocomplete="off" aria-label="Until (Anomalies)" />
+        <div class="qs-btns">
+          <button class="btn secondary" onclick="setQuickRange('ad',1);loadAnomalies()">1h</button>
+          <button class="btn secondary" onclick="setQuickRange('ad',24);loadAnomalies()">24h</button>
+          <button class="btn secondary" onclick="setQuickRange('ad',168);loadAnomalies()">7d</button>
+          <button class="btn secondary" onclick="clearRange('ad');loadAnomalies()">Clear</button>
+        </div>
         <input id="ad-threshold" type="number" step="0.5" min="0.5" placeholder="threshold (3.5)" style="max-width:130px" />
         <button class="btn secondary" onclick="loadAnomalies()">Apply</button>
       </div>
@@ -1116,6 +1147,20 @@ function setRejectedMetric(count) {
   setMetric('m-rejected', count);
   document.getElementById('m-rejected').style.color = count > 0 ? 'var(--warn)' : '';
 }
+function fmtLocal(d) {
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function setQuickRange(prefix, hours) {
+  const now = new Date();
+  document.getElementById(prefix + '-since').value = fmtLocal(new Date(now - hours * 3600000));
+  document.getElementById(prefix + '-until').value = fmtLocal(now);
+}
+function clearRange(prefix) {
+  document.getElementById(prefix + '-since').value = '';
+  document.getElementById(prefix + '-until').value = '';
+}
+function toIso(localVal) { return localVal ? new Date(localVal).toISOString() : ''; }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SSE / Real-time
@@ -1972,8 +2017,8 @@ function renderRejections() {
 // ─────────────────────────────────────────────────────────────────────────────
 async function loadAnalytics() {
   const body  = document.getElementById('an-body');
-  const since = document.getElementById('an-since').value.trim();
-  const until = document.getElementById('an-until').value.trim();
+  const since = toIso(document.getElementById('an-since').value);
+  const until = toIso(document.getElementById('an-until').value);
   const qs = new URLSearchParams();
   if (since) qs.set('since', since);
   if (until) qs.set('until', until);
@@ -2051,8 +2096,8 @@ function renderAnalytics(a) {
 // ─────────────────────────────────────────────────────────────────────────────
 async function loadPerformance() {
   const body  = document.getElementById('pf-body');
-  const since = document.getElementById('pf-since').value.trim();
-  const until = document.getElementById('pf-until').value.trim();
+  const since = toIso(document.getElementById('pf-since').value);
+  const until = toIso(document.getElementById('pf-until').value);
   const qs = new URLSearchParams();
   if (since) qs.set('since', since);
   if (until) qs.set('until', until);
@@ -2199,8 +2244,8 @@ function cqBuildSpec() {
   if (distinct) spec.aggregations = [{ op: 'count' }, { op: 'count_distinct', field: distinct }];
   const bucket = document.getElementById('cq-bucket').value;
   if (bucket) spec.time_bucket = bucket;
-  const since = document.getElementById('cq-since').value.trim();
-  const until = document.getElementById('cq-until').value.trim();
+  const since = toIso(document.getElementById('cq-since').value);
+  const until = toIso(document.getElementById('cq-until').value);
   if (since) spec.since = since;
   if (until) spec.until = until;
   const limit = parseInt(document.getElementById('cq-limit').value, 10);
@@ -2300,8 +2345,8 @@ async function deleteSavedQuery(id) {
 // ─────────────────────────────────────────────────────────────────────────────
 async function loadAnomalies() {
   const body = document.getElementById('ad-body');
-  const since = document.getElementById('ad-since').value.trim();
-  const until = document.getElementById('ad-until').value.trim();
+  const since = toIso(document.getElementById('ad-since').value);
+  const until = toIso(document.getElementById('ad-until').value);
   const thr   = document.getElementById('ad-threshold').value.trim();
   const qs = new URLSearchParams();
   if (since) qs.set('since', since);
