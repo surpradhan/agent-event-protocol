@@ -1479,7 +1479,7 @@ function switchMain(v) {
   document.getElementById('view-custom').style.display = v === 'custom' ? '' : 'none';
   document.getElementById('view-anomalies').style.display = v === 'anomalies' ? '' : 'none';
   document.getElementById('view-webhooks').style.display = v === 'webhooks' ? '' : 'none';
-  for (const id of ['sessions','workflows','rejected','analytics','performance','custom','anomalies','webhooks']) {
+  for (const id of VALID_VIEWS) {
     const btn = document.getElementById('tab-' + id);
     const active = id === v;
     btn.className        = 'tab-btn' + (active ? ' active' : '');
