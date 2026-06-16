@@ -294,6 +294,17 @@ cp .env.example .env
 docker compose up -d
 ```
 
+To run the pre-built image directly (without Compose):
+
+```bash
+docker build -t aep-ingest .
+docker run -p 8787:8787 \
+  -e ADMIN_TOKEN=change-me \
+  -e DASHBOARD_TOKEN=change-me \
+  -v aep_data:/data \
+  aep-ingest
+```
+
 ---
 
 ## API Response Formats
