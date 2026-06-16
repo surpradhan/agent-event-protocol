@@ -4123,3 +4123,44 @@ describe("POST /auth/sse-ticket", () => {
     await res.body.cancel();
   });
 });
+
+describe("API versioning — /v1 prefix and API-Version header", () => {
+  test("API-Version: 1 header is present on unversioned responses", async () => {
+    const res = await fetch(`${baseUrl}/health`);
+    assert.equal(res.headers.get("api-version"), "1");
+  });
+
+  test("GET /v1/sessions returns the same 200 as GET /sessions", async () => {
+    const bare = await fetch(`${baseUrl}/sessions`, {
+      headers: { Authorization: `Bearer ${readKey}` }
+    });
+    const versioned = await fetch(`${baseUrl}/v1/sessions`, {
+      headers: { Authorization: `Bearer ${readKey}` }
+    });
+    assert.equal(versioned.status, 200);
+    assert.equal(versioned.status, bare.status);
+    assert.equal(versioned.headers.get("api-version"), "1");
+  });
+
+  test("POST /v1/events accepts a valid event", async () => {
+    const event = makeEvent({ id: `evt_v1_${crypto.randomUUID().replace(/-/g, "")}`, session_id: "ses_v1" });
+    const res = await fetch(`${baseUrl}/v1/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeKey}` },
+      body: JSON.stringify(event)
+    });
+    assert.equal(res.status, 202);
+    const body = await res.json();
+    assert.ok(body.accepted);
+  });
+
+  test("GET /v1/health returns 404 (infra endpoints are not versioned)", async () => {
+    const res = await fetch(`${baseUrl}/v1/health`);
+    assert.equal(res.status, 404);
+  });
+
+  test("GET /v1/metrics/prometheus returns 404 (Prometheus endpoint is not versioned)", async () => {
+    const res = await fetch(`${baseUrl}/v1/metrics/prometheus`);
+    assert.equal(res.status, 404);
+  });
+});
