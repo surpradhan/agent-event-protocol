@@ -1242,6 +1242,16 @@ describe("Security — XSS Prevention in Query Parameters", () => {
  * with proper atomic operations to prevent TOCTOU race conditions.
  */
 describe("Security — SSE Connection Limits", () => {
+  // Collected across both tests so the after() hook can drain them all before
+  // subsequent SSE tests run, even under --test-name-pattern filtered runs.
+  const allConns = [];
+
+  after(async () => {
+    for (const conn of allConns) conn.body?.cancel?.();
+    // Give the server's close-handler a tick to decrement the counters.
+    await new Promise(r => setImmediate(r));
+  });
+
   test("SSE connection limit is enforced per-tenant", async () => {
     const connections = [];
     const MAX_ATTEMPTS = 105; // Try to exceed the 100-per-tenant limit
@@ -1260,6 +1270,7 @@ describe("Security — SSE Connection Limits", () => {
 
         assert.equal(res.status, 200, `Connection ${i} should succeed`);
         connections.push(res);
+        allConns.push(res);
 
         // Don't keep reading the stream to avoid blocking; just verify we got 200
         // In a real test, we'd keep connections alive and verify behavior
@@ -1288,10 +1299,8 @@ describe("Security — SSE Connection Limits", () => {
         "Should have hit limit after multiple connections"
       );
     } finally {
-      // Clean up: close all connections
-      for (const conn of connections) {
-        conn.body?.cancel?.();
-      }
+      // Belt-and-suspenders: cancel local refs immediately; after() also covers them.
+      for (const conn of connections) conn.body?.cancel?.();
     }
   });
 
@@ -1306,15 +1315,16 @@ describe("Security — SSE Connection Limits", () => {
         // Verify Retry-After header
         const retryAfter = res.headers.get("Retry-After");
         assert.equal(retryAfter, "60", "Retry-After header should be present on 429 response");
+        // Cancel connections opened before the 429; after() also covers allConns.
+        for (const conn of connections) conn.body?.cancel?.();
         return; // Test passed
       }
       connections.push(res);
+      allConns.push(res);
     }
 
     // Clean up
-    for (const conn of connections) {
-      conn.body?.cancel?.();
-    }
+    for (const conn of connections) conn.body?.cancel?.();
 
     assert.fail("Should have hit 429 limit during connection attempts");
   });
