@@ -1213,7 +1213,8 @@ function setSessionTitle(id) {
   const el = document.getElementById('session-title');
   el.innerHTML = `${esc(short(id, 30))} <button class="copy-btn" onclick="copyId(this)" data-copy="${esc(id)}" aria-label="Copy session ID" title="Copy session ID">⎘</button>`;
 }
-const debouncedRefreshSessions = debounce(() => refreshSessions(), 600);
+const debouncedRefreshSessions  = debounce(() => refreshSessions(), 600);
+const debouncedLoadRejections   = debounce(() => loadRejections(), 300);
 function setRejectedMetric(count) {
   setMetric('m-rejected', count);
   document.getElementById('m-rejected').style.color = count > 0 ? 'var(--warn)' : '';
@@ -1266,7 +1267,7 @@ function initSSE() {
       setRejectedMetric(data.total ?? 0);
       setBadge(data.total ?? 0);
       // Keep the rejection list live when that tab is already open
-      if (mainView === 'rejected') loadRejections();
+      if (mainView === 'rejected') debouncedLoadRejections();
     } catch(_) {}
   });
 }

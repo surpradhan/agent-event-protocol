@@ -3757,6 +3757,8 @@ describe("SSE — rejection.received broadcast", () => {
    * payload or throws if nothing arrives within `timeoutMs`.
    */
   async function catchRejectionSSE(postFn, timeoutMs = 2000) {
+    // SSE subscriber must share the same tenant as the rejecting request;
+    // readKey and the test keys below are all scoped to "tenant-test".
     // Open SSE stream with a read-scoped key
     const sseRes = await fetch(`${baseUrl}/stream`, {
       headers: { Authorization: `Bearer ${readKey}` },

@@ -114,10 +114,12 @@ function pushRejection({ event_id, event_type, session_id, reason, detail, error
   // real time without polling.  broadcastSse is defined later in this file but
   // pushRejection is only *called* from the /events handler (also later), so
   // the forward reference is safe at call-time.
+  const tenantId = tenant_id || "default";
+  const perTenantTotal = recentRejections.filter(r => r.tenant_id === tenantId).length;
   broadcastSse(
     "rejection.received",
-    { type: "rejection.received", reason, total: recentRejections.length },
-    tenant_id || "default"
+    { type: "rejection.received", reason, total: perTenantTotal },
+    tenantId
   );
 }
 
