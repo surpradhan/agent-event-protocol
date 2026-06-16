@@ -1259,6 +1259,16 @@ function initSSE() {
       debouncedRefreshSessions();
     } catch(_) {}
   });
+
+  sseConn.addEventListener('rejection.received', e => {
+    try {
+      const data = JSON.parse(e.data);
+      setRejectedMetric(data.total ?? 0);
+      setBadge(data.total ?? 0);
+      // Keep the rejection list live when that tab is already open
+      if (mainView === 'rejected') loadRejections();
+    } catch(_) {}
+  });
 }
 function setLive(on) {
   document.getElementById('live-dot').className   = 'live-dot' + (on ? ' on' : ' err');

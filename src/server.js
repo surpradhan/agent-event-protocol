@@ -110,6 +110,15 @@ function pushRejection({ event_id, event_type, session_id, reason, detail, error
     errors:     errors || null
   });
   if (recentRejections.length > MAX_REJECTIONS) recentRejections.shift();
+  // Broadcast to SSE clients so the dashboard badge and metric card update in
+  // real time without polling.  broadcastSse is defined later in this file but
+  // pushRejection is only *called* from the /events handler (also later), so
+  // the forward reference is safe at call-time.
+  broadcastSse(
+    "rejection.received",
+    { type: "rejection.received", reason, total: recentRejections.length },
+    tenant_id || "default"
+  );
 }
 
 // ---------------------------------------------------------------------------

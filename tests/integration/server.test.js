@@ -3739,3 +3739,122 @@ describe("Webhooks — GET /webhooks/:id/deliveries (Phase 16-D)", () => {
     assert.equal(res.status, 401);
   });
 });
+
+// ---------------------------------------------------------------------------
+// SSE — rejection.received broadcast (Wave 3 finding #28)
+//
+// Verifies that posting a rejected event causes the /stream SSE endpoint to
+// emit a `rejection.received` message with the right `reason` and a numeric
+// `total`.  We consume the SSE stream as a raw text/event-stream response
+// (Node fetch keeps the body alive) and race a short timeout so the test never
+// hangs if the broadcast is lost.
+// ---------------------------------------------------------------------------
+
+describe("SSE — rejection.received broadcast", () => {
+  /**
+   * Open one SSE connection, post a bad event, then scan the buffered stream
+   * data for the first `rejection.received` message.  Returns the parsed JSON
+   * payload or throws if nothing arrives within `timeoutMs`.
+   */
+  async function catchRejectionSSE(postFn, timeoutMs = 2000) {
+    // Open SSE stream with a read-scoped key
+    const sseRes = await fetch(`${baseUrl}/stream`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(sseRes.status, 200, "SSE endpoint should return 200");
+    assert.ok(
+      sseRes.headers.get("content-type").startsWith("text/event-stream"),
+      "SSE endpoint should return text/event-stream"
+    );
+
+    // Collect raw SSE bytes into a string, resolve as soon as we see the event
+    let resolve, reject;
+    const found = new Promise((res, rej) => { resolve = res; reject = rej; });
+    const timer = setTimeout(() => reject(new Error("rejection.received SSE not received within timeout")), timeoutMs);
+
+    (async () => {
+      const reader = sseRes.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          // SSE messages are separated by blank lines; scan all complete messages
+          const messages = buf.split(/\n\n/);
+          // Keep the last (potentially incomplete) chunk in the buffer
+          buf = messages.pop();
+          for (const msg of messages) {
+            const eventLine = msg.split("\n").find(l => l.startsWith("event: "));
+            const dataLine  = msg.split("\n").find(l => l.startsWith("data: "));
+            if (eventLine && eventLine.slice(7).trim() === "rejection.received" && dataLine) {
+              clearTimeout(timer);
+              reader.cancel().catch(() => {});
+              resolve(JSON.parse(dataLine.slice(6)));
+              return;
+            }
+          }
+        }
+      } catch (err) {
+        clearTimeout(timer);
+        reject(err);
+      }
+    })();
+
+    // Post the bad event AFTER the SSE reader loop is running
+    await postFn();
+
+    return found;
+  }
+
+  test("schema-invalid event broadcasts rejection.received with reason schema_invalid", async () => {
+    const badEvent = {
+      specversion: "0.2.0",
+      id: `evt_sse_schema_${crypto.randomUUID().replace(/-/g, "")}`,
+      type: "task.created",
+      session_id: "ses_sse_schema_test",
+      // missing required: source, trace_id → schema validation failure
+    };
+
+    const payload = await catchRejectionSSE(async () => {
+      const res = await ingest(badEvent);
+      assert.equal(res.status, 400, "bad event should be rejected with 400");
+    });
+
+    assert.equal(payload.type, "rejection.received", "SSE message type should be rejection.received");
+    assert.equal(payload.reason, "schema_invalid", "reason should be schema_invalid");
+    assert.ok(typeof payload.total === "number" && payload.total >= 1, "total should be a positive number");
+  });
+
+  test("signature-invalid event broadcasts rejection.received with reason signature_invalid", async () => {
+    // Create a key with an HMAC secret so signature verification is enabled
+    const hmacKeyRes = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({
+        tenantId: "tenant-test",
+        label: "hmac-sse-test",
+        scopes: ["read", "write"],
+        hmacSecret: "test-hmac-secret-sse",
+      }),
+    });
+    const hmacKey = (await hmacKeyRes.json()).key;
+
+    // A valid-shape event submitted with the HMAC key but NO signature → sig_invalid
+    const event = makeEvent({ id: `evt_sse_sig_${crypto.randomUUID().replace(/-/g, "")}` });
+
+    const payload = await catchRejectionSSE(async () => {
+      const res = await fetch(`${baseUrl}/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${hmacKey}` },
+        body: JSON.stringify(event),
+      });
+      assert.equal(res.status, 401, "unsigned event with HMAC key should be rejected with 401");
+    });
+
+    assert.equal(payload.type, "rejection.received", "SSE message type should be rejection.received");
+    assert.equal(payload.reason, "signature_invalid", "reason should be signature_invalid");
+    assert.ok(typeof payload.total === "number" && payload.total >= 1, "total should be a positive number");
+  });
+});
