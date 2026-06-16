@@ -1984,6 +1984,12 @@
       }
     },
     "/openapi.json": {
+      "servers": [
+        {
+          "url": "http://localhost:8787",
+          "description": "Root only — not versioned under /v1"
+        }
+      ],
       "get": {
         "tags": ["Health"],
         "summary": "OpenAPI 3.1 specification document",
@@ -2001,6 +2007,12 @@
       }
     },
     "/docs": {
+      "servers": [
+        {
+          "url": "http://localhost:8787",
+          "description": "Root only — not versioned under /v1"
+        }
+      ],
       "get": {
         "tags": ["Health"],
         "summary": "Swagger UI — interactive API explorer",
