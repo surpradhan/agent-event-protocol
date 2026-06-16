@@ -1062,6 +1062,10 @@ const debounce = (fn, ms) => {
   let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 };
 const debouncedRefreshSessions = debounce(() => refreshSessions(), 600);
+function setRejectedMetric(count) {
+  setMetric('m-rejected', count);
+  document.getElementById('m-rejected').style.color = count > 0 ? 'var(--warn)' : '';
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SSE / Real-time
@@ -1833,6 +1837,7 @@ async function updateRejectionBadge() {
     if (total === _lastRejectionTotal) return; // nothing changed — skip DOM update
     _lastRejectionTotal = total;
     setBadge(total);
+    setRejectedMetric(total);
   } catch(_) {}
 }
 
@@ -2396,9 +2401,7 @@ async function loadAll() {
     setMetric('m-sessions',  metrics.session_count || 0);
     setMetric('m-received',  metrics.received      || 0);
     setMetric('m-accepted',  metrics.accepted       || 0);
-    const rejCount = metrics.rejected || 0;
-    setMetric('m-rejected', rejCount);
-    document.getElementById('m-rejected').style.color = rejCount > 0 ? 'var(--warn)' : '';
+    setRejectedMetric(metrics.rejected || 0);
     setMetric('m-workflows', metrics.workflow_count || 0);
 
     const sessions = sd.sessions || [];
