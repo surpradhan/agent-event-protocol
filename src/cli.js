@@ -5,19 +5,22 @@
  * aep — Agent Event Protocol CLI
  *
  * Commands:
- *   aep emit     — Emit a single event to the ingest server
- *   aep session  — Query events for a session
- *   aep export   — Export session events as JSON or CSV
- *   aep audit    — Build / verify / render a tamper-evident audit bundle
- *   aep workflow — Query a full workflow tree by trace_id
- *   aep analytics — Policy-enforcement, performance, custom & anomaly analytics
- *   aep webhooks — Register & manage outbound webhooks
+ *   aep emit       — Emit a single event to the ingest server
+ *   aep session    — Query events for a session
+ *   aep export     — Export session events as JSON or CSV
+ *   aep export bulk— Bulk DB export (wraps src/export.js)
+ *   aep audit      — Build / verify / render a tamper-evident audit bundle
+ *   aep workflow   — Query a full workflow tree by trace_id
+ *   aep analytics  — Policy-enforcement, performance, custom & anomaly analytics
+ *   aep webhooks   — Register & manage outbound webhooks
  *   aep compliance — Compliance report templates (SOC2/HIPAA/GDPR/EU AI Act)
- *   aep validate — Validate a local event JSON file (existing)
+ *   aep admin      — Manage API keys (create / list / delete)
+ *   aep init       — Guided first-run onboarding wizard
+ *   aep validate   — Validate a local event JSON file (existing)
  *
  * Configuration (in priority order):
- *   1. CLI flags:  --server <url>  --key <api-key>
- *   2. Env vars:   AEP_SERVER      AEP_API_KEY
+ *   1. CLI flags:  --server <url>  --key <api-key>  --admin-token <token>
+ *   2. Env vars:   AEP_SERVER      AEP_API_KEY        ADMIN_TOKEN / AEP_ADMIN_TOKEN
  *   3. Defaults:   http://localhost:8787  (no key)
  */
 
@@ -130,20 +133,24 @@ Usage:
   aep <command> [flags]
 
 Commands:
-  emit       Emit a single event to the ingest server
-  session    Query events for a session
-  export     Export session events as JSON or CSV
-  audit      Build / verify / render a tamper-evident audit bundle
-  workflow   Query a full workflow tree by trace_id
-  analytics  Policy-enforcement, performance, custom & anomaly analytics
-  webhooks   Register & manage outbound webhooks
-  compliance Compliance report templates (SOC2/HIPAA/GDPR/EU AI Act)
-  validate   Validate a local event JSON file
+  init        Guided first-run onboarding wizard
+  emit        Emit a single event to the ingest server
+  session     Query events for a session
+  export      Export session events as JSON or CSV
+  export bulk Bulk DB export to local filesystem or S3
+  audit       Build / verify / render a tamper-evident audit bundle
+  workflow    Query a full workflow tree by trace_id
+  analytics   Policy-enforcement, performance, custom & anomaly analytics
+  webhooks    Register & manage outbound webhooks
+  compliance  Compliance report templates (SOC2/HIPAA/GDPR/EU AI Act)
+  admin       Manage API keys (create / list / delete)
+  validate    Validate a local event JSON file
 
 Global flags:
-  --server <url>    AEP server URL  (env: AEP_SERVER, default: http://localhost:8787)
-  --key    <token>  API key         (env: AEP_API_KEY)
-  --help            Show this help
+  --server      <url>    AEP server URL  (env: AEP_SERVER, default: http://localhost:8787)
+  --key         <token>  API key         (env: AEP_API_KEY)
+  --admin-token <token>  Admin token     (env: ADMIN_TOKEN or AEP_ADMIN_TOKEN)
+  --help                 Show this help
 
 Run \x1b[1maep <command> --help\x1b[0m for command-specific help.
 `);
@@ -1206,6 +1213,401 @@ async function cmdCompliance(positional, flags, serverUrl, apiKey) {
 }
 
 // ---------------------------------------------------------------------------
+// Command: admin keys  (Finding #10)
+// ---------------------------------------------------------------------------
+
+function adminHelp() {
+  console.log(`
+\x1b[1maep admin\x1b[0m — Manage API keys
+
+Usage:
+  aep admin keys create --label <label> [--scopes <scopes>] [--tenant-id <tenantId>] [--json]
+  aep admin keys list   [--json]
+  aep admin keys delete <id>
+
+Subcommands:
+  keys create   Mint a new API key (needs ADMIN_TOKEN or AEP_ADMIN_TOKEN)
+  keys list     List all API keys  (needs ADMIN_TOKEN or AEP_ADMIN_TOKEN)
+  keys delete   Delete an API key  (needs ADMIN_TOKEN or AEP_ADMIN_TOKEN)
+
+Flags (create):
+  --label     <label>    Human-readable label for the key (required)
+  --scopes    <list>     Comma-separated scopes: read,write (default: read,write)
+  --tenant-id <id>       Tenant the key is bound to (default: default)
+  --json                 Print the full JSON response (the signing_secret is in it)
+
+Environment:
+  ADMIN_TOKEN or AEP_ADMIN_TOKEN   Admin bearer token (required for all admin commands)
+`);
+}
+
+function resolveAdminToken(flags) {
+  const tok = flags["admin-token"]
+    || process.env.ADMIN_TOKEN
+    || process.env.AEP_ADMIN_TOKEN
+    || null;
+  if (!tok) {
+    die(
+      "Admin token required. Set the ADMIN_TOKEN environment variable (or AEP_ADMIN_TOKEN), " +
+      "or pass --admin-token <token>."
+    );
+  }
+  return tok;
+}
+
+async function cmdAdmin(positional, flags, serverUrl) {
+  if (flags.help) { adminHelp(); return; }
+
+  const sub = positional[1]; // "keys"
+  const action = positional[2]; // "create" | "list" | "delete"
+
+  if (sub !== "keys") {
+    adminHelp();
+    if (sub) die(`Unknown admin subcommand: '${sub}'. Try: aep admin keys create|list|delete`);
+    return;
+  }
+
+  const adminToken = resolveAdminToken(flags);
+  const auth = { Authorization: `Bearer ${adminToken}` };
+
+  switch (action) {
+    case "create": {
+      const label = flags.label;
+      if (!label || label === true) die("--label is required: aep admin keys create --label <label>");
+      const rawScopes = flags.scopes || flags.scope || "read,write";
+      const scopes = String(rawScopes).split(",").map(s => s.trim()).filter(Boolean);
+      const tenantId = flags["tenant-id"] || flags["tenantId"] || "default";
+      const body = { label: String(label), scopes, tenantId };
+      const res = await request("POST", `${serverUrl}/admin/keys`, body, auth);
+      if (res.status === 401) die("Unauthorized — check your ADMIN_TOKEN.");
+      if (res.status !== 201) die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+      if (flags.json) {
+        console.log(JSON.stringify(res.body, null, 2));
+        return;
+      }
+      const k = res.body;
+      console.log(`\x1b[32m✓\x1b[0m API key created`);
+      console.log(`  key: \x1b[1m${k.key}\x1b[0m`);
+      console.log(`  id:  ${k.id}`);
+      console.log(`  label: ${k.label}  scopes: ${(k.scopes || []).join(",")}`);
+      return;
+    }
+
+    case "list": {
+      const res = await request("GET", `${serverUrl}/admin/keys`, null, auth);
+      if (res.status === 401) die("Unauthorized — check your ADMIN_TOKEN.");
+      if (res.status !== 200) die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+      if (flags.json) {
+        console.log(JSON.stringify(res.body, null, 2));
+        return;
+      }
+      const keys = res.body.keys || res.body || [];
+      const rows = Array.isArray(keys) ? keys : [];
+      if (rows.length === 0) { console.log("(no API keys)"); return; }
+      for (const k of rows) {
+        const scopes = (k.scopes || []).join(",");
+        console.log(
+          `  \x1b[36m${k.id}\x1b[0m  \x1b[1m${k.label}\x1b[0m  ` +
+          `scopes=${scopes}  tenant=${k.tenant_id || "—"}  created=${fmtTs(k.created_at)}`
+        );
+      }
+      return;
+    }
+
+    case "delete": {
+      const id = positional[3];
+      if (!id) die("Usage: aep admin keys delete <id>");
+      const res = await request("DELETE", `${serverUrl}/admin/keys/${encodeURIComponent(id)}`, null, auth);
+      if (res.status === 401) die("Unauthorized — check your ADMIN_TOKEN.");
+      if (res.status === 404) die(`Key '${id}' not found.`);
+      if (res.status === 204 || res.status === 200) { console.log("Deleted."); return; }
+      die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+      return;
+    }
+
+    default:
+      adminHelp();
+      if (action) die(`Unknown admin keys action: '${action}'. Try: create | list | delete`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Command: init  (Finding #23)
+// ---------------------------------------------------------------------------
+
+function initHelp() {
+  console.log(`
+\x1b[1maep init\x1b[0m — Guided first-run onboarding wizard
+
+Checks that the AEP server is reachable, mints an API key using the admin
+token, and prints the export command ready to copy into your shell profile.
+
+Usage:
+  aep init [flags]
+
+Flags:
+  --server <url>         AEP server URL (env: AEP_SERVER, default: http://localhost:8787)
+  --admin-token <token>  Admin bearer token (env: ADMIN_TOKEN or AEP_ADMIN_TOKEN)
+
+Environment:
+  AEP_SERVER            Server URL
+  ADMIN_TOKEN           Admin token to mint API keys
+  AEP_ADMIN_TOKEN       Alternative env name for the admin token
+`);
+}
+
+async function cmdInit(flags, serverUrl) {
+  if (flags.help) { initHelp(); return; }
+
+  const host = serverUrl;
+
+  // Step 1: health check
+  console.log(`\x1b[1m[1/4]\x1b[0m Checking server health at ${host}/health …`);
+  let healthOk = false;
+  try {
+    const res = await request("GET", `${host}/health`, null, {});
+    healthOk = res.status === 200;
+  } catch (_) {
+    healthOk = false;
+  }
+
+  if (!healthOk) {
+    console.error(`\x1b[31m✗\x1b[0m Server not reachable at ${host}`);
+    console.error("");
+    console.error("Start the server first:");
+    console.error("  ADMIN_TOKEN=dev-admin npm run ingest");
+    console.error("");
+    console.error("Then re-run: aep init");
+    process.exit(1);
+  }
+  console.log(`\x1b[32m✓\x1b[0m Server is up.`);
+
+  // Step 2: resolve admin token
+  console.log(`\x1b[1m[2/4]\x1b[0m Checking admin token …`);
+  const adminToken = flags["admin-token"]
+    || process.env.ADMIN_TOKEN
+    || process.env.AEP_ADMIN_TOKEN
+    || null;
+
+  if (!adminToken) {
+    console.error(`\x1b[31m✗\x1b[0m ADMIN_TOKEN is not set.`);
+    console.error("");
+    console.error("Set it and re-run:");
+    console.error("  export ADMIN_TOKEN=<your-admin-token>");
+    console.error("  aep init");
+    process.exit(1);
+  }
+  console.log(`\x1b[32m✓\x1b[0m Admin token found.`);
+
+  // Step 3: mint a write+read API key
+  console.log(`\x1b[1m[3/4]\x1b[0m Minting API key (label: aep-cli-init) …`);
+  const body = { label: "aep-cli-init", scopes: ["read", "write"], tenantId: "default" };
+  const auth = { Authorization: `Bearer ${adminToken}` };
+  let apiKey;
+  try {
+    const res = await request("POST", `${host}/admin/keys`, body, auth);
+    if (res.status === 401) {
+      console.error(`\x1b[31m✗\x1b[0m Admin token was rejected (401 Unauthorized).`);
+      console.error("Make sure ADMIN_TOKEN matches the value the server was started with.");
+      process.exit(1);
+    }
+    if (res.status !== 201) {
+      console.error(`\x1b[31m✗\x1b[0m Could not create API key (HTTP ${res.status}): ${JSON.stringify(res.body)}`);
+      process.exit(1);
+    }
+    apiKey = res.body.key;
+  } catch (err) {
+    console.error(`\x1b[31m✗\x1b[0m Request failed: ${err.message}`);
+    process.exit(1);
+  }
+  console.log(`\x1b[32m✓\x1b[0m API key minted.`);
+
+  // Step 4: verify the key works by emitting a test event
+  console.log(`\x1b[1m[4/4]\x1b[0m Verifying key with a test event …`);
+  const testEvent = {
+    specversion: "0.2.0",
+    id: `evt_${crypto.randomUUID().replace(/-/g, "")}`,
+    time: new Date().toISOString(),
+    source: "agent://aep-cli-init",
+    type: "task.created",
+    session_id: `ses_init_${Date.now()}`,
+    trace_id: `trc_init_${Date.now()}`,
+    payload: { message: "aep init test event" },
+  };
+  let verified = false;
+  try {
+    const res = await request("POST", `${host}/events`, testEvent, {
+      Authorization: `Bearer ${apiKey}`,
+    });
+    verified = res.status === 202 || (res.status === 200 && res.body && res.body.duplicate);
+  } catch (_) {
+    verified = false;
+  }
+  if (!verified) {
+    console.error(`\x1b[31m✗\x1b[0m Test event was not accepted. The key may not have write scope.`);
+    process.exit(1);
+  }
+  console.log(`\x1b[32m✓\x1b[0m Test event accepted.`);
+
+  // Done — print instructions
+  const urlObj = new URL(host);
+  const dashboardUrl = `${urlObj.protocol}//${urlObj.hostname}${urlObj.port ? `:${urlObj.port}` : ""}/dashboard`;
+
+  console.log("");
+  console.log("\x1b[1mSetup complete!\x1b[0m  Add to your shell profile:");
+  console.log("");
+  console.log(`  export AEP_API_KEY=${apiKey}`);
+  console.log("");
+  console.log(`Dashboard: \x1b[36m${dashboardUrl}\x1b[0m`);
+  console.log("");
+}
+
+// ---------------------------------------------------------------------------
+// Command: export bulk  (Finding #4) — wraps src/export.js
+// ---------------------------------------------------------------------------
+
+function exportBulkHelp() {
+  // Mirror src/export.js's printHelp but formatted as aep sub-subcommand.
+  console.log(`
+\x1b[1maep export bulk\x1b[0m — Bulk DB export to local filesystem or S3
+
+Streams each tenant's event log to a sink as JSON Lines (gzip default).
+This is an operator job — wire it to cron / a k8s CronJob in production.
+
+Usage:
+  aep export bulk [flags]
+
+Flags:
+  --tenant      <id>       Export only one tenant (default: all tenants with a project row)
+  --all-tenants            Also export tenants with events but no project row
+  --sink        local|s3   Destination sink (default: local; env EXPORT_SINK)
+  --dir         <path>     Local sink directory (default: ./exports)
+  --bucket      <name>     S3 bucket name (sink=s3; env EXPORT_S3_BUCKET)
+  --region      <r>        S3 region (env EXPORT_S3_REGION / AWS_REGION)
+  --endpoint    <url>      S3-compatible endpoint URL (env EXPORT_S3_ENDPOINT)
+  --prefix      <key>      Object key prefix within the sink
+  --since       <iso>      Only events with time >= since
+  --until       <iso>      Only events with time <  until
+  --format      jsonl|csv|parquet   Output format (default: jsonl)
+  --compression none|gzip|brotli   Compression (default: gzip; parquet is self-compressed)
+  --dry-run                Report what WOULD be written without writing
+  --json                   Print a machine-readable JSON summary to stdout
+
+Note: npm run export (src/export.js) is an alias for the same functionality
+and continues to work unchanged.
+
+S3 credentials are resolved from the standard AWS credential chain — never
+passed as flags and never logged.
+`);
+}
+
+async function cmdExportBulk(positional, flags) {
+  if (flags.help) { exportBulkHelp(); return; }
+
+  // Re-assemble an argv-like array that src/export.js's parseArgs() understands.
+  // We translate the CLI flags we accepted into the flag names export.js expects.
+  // (Both CLIs use --flag value style so this is mostly pass-through.)
+  const fwdArgv = ["node", "export.js"];
+
+  const add = (name, val) => {
+    if (val !== undefined && val !== false && val !== null) {
+      if (val === true) {
+        fwdArgv.push(`--${name}`);
+      } else {
+        fwdArgv.push(`--${name}`, String(val));
+      }
+    }
+  };
+
+  add("tenant", flags.tenant);
+  add("sink", flags.sink);
+  // export.js uses --out for the local dir; we expose it as --dir in aep export bulk
+  add("out", flags.dir || flags.out);
+  add("bucket", flags.bucket);
+  add("region", flags.region);
+  add("endpoint", flags.endpoint);
+  add("prefix", flags.prefix);
+  add("since", flags.since);
+  add("until", flags.until);
+  add("format", flags.format);
+  add("compression", flags.compression);
+  if (flags["all-tenants"]) fwdArgv.push("--all-tenants");
+  if (flags["dry-run"])     fwdArgv.push("--dry-run");
+  if (flags.json)           fwdArgv.push("--json");
+
+  // Delegate to the standalone export.js module. It handles its own main()
+  // guard (require.main === module) so requiring it doesn't auto-run, but its
+  // logic lives in the functions it exports.  We replicate the same flow here.
+  const path = require("path");
+  const exportModule = require(path.join(__dirname, "export.js"));
+  const db = require(path.join(__dirname, "db"));
+  const { runExport } = require(path.join(__dirname, "export/index"));
+  const { createSink } = require(path.join(__dirname, "export/sink"));
+  const { isSelfCompressed } = require(path.join(__dirname, "export/formats"));
+
+  const opts = exportModule.parseArgs(fwdArgv);
+
+  const explicitCompression = fwdArgv.some(
+    (a) => a === "--compression" || a.startsWith("--compression=")
+  );
+  if (explicitCompression && isSelfCompressed(opts.format) && opts.compression !== "none") {
+    console.error(
+      `Note: --format ${opts.format} is self-compressed; --compression ${opts.compression} is ignored.`
+    );
+  }
+
+  const sinkConfig = exportModule.resolveSinkConfig(opts);
+  const sink = opts.dryRun ? null : createSink(sinkConfig);
+  const allTenants = opts.allTenants || process.env.EXPORT_ALL_TENANTS === "1";
+
+  await db.init();
+  try {
+    const summary = await runExport({
+      tenantId: opts.tenantId,
+      since: opts.since,
+      until: opts.until,
+      format: opts.format,
+      compression: opts.compression,
+      prefix: opts.prefix,
+      sink,
+      dryRun: opts.dryRun,
+      allTenants,
+    });
+
+    if (opts.json) {
+      console.log(JSON.stringify(summary, null, 2));
+    } else {
+      const destLabel = exportModule.destinationLabel(sinkConfig);
+      const verb = summary.dryRun ? "Would export" : "Exported";
+      console.log(
+        `${summary.dryRun ? "[dry-run] " : ""}Scanned ${summary.tenants_scanned} tenant(s); ` +
+        `${verb.toLowerCase()} ${summary.events_exported} event(s) ` +
+        `across ${summary.tenants_exported} tenant(s)` +
+        `${summary.dryRun ? "" : ` into ${summary.objects_written} object(s)`} ` +
+        `(${summary.format}, ${summary.compression}${summary.dryRun ? "" : `, ${destLabel}`}).`
+      );
+      for (const d of summary.details || []) {
+        if (d.skipped) continue;
+        if (summary.dryRun) {
+          console.log(`  - tenant ${d.tenant_id}: would write ${d.events} event(s) → ${d.key}`);
+        } else {
+          console.log(`  - tenant ${d.tenant_id}: ${d.events} event(s), ${d.bytes} byte(s) → ${d.location}`);
+        }
+      }
+      const orphans = summary.orphan_tenants || [];
+      if (orphans.length > 0 && !allTenants) {
+        console.error(
+          `Warning: ${orphans.length} tenant(s) have events but no project and were NOT exported: ` +
+          `${orphans.join(", ")}. Pass --all-tenants to include them.`
+        );
+      }
+    }
+  } finally {
+    await db.closeDb();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Command: validate (thin wrapper around existing cli-validate.js logic)
 // ---------------------------------------------------------------------------
 
@@ -1263,6 +1665,7 @@ async function main() {
 
   const serverUrl = (flags.server || process.env.AEP_SERVER || "http://localhost:8787").replace(/\/$/, "");
   const apiKey    = flags.key || process.env.AEP_API_KEY || null;
+  // admin token — resolved lazily per-command (not required for non-admin commands)
 
   const command = positional[0];
 
@@ -1275,12 +1678,23 @@ async function main() {
     switch (command) {
       case "emit":     await cmdEmit(flags, serverUrl, apiKey); break;
       case "session":  await cmdSession(positional, flags, serverUrl, apiKey); break;
-      case "export":   await cmdExport(positional, flags, serverUrl, apiKey); break;
+      case "export": {
+        // "aep export bulk" dispatches to the bulk DB export; anything else is
+        // the session-events export (original behaviour, preserved for compat).
+        if (positional[1] === "bulk") {
+          await cmdExportBulk(positional, flags);
+        } else {
+          await cmdExport(positional, flags, serverUrl, apiKey);
+        }
+        break;
+      }
       case "audit":    await cmdAudit(positional, flags, serverUrl, apiKey); break;
       case "workflow": await cmdWorkflow(positional, flags, serverUrl, apiKey); break;
       case "analytics": await cmdAnalytics(positional, flags, serverUrl, apiKey); break;
       case "webhooks": await cmdWebhooks(positional, flags, serverUrl, apiKey); break;
       case "compliance": await cmdCompliance(positional, flags, serverUrl, apiKey); break;
+      case "admin":    await cmdAdmin(positional, flags, serverUrl); break;
+      case "init":     await cmdInit(flags, serverUrl); break;
       case "validate": await cmdValidate(positional, flags); break;
       default:
         console.error(`Unknown command: '${command}'\n`);
