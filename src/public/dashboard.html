@@ -1445,7 +1445,11 @@ function treeNodeHtml(node) {
     : '';
   return `
     <div class="tree-node">
-      <div class="tree-row ${ch.length ? 'has-ch' : ''}" data-sid="${esc(s.session_id)}" onclick="drillSession(this.dataset.sid)">
+      <div class="tree-row ${ch.length ? 'has-ch' : ''}" data-sid="${esc(s.session_id)}"
+           role="button" tabindex="0"
+           aria-label="Session ${esc(short(s.session_id, 28))}"
+           onclick="drillSession(this.dataset.sid)"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();drillSession(this.dataset.sid)}">
         ${toggle}
         <div class="tree-content">
           <div class="tree-sid">${roleHtml}${esc(short(s.session_id, 28))}</div>
@@ -1863,6 +1867,9 @@ function renderRejections() {
     // Lookup table with a safe fallback so future reason codes render correctly
     const REASON_LABELS = { schema_invalid: 'Schema invalid', signature_invalid: 'Signature invalid' };
     const reasonLabel = REASON_LABELS[r.reason] ?? r.reason.replace(/_/g, ' ');
+    el.setAttribute('role', 'button');
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('aria-label', `Rejection: ${reasonLabel}`);
     el.innerHTML = `
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span class="reject-reason">${esc(reasonLabel)}</span>
@@ -1881,6 +1888,7 @@ function renderRejections() {
       const hint = el.querySelector('.reject-toggle-hint');
       if (hint) hint.textContent = `Click to ${el.classList.contains('expanded') ? 'hide' : 'show'} details`;
     };
+    el.onkeydown = ke => { if (ke.key === 'Enter' || ke.key === ' ') { ke.preventDefault(); el.onclick(); } };
     // Go-to-session shortcut
     if (r.session_id) {
       const goBtn = document.createElement('button');
