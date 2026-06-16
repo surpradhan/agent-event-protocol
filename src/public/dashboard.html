@@ -1394,7 +1394,15 @@ async function initSSE() {
 
   sseConn.addEventListener('connected', () => setLive(true));
   sseConn.onopen  = () => setLive(true);
-  sseConn.onerror = () => setLive(false);
+  sseConn.onerror = () => {
+    setLive(false);
+    // If EventSource closed permanently (e.g. 401 from a consumed ticket on
+    // reconnect), manually re-initialise so a fresh ticket is exchanged.
+    if (sseConn && sseConn.readyState === EventSource.CLOSED) {
+      sseConn = null;
+      setTimeout(() => initSSE().catch(() => {}), 3000);
+    }
+  };
 
   sseConn.addEventListener('event.received', e => {
     try {
