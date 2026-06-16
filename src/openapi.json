@@ -472,9 +472,11 @@
       },
       "ValidationError": {
         "type": "object",
-        "required": ["accepted", "errors"],
+        "required": ["accepted", "error", "message", "errors"],
         "properties": {
           "accepted": { "type": "boolean", "example": false },
+          "error": { "type": "string", "example": "Validation Error" },
+          "message": { "type": "string", "example": "Schema validation failed (2 errors)" },
           "errors": {
             "type": "array",
             "items": { "type": "string" },
@@ -528,6 +530,16 @@
         "required": ["error"],
         "properties": {
           "error": { "type": "string" }
+        }
+      },
+      "SignatureError": {
+        "type": "object",
+        "required": ["accepted", "error", "message", "detail"],
+        "properties": {
+          "accepted": { "type": "boolean", "example": false },
+          "error": { "type": "string", "example": "Signature verification failed" },
+          "message": { "type": "string", "example": "Signature must use v2 canonical form. Upgrade your AEP SDK." },
+          "detail": { "type": "string", "description": "Kept for backward compatibility; identical to message" }
         }
       }
     },
@@ -633,7 +645,19 @@
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "401": {
+            "description": "Missing API key, or HMAC signature verification failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/ErrorResponse" },
+                    { "$ref": "#/components/schemas/SignatureError" }
+                  ]
+                }
+              }
+            }
+          },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "429": {
             "description": "Rate limit hit, or the key's project has reached its event quota. The `Retry-After` header indicates when to retry.",

@@ -1419,6 +1419,7 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
     // marker or a digest mismatch → 401 below with an actionable error.
     const { valid, canon, error } = verifySignature(event, hmacSecret);
     if (!valid) {
+      const sanitizedDetail = sanitizeInput(error);
       recordSignatureRejection({ marked });
       await db.incrementCounter("rejected");
       pushRejection({
@@ -1426,18 +1427,19 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
         event_type: sanitizeInput(event.type),
         session_id: sanitizeInput(event.session_id),
         reason:     "signature_invalid",
-        detail:     sanitizeInput(error),
+        detail:     sanitizedDetail,
         errors:     null,
         tenant_id:  req.tenant_id
       });
       logger.warn(
-        { event_id: event.id, session_id: event.session_id, reason: sanitizeInput(error) },
+        { event_id: event.id, session_id: event.session_id, reason: sanitizedDetail },
         "event rejected: signature verification failed"
       );
       return res.status(401).json({
         accepted: false,
         error:    "Signature verification failed",
-        detail:   sanitizeInput(error)
+        message:  sanitizedDetail,
+        detail:   sanitizedDetail   // kept for backward compat
       });
     }
 
@@ -1452,6 +1454,7 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
   // ------------------------------------------------------------------
   const { valid, errors } = validateEvent(event);
   if (!valid) {
+    const sanitizedErrors = errors.map(sanitizeInput);
     await db.incrementCounter("rejected");
     pushRejection({
       event_id:   event.id,
@@ -1459,14 +1462,19 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
       session_id: sanitizeInput(event.session_id),
       reason:     "schema_invalid",
       detail:     null,
-      errors:     errors.map(sanitizeInput),
+      errors:     sanitizedErrors,
       tenant_id:  req.tenant_id
     });
     logger.warn(
-      { event_id: event.id, errors },
+      { event_id: event.id, errors: sanitizedErrors },
       "event rejected: schema validation failed"
     );
-    return res.status(400).json({ accepted: false, errors });
+    return res.status(400).json({
+      accepted: false,
+      error:   "Validation Error",
+      message: `Schema validation failed (${sanitizedErrors.length} error${sanitizedErrors.length === 1 ? "" : "s"})`,
+      errors:  sanitizedErrors
+    });
   }
 
   // ------------------------------------------------------------------
