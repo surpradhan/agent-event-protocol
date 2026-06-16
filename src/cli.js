@@ -256,7 +256,7 @@ Usage:
 Flags:
   --type <type>   Filter to a specific event type (e.g. tool.called)
   --q    <text>   Full-text search query
-  --json          Print the raw events array as JSON (for scripting)
+  --json          Print the raw server response as JSON (for scripting)
 `);
 }
 
