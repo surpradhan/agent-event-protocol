@@ -1419,6 +1419,7 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
     // marker or a digest mismatch → 401 below with an actionable error.
     const { valid, canon, error } = verifySignature(event, hmacSecret);
     if (!valid) {
+      const sanitizedDetail = sanitizeInput(error);
       recordSignatureRejection({ marked });
       await db.incrementCounter("rejected");
       pushRejection({
@@ -1426,15 +1427,14 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
         event_type: sanitizeInput(event.type),
         session_id: sanitizeInput(event.session_id),
         reason:     "signature_invalid",
-        detail:     sanitizeInput(error),
+        detail:     sanitizedDetail,
         errors:     null,
         tenant_id:  req.tenant_id
       });
       logger.warn(
-        { event_id: event.id, session_id: event.session_id, reason: sanitizeInput(error) },
+        { event_id: event.id, session_id: event.session_id, reason: sanitizedDetail },
         "event rejected: signature verification failed"
       );
-      const sanitizedDetail = sanitizeInput(error);
       return res.status(401).json({
         accepted: false,
         error:    "Signature verification failed",
@@ -1466,7 +1466,7 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
       tenant_id:  req.tenant_id
     });
     logger.warn(
-      { event_id: event.id, errors },
+      { event_id: event.id, errors: sanitizedErrors },
       "event rejected: schema validation failed"
     );
     return res.status(400).json({
