@@ -3774,13 +3774,12 @@ describe("SSE — rejection.received broadcast", () => {
 
     (async () => {
       const reader = sseRes.body.getReader();
-      const decoder = new TextDecoder();
       let buf = "";
       try {
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
-          buf += decoder.decode(value, { stream: true });
+          buf += Buffer.from(value).toString();
           // SSE messages are separated by blank lines; scan all complete messages
           const messages = buf.split(/\n\n/);
           // Keep the last (potentially incomplete) chunk in the buffer
