@@ -136,4 +136,53 @@ function summarizePolicyBlocked(events, { now = new Date(), limit = 20 } = {}) {
   };
 }
 
-module.exports = { summarizePolicyBlocked, UNSPECIFIED };
+// ---------------------------------------------------------------------------
+// CSV helpers — RFC-4180 encoder for analytics data (Wave 3 UX #20)
+// ---------------------------------------------------------------------------
+
+/**
+ * Escape a single CSV cell value per RFC-4180: wrap in double-quotes when the
+ * value contains a comma, CR, newline, or double-quote; escape embedded
+ * double-quotes by doubling them.
+ * @param {*} value
+ * @returns {string}
+ */
+function escapeCsvCell(value) {
+  const str = String(value ?? "");
+  if (str.includes(",") || str.includes("\r") || str.includes("\n") || str.includes('"')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+// Uses LF line endings (matching the Phase 17 JSONL/CSV export convention).
+// RFC-4180 mandates CRLF, but major parsers (pandas, Numbers, Excel) accept LF.
+/**
+ * Encode an array of row objects into an RFC-4180 CSV string.
+ *
+ * @param {Array<object>} rows   array of plain objects (all sharing the same keys)
+ * @param {string[]}      fields column names (header row); used both as the
+ *                               header and as the ordered key list per row.
+ *                               Nested objects/arrays are JSON-stringified.
+ * @returns {string}  complete CSV text (header + data rows, LF-delimited)
+ */
+function toCsvAnalytics(rows, fields) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return fields.map(escapeCsvCell).join(",") + "\n";
+  }
+  const header = fields.map(escapeCsvCell).join(",");
+  const lines = rows.map((row) => {
+    return fields
+      .map((f) => {
+        const v = row[f];
+        if (v !== null && v !== undefined && typeof v === "object") {
+          return escapeCsvCell(JSON.stringify(v));
+        }
+        return escapeCsvCell(v);
+      })
+      .join(",");
+  });
+  return [header, ...lines].join("\n") + "\n";
+}
+
+module.exports = { summarizePolicyBlocked, UNSPECIFIED, toCsvAnalytics, escapeCsvCell };

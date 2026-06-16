@@ -1013,6 +1013,12 @@
             "in": "query",
             "description": "Maximum entries in the `recent` list (1-1000, default 20).",
             "schema": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 20 }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "Response format. `json` (default) returns the full analytics summary object. `csv` returns RFC-4180 CSV with one row per recent event (columns: id, time, source, session_id, trace_id, agent_role, policy, reason, action_blocked).",
+            "schema": { "type": "string", "enum": ["json", "csv"], "default": "json" }
           }
         ],
         "responses": {
@@ -1131,6 +1137,12 @@
             "in": "query",
             "description": "Maximum entries in the `slowest` list (1-1000, default 20).",
             "schema": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 20 }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "Response format. `json` (default) returns the full profiling summary object. `csv` returns RFC-4180 CSV with one row per slowest operation (columns: kind, op_type, name, source, session_id, trace_id, status, duration_ms, started_at, ended_at).",
+            "schema": { "type": "string", "enum": ["json", "csv"], "default": "json" }
           }
         ],
         "responses": {
@@ -1218,7 +1230,8 @@
           { "name": "since", "in": "query", "description": "Inclusive lower bound on event time (`time >= since`). ISO-8601.", "schema": { "type": "string", "format": "date-time" } },
           { "name": "until", "in": "query", "description": "Exclusive upper bound on event time (`time < until`). ISO-8601.", "schema": { "type": "string", "format": "date-time" } },
           { "name": "threshold", "in": "query", "description": "Modified-z cutoff (> 0, default 3.5; smaller is more sensitive).", "schema": { "type": "number", "minimum": 0, "exclusiveMinimum": true, "default": 3.5 } },
-          { "name": "limit", "in": "query", "description": "Maximum anomalies returned (1-1000, default 50).", "schema": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 50 } }
+          { "name": "limit", "in": "query", "description": "Maximum anomalies returned (1-1000, default 50).", "schema": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 50 } },
+          { "name": "format", "in": "query", "description": "Response format. `json` (default) returns the full anomaly report object. `csv` returns RFC-4180 CSV with one row per anomalous trace (columns: trace_id, max_score, severity, metrics, flags); nested objects are JSON-stringified.", "schema": { "type": "string", "enum": ["json", "csv"], "default": "json" } }
         ],
         "responses": {
           "200": {
