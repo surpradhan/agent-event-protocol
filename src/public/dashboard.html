@@ -576,6 +576,25 @@
       }
       .live-dot.on { animation: none; }
     }
+
+    /* ── Copy-to-clipboard button ── */
+    .copy-btn {
+      background: none; border: none; cursor: pointer;
+      color: var(--muted); font-size: 12px; padding: 0 3px;
+      opacity: 0.55; transition: opacity .15s, color .15s;
+      vertical-align: middle; line-height: 1;
+    }
+    .copy-btn:hover { opacity: 1; color: var(--accent); }
+    .copy-btn:focus-visible { outline: 2px solid var(--accent); border-radius: 3px; }
+
+    /* ── Payload expand toggle ── */
+    .payload-toggle {
+      background: none; border: 1px solid var(--line2); border-radius: 4px;
+      color: var(--muted); font-size: 10px; padding: 1px 6px; cursor: pointer;
+      margin-top: 4px; transition: color .15s, border-color .15s;
+    }
+    .payload-toggle:hover { color: var(--accent); border-color: var(--accent); }
+    .payload-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   </style>
 </head>
 <body>
@@ -1055,6 +1074,23 @@ function ago(iso) {
 const debounce = (fn, ms) => {
   let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 };
+function copyId(btn) {
+  navigator.clipboard.writeText(btn.dataset.copy).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = '✓';
+    setTimeout(() => { btn.textContent = orig; }, 1200);
+  }).catch(() => {});
+}
+function togglePayload(btn) {
+  const pre = btn.nextElementSibling;
+  const show = pre.hidden;
+  pre.hidden = !show;
+  btn.textContent = show ? '▼ payload' : '▶ payload';
+}
+function setSessionTitle(id) {
+  const el = document.getElementById('session-title');
+  el.innerHTML = `${esc(short(id, 30))} <button class="copy-btn" onclick="copyId(this)" data-copy="${esc(id)}" title="Copy session ID">⎘</button>`;
+}
 const debouncedRefreshSessions = debounce(() => refreshSessions(), 600);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1188,7 +1224,7 @@ function renderSessions(sessions) {
       // Update active class in-place — avoid full DOM rebuild to preserve scroll position
       document.querySelectorAll('#sessions-list .clickable-item')
         .forEach(item => item.classList.toggle('active', item === el));
-      document.getElementById('session-title').textContent = short(s.session_id, 30);
+      setSessionTitle(s.session_id);
       loadTimeline();
     };
     el.onclick = activate;
@@ -1475,7 +1511,7 @@ function drillSession(sessionId) {
   selSession = sessionId; activeIdx = -1; stopPlay();
   switchMain('sessions');
   renderSessions(allSessions);
-  document.getElementById('session-title').textContent = short(sessionId, 30);
+  setSessionTitle(sessionId);
   loadTimeline();
 }
 
@@ -1545,9 +1581,10 @@ function renderTimeline(events) {
         <span class="event-type">${esc(e.type)}</span>
         <span class="badge ${st.b}">${new Date(e.time).toLocaleTimeString()}</span>
       </div>
-      <div class="hint">id: ${esc(short(e.id, 22))}</div>
+      <div class="hint">id: ${esc(short(e.id, 22))} <button class="copy-btn" onclick="event.stopPropagation();copyId(this)" data-copy="${esc(e.id)}" title="Copy event ID">⎘</button></div>
       <div class="hint">causation: ${esc(e.causation_id ? short(e.causation_id, 22) : '–')}</div>
-      <pre>${esc(JSON.stringify(e.payload, null, 2))}</pre>`;
+      <button class="payload-toggle" onclick="event.stopPropagation();togglePayload(this)">▶ payload</button>
+      <pre hidden>${esc(JSON.stringify(e.payload, null, 2))}</pre>`;
     const activateEvent = () => { activeIdx = i; renderTimeline(curEvents); };
     el.setAttribute('role', 'button');
     el.setAttribute('tabindex', '0');
@@ -2398,7 +2435,7 @@ async function loadAll() {
     buildWorkflowList(sessions);
 
     if (selSession) {
-      document.getElementById('session-title').textContent = short(selSession, 30);
+      setSessionTitle(selSession);
       await loadTimeline();
     }
   } catch(e) { console.error('loadAll:', e); }
