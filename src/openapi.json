@@ -472,9 +472,11 @@
       },
       "ValidationError": {
         "type": "object",
-        "required": ["accepted", "errors"],
+        "required": ["accepted", "error", "message", "errors"],
         "properties": {
           "accepted": { "type": "boolean", "example": false },
+          "error": { "type": "string", "example": "Validation Error" },
+          "message": { "type": "string", "example": "Schema validation failed (2 errors)" },
           "errors": {
             "type": "array",
             "items": { "type": "string" },

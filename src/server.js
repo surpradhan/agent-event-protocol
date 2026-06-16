@@ -1434,11 +1434,12 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
         { event_id: event.id, session_id: event.session_id, reason: sanitizeInput(error) },
         "event rejected: signature verification failed"
       );
+      const sanitizedDetail = sanitizeInput(error);
       return res.status(401).json({
         accepted: false,
         error:    "Signature verification failed",
-        message:  sanitizeInput(error),
-        detail:   sanitizeInput(error)   // kept for backward compat
+        message:  sanitizedDetail,
+        detail:   sanitizedDetail   // kept for backward compat
       });
     }
 
@@ -1453,6 +1454,7 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
   // ------------------------------------------------------------------
   const { valid, errors } = validateEvent(event);
   if (!valid) {
+    const sanitizedErrors = errors.map(sanitizeInput);
     await db.incrementCounter("rejected");
     pushRejection({
       event_id:   event.id,
@@ -1460,7 +1462,7 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
       session_id: sanitizeInput(event.session_id),
       reason:     "schema_invalid",
       detail:     null,
-      errors:     errors.map(sanitizeInput),
+      errors:     sanitizedErrors,
       tenant_id:  req.tenant_id
     });
     logger.warn(
@@ -1470,8 +1472,8 @@ app.post("/events", requireApiKey("write"), ingestRateLimit, enforceQuota, async
     return res.status(400).json({
       accepted: false,
       error:   "Validation Error",
-      message: `Schema validation failed (${errors.length} error${errors.length === 1 ? "" : "s"})`,
-      errors
+      message: `Schema validation failed (${sanitizedErrors.length} error${sanitizedErrors.length === 1 ? "" : "s"})`,
+      errors:  sanitizedErrors
     });
   }
 

@@ -200,6 +200,8 @@ describe("POST /events — ingest", () => {
     assert.equal(res.status, 400);
     const body = await res.json();
     assert.equal(body.accepted, false);
+    assert.equal(body.error, "Validation Error");
+    assert.ok(typeof body.message === "string" && body.message.includes("Schema validation failed"));
   });
 
   test("deduplicates events with the same id — returns 200 duplicate:true", async () => {
