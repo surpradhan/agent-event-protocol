@@ -557,30 +557,7 @@ Authentication requirements: `[key:write]` = API key with write scope; `[key:rea
 
 ## 15. Docker Deployment
 
-A production-ready Docker setup is included for deploying beyond localhost.
-
-```bash
-# Copy and configure environment variables
-cp .env.example .env
-# Edit .env: set ADMIN_TOKEN, DASHBOARD_TOKEN, and any other vars
-
-# Start with Docker Compose
-docker compose up -d
-docker compose logs -f aep
-```
-
-The compose file mounts a named Docker volume (`aep_data`) for the SQLite database, maps port `8787` to the host (overridable via `HOST_PORT` in `.env`), and includes a built-in `HEALTHCHECK` that polls `GET /health`.
-
-**Build and run the image directly:**
-
-```bash
-docker build -t aep-ingest .
-docker run -p 8787:8787 \
-  -e ADMIN_TOKEN=change-me \
-  -e DASHBOARD_TOKEN=change-me \
-  -v aep_data:/data \
-  aep-ingest
-```
+For Docker Compose and direct Docker run instructions, see the [Docker section in README.md](./README.md#docker). The compose file mounts a named Docker volume (`aep_data`) for the SQLite database, maps port `8787` to the host (overridable via `HOST_PORT` in `.env`), and includes a built-in `HEALTHCHECK` that polls `GET /health`.
 
 ---
 
@@ -594,7 +571,7 @@ docker run -p 8787:8787 \
 
 ### Authentication & secrets
 
-Set `ADMIN_TOKEN` and `DASHBOARD_TOKEN` before any network-accessible deployment. API keys are stored as SHA-256 hashes; raw keys are shown once on creation. For additional hardening, deploy behind HTTPS and consider storing HMAC secrets in an external secrets manager (Vault, AWS Secrets Manager, etc.).
+Set `ADMIN_TOKEN` and `DASHBOARD_TOKEN` before any network-accessible deployment. See [AUTH.md](./AUTH.md) for the full auth reference: API key scopes, HMAC signing setup, tenant isolation, dashboard token configuration, security notes, and key rotation guidance.
 
 ### Rate limiting
 
