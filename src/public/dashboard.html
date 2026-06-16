@@ -2693,9 +2693,8 @@ function whToggleCreateForm() {
     document.getElementById('wh-url').focus();
     whFormMsg('', '');
   } else {
-    // Closing: reset form fields and uncheck specific-type checkboxes.
+    // Closing: reset all form fields (including dynamic checkboxes inside the form).
     document.getElementById('wh-create-form').reset();
-    document.querySelectorAll('.wh-et-cb').forEach(c => { c.checked = false; });
   }
 }
 
