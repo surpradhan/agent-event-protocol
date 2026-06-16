@@ -576,9 +576,15 @@
   },
   "paths": {
     "/health": {
+      "servers": [
+        {
+          "url": "http://localhost:8787",
+          "description": "Root only — /health is an infra probe, not versioned under /v1"
+        }
+      ],
       "get": {
         "tags": ["Health"],
-        "summary": "Service health check",
+        "summary": "Service health check (not available under /v1)",
         "operationId": "getHealth",
         "responses": {
           "200": {

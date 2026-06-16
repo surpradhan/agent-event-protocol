@@ -172,7 +172,7 @@ app.use(express.json({ limit: "1mb" }));
 // Lightweight request log line for every response (skip SSE noise)
 app.use((req, res, next) => {
   res.on("finish", () => {
-    if (req.path === "/stream") return; // exclude long-lived SSE connections
+    if (req.path.replace(/^\/v\d+/, "") === "/stream") return; // exclude long-lived SSE connections (/stream or /v1/stream)
     logger.info(
       {
         method:    req.method,

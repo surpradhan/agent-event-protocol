@@ -4137,8 +4137,8 @@ describe("API versioning — /v1 prefix and API-Version header", () => {
     const versioned = await fetch(`${baseUrl}/v1/sessions`, {
       headers: { Authorization: `Bearer ${readKey}` }
     });
+    assert.equal(bare.status, 200);
     assert.equal(versioned.status, 200);
-    assert.equal(versioned.status, bare.status);
     assert.equal(versioned.headers.get("api-version"), "1");
   });
 
@@ -4161,6 +4161,13 @@ describe("API versioning — /v1 prefix and API-Version header", () => {
 
   test("GET /v1/metrics/prometheus returns 404 (Prometheus endpoint is not versioned)", async () => {
     const res = await fetch(`${baseUrl}/v1/metrics/prometheus`);
+    assert.equal(res.status, 404);
+  });
+
+  test("GET /v1/admin/keys returns 404 (admin routes are not versioned)", async () => {
+    const res = await fetch(`${baseUrl}/v1/admin/keys`, {
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
     assert.equal(res.status, 404);
   });
 });
