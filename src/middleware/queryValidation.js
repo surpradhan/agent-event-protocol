@@ -135,6 +135,13 @@ function validateQueryParams(req, res, next) {
         message: "Query parameter 'role' exceeds maximum length of 100 characters"
       });
     }
+    const VALID_AGENT_ROLES = new Set(["orchestrator", "subagent", "standalone"]);
+    if (role.length > 0 && !VALID_AGENT_ROLES.has(role)) {
+      return res.status(400).json({
+        error: "Bad Request",
+        message: "Query parameter 'role' must be one of: orchestrator, subagent, standalone"
+      });
+    }
   }
 
   // Validate ?cursor (pagination cursor)
