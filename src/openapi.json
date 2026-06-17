@@ -742,7 +742,10 @@
             "name": "role",
             "in": "query",
             "description": "Filter to a specific agent role",
-            "schema": { "type": "string" }
+            "schema": {
+              "type": "string",
+              "enum": ["orchestrator", "subagent", "standalone"]
+            }
           },
           {
             "name": "q",
@@ -839,7 +842,10 @@
             "name": "role",
             "in": "query",
             "description": "Optional agent-role filter",
-            "schema": { "type": "string" }
+            "schema": {
+              "type": "string",
+              "enum": ["orchestrator", "subagent", "standalone"]
+            }
           },
           {
             "name": "q",
