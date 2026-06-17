@@ -723,7 +723,7 @@
         "summary": "Get events for a session",
         "operationId": "getSessionEvents",
         "security": [{ "ApiKeyAuth": [] }],
-        "description": "Returns the ordered event timeline for a session, optionally filtered by type or full-text search.",
+        "description": "Returns the ordered event timeline for a session, optionally filtered by type, agent role, or full-text search.",
         "parameters": [
           {
             "name": "sessionId",
@@ -737,6 +737,15 @@
             "in": "query",
             "description": "Filter to a specific event type (e.g. `tool.called`)",
             "schema": { "type": "string" }
+          },
+          {
+            "name": "role",
+            "in": "query",
+            "description": "Filter to a specific agent role",
+            "schema": {
+              "type": "string",
+              "enum": ["orchestrator", "subagent", "standalone"]
+            }
           },
           {
             "name": "q",
@@ -828,6 +837,15 @@
             "in": "query",
             "description": "Optional event-type filter",
             "schema": { "type": "string" }
+          },
+          {
+            "name": "role",
+            "in": "query",
+            "description": "Optional agent-role filter",
+            "schema": {
+              "type": "string",
+              "enum": ["orchestrator", "subagent", "standalone"]
+            }
           },
           {
             "name": "q",

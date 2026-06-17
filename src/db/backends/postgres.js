@@ -366,7 +366,7 @@ class PostgresBackend extends StorageBackend {
     }
   }
 
-  async getSessionEvents(sessionId, { type = "", q = "", tenantId = null } = {}) {
+  async getSessionEvents(sessionId, { type = "", q = "", role = "", tenantId = null } = {}) {
     let sql = "SELECT raw_payload FROM events WHERE session_id = $1";
     const params = [sessionId];
 
@@ -377,6 +377,10 @@ class PostgresBackend extends StorageBackend {
     if (type) {
       params.push(type);
       sql += ` AND type = $${params.length}`;
+    }
+    if (role) {
+      params.push(role);
+      sql += ` AND agent_role = $${params.length}`;
     }
     sql += " ORDER BY time ASC";
 
@@ -1138,7 +1142,7 @@ class PostgresBackend extends StorageBackend {
     };
   }
 
-  async getPaginatedEvents(sessionId, { type = "", q = "", tenantId = null, limit = 100, cursor = null } = {}) {
+  async getPaginatedEvents(sessionId, { type = "", q = "", role = "", tenantId = null, limit = 100, cursor = null } = {}) {
     const pageSize = Math.min(Math.max(1, parseInt(limit, 10) || 100), 1000);
     const decoded  = decodeCursor(cursor);
 
@@ -1148,9 +1152,10 @@ class PostgresBackend extends StorageBackend {
       WHERE  session_id = $1
         AND  ($2::text IS NULL OR tenant_id = $3)
         AND  ($4::text = '' OR type = $5)
-        AND  ($6::text IS NULL OR time > $7 OR (time = $8 AND id > $9))
+        AND  ($6::text = '' OR agent_role = $7)
+        AND  ($8::text IS NULL OR time > $9 OR (time = $10 AND id > $11))
       ORDER  BY time ASC, id ASC
-      LIMIT  $10
+      LIMIT  $12
     `;
 
     const params = [
@@ -1159,6 +1164,8 @@ class PostgresBackend extends StorageBackend {
       tenantId ?? null,
       type || "",
       type || "",
+      role || "",
+      role || "",
       decoded?.time ?? null,
       decoded?.time ?? null,
       decoded?.time ?? null,

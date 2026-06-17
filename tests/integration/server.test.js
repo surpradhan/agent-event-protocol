@@ -395,9 +395,24 @@ describe("GET /sessions/:sessionId/events", () => {
 
   before(async () => {
     // Seed three events
-    for (const type of ["task.created", "tool.called", "task.completed"]) {
-      await ingest(makeEvent({ session_id: SESSION_ID, trace_id: TRACE_ID, type }));
-    }
+    await ingest(makeEvent({
+      session_id: SESSION_ID,
+      trace_id: TRACE_ID,
+      type: "task.created",
+      agent_role: "orchestrator",
+    }));
+    await ingest(makeEvent({
+      session_id: SESSION_ID,
+      trace_id: TRACE_ID,
+      type: "tool.called",
+      agent_role: "subagent",
+    }));
+    await ingest(makeEvent({
+      session_id: SESSION_ID,
+      trace_id: TRACE_ID,
+      type: "task.completed",
+      agent_role: "standalone",
+    }));
   });
 
   test("returns events for the session sorted by time", async () => {
@@ -418,6 +433,34 @@ describe("GET /sessions/:sessionId/events", () => {
     );
     const body = await res.json();
     assert.ok(body.events.every(e => e.type === "tool.called"));
+  });
+
+  test("filters by agent role using ?role= query param", async () => {
+    const res = await fetch(
+      `${baseUrl}/sessions/${SESSION_ID}/events?role=orchestrator`,
+      { headers: { Authorization: `Bearer ${readKey}` } }
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.events.length >= 1);
+    assert.ok(body.events.every(e => e.agent_role === "orchestrator"));
+  });
+
+  test("absent or empty ?role returns all events unchanged", async () => {
+    const absentRes = await fetch(`${baseUrl}/sessions/${SESSION_ID}/events`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    const emptyRes = await fetch(`${baseUrl}/sessions/${SESSION_ID}/events?role=`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+
+    assert.equal(absentRes.status, 200);
+    assert.equal(emptyRes.status, 200);
+
+    const absent = await absentRes.json();
+    const empty = await emptyRes.json();
+
+    assert.equal(empty.events.length, absent.events.length);
   });
 
   test("returns 401 without auth", async () => {
@@ -494,8 +537,24 @@ describe("GET /sessions/:sessionId/export", () => {
   const TRACE_ID = `trc_export_${Date.now()}`;
 
   before(async () => {
-    await ingest(makeEvent({ session_id: SID, trace_id: TRACE_ID, type: "task.created" }));
-    await ingest(makeEvent({ session_id: SID, trace_id: TRACE_ID, type: "task.completed" }));
+    await ingest(makeEvent({
+      session_id: SID,
+      trace_id: TRACE_ID,
+      type: "task.created",
+      agent_role: "orchestrator",
+    }));
+    await ingest(makeEvent({
+      session_id: SID,
+      trace_id: TRACE_ID,
+      type: "tool.called",
+      agent_role: "subagent",
+    }));
+    await ingest(makeEvent({
+      session_id: SID,
+      trace_id: TRACE_ID,
+      type: "task.completed",
+      agent_role: "standalone",
+    }));
   });
 
   test("exports as JSON by default", async () => {
@@ -505,7 +564,7 @@ describe("GET /sessions/:sessionId/export", () => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.session_id, SID);
-    assert.ok(body.events.length >= 2);
+    assert.ok(body.events.length >= 3);
   });
 
   test("exports as CSV when ?format=csv", async () => {
@@ -518,6 +577,47 @@ describe("GET /sessions/:sessionId/export", () => {
     const text = await res.text();
     assert.ok(text.includes("session_id"), "CSV should have header row");
     assert.ok(text.includes(SID));
+  });
+
+  test("exports JSON filtered by agent role", async () => {
+    const res = await fetch(`${baseUrl}/sessions/${SID}/export?role=orchestrator`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.events.length >= 1);
+    assert.ok(body.events.every(e => e.agent_role === "orchestrator"));
+  });
+
+  test("exports CSV filtered by agent role", async () => {
+    const res = await fetch(`${baseUrl}/sessions/${SID}/export?format=csv&role=orchestrator`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+
+    assert.equal(res.status, 200);
+    const text = await res.text();
+
+    assert.ok(text.includes("task.created"));
+    assert.ok(!text.includes("tool.called"));
+    assert.ok(!text.includes("task.completed"));
+  });
+
+  test("empty ?role returns all exported events unchanged", async () => {
+    const absentRes = await fetch(`${baseUrl}/sessions/${SID}/export`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    const emptyRes = await fetch(`${baseUrl}/sessions/${SID}/export?role=`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+
+    assert.equal(absentRes.status, 200);
+    assert.equal(emptyRes.status, 200);
+
+    const absent = await absentRes.json();
+    const empty = await emptyRes.json();
+
+    assert.equal(empty.events.length, absent.events.length);
   });
 
   test("a repeated ?format param (array) coerces to the LAST value, not 500", async () => {
