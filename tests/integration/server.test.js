@@ -442,7 +442,7 @@ describe("GET /sessions/:sessionId/events", () => {
     );
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.ok(body.events.length >= 1);
+    assert.equal(body.events.length, 1);
     assert.ok(body.events.every(e => e.agent_role === "orchestrator"));
   });
 
@@ -461,6 +461,39 @@ describe("GET /sessions/:sessionId/events", () => {
     const empty = await emptyRes.json();
 
     assert.equal(empty.events.length, absent.events.length);
+  });
+
+  test("invalid ?role value returns 400", async () => {
+    const res = await fetch(
+      `${baseUrl}/sessions/${SESSION_ID}/events?role=foobar`,
+      { headers: { Authorization: `Bearer ${readKey}` } }
+    );
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.error, "Bad Request");
+    assert.match(body.message, /must be one of.*orchestrator.*subagent.*standalone/i);
+  });
+
+  test("combined ?role and ?type filters return the intersection", async () => {
+    const res = await fetch(
+      `${baseUrl}/sessions/${SESSION_ID}/events?role=orchestrator&type=task.created`,
+      { headers: { Authorization: `Bearer ${readKey}` } }
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.events.length, 1);
+    assert.ok(body.events.every(e => e.agent_role === "orchestrator" && e.type === "task.created"));
+  });
+
+  test("repeated ?role param coerces to last value (last wins)", async () => {
+    const res = await fetch(
+      `${baseUrl}/sessions/${SESSION_ID}/events?role=foobar&role=orchestrator`,
+      { headers: { Authorization: `Bearer ${readKey}` } }
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.events.length, 1);
+    assert.ok(body.events.every(e => e.agent_role === "orchestrator"));
   });
 
   test("returns 401 without auth", async () => {
@@ -586,7 +619,7 @@ describe("GET /sessions/:sessionId/export", () => {
 
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.ok(body.events.length >= 1);
+    assert.equal(body.events.length, 1);
     assert.ok(body.events.every(e => e.agent_role === "orchestrator"));
   });
 
@@ -618,6 +651,16 @@ describe("GET /sessions/:sessionId/export", () => {
     const empty = await emptyRes.json();
 
     assert.equal(empty.events.length, absent.events.length);
+  });
+
+  test("invalid ?role value returns 400 on export", async () => {
+    const res = await fetch(`${baseUrl}/sessions/${SID}/export?role=invalid`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.error, "Bad Request");
+    assert.match(body.message, /must be one of.*orchestrator.*subagent.*standalone/i);
   });
 
   test("a repeated ?format param (array) coerces to the LAST value, not 500", async () => {
@@ -1123,7 +1166,7 @@ describe("GET /rejections", () => {
 
 /**
  * Cross-Tenant Isolation Tests
- * 
+ *
  * Verify that one tenant's API key cannot access another tenant's data.
  * This tests both database filtering AND application-layer defense-in-depth validation.
  */
@@ -1232,7 +1275,7 @@ describe("Security — Cross-Tenant Isolation", () => {
 
 /**
  * XSS Prevention Tests
- * 
+ *
  * Verify that query parameters with special characters are safely handled
  * and don't break JSON responses or enable XSS injection.
  */
@@ -1337,7 +1380,7 @@ describe("Security — XSS Prevention in Query Parameters", () => {
 
 /**
  * SSE Connection Limit Tests
- * 
+ *
  * Verify that the per-tenant and global SSE connection limits are enforced
  * with proper atomic operations to prevent TOCTOU race conditions.
  */

@@ -107,37 +107,6 @@ class SqliteBackend extends StorageBackend {
         )
       `),
 
-      // Full-access (admin/dashboard) — no tenant filter
-      getEventsBySession: db.prepare(`
-        SELECT raw_payload
-        FROM   events
-        WHERE  session_id = ?
-        ORDER  BY time ASC
-      `),
-
-      getEventsBySessionAndType: db.prepare(`
-        SELECT raw_payload
-        FROM   events
-        WHERE  session_id = ?
-          AND  type       = ?
-        ORDER  BY time ASC
-      `),
-
-      // Tenant-scoped variants
-      getEventsBySessionTenant: db.prepare(`
-        SELECT raw_payload
-        FROM   events
-        WHERE  session_id = ? AND tenant_id = ?
-        ORDER  BY time ASC
-      `),
-
-      getEventsBySessionTypeTenant: db.prepare(`
-        SELECT raw_payload
-        FROM   events
-        WHERE  session_id = ? AND type = ? AND tenant_id = ?
-        ORDER  BY time ASC
-      `),
-
       // ----- sessions -----
       upsertSession: db.prepare(`
         INSERT INTO sessions

@@ -1847,10 +1847,12 @@ function drillSession(sessionId) {
 function filtersUrl(sid) {
   const q    = document.getElementById('search-input').value.trim();
   const type = document.getElementById('type-filter').value;
+  const role = document.getElementById('role-filter').value;
   const p    = new URLSearchParams();
 
   if (q)    p.set('q', q);
   if (type) p.set('type', type);
+  if (role) p.set('role', role);
 
   const qs = p.toString();
   return `/sessions/${encodeURIComponent(sid)}/events${qs ? '?' + qs : ''}`;
@@ -1868,7 +1870,10 @@ async function loadTimeline() {
   try {
     const d = await fetchJson(filtersUrl(selSession));
     const evs = d.events || [];
-    const filteredEvents = applyRoleFilter(evs);
+    // Server filters when ?role= is set; skip the old client-side pass to avoid
+    // double-filtering. When role is absent, applyRoleFilter is a no-op (role="" → identity).
+    const roleParam = document.getElementById('role-filter').value;
+    const filteredEvents = roleParam ? evs : applyRoleFilter(evs);
 
     buildTypeOptions(evs);
     curEvents = filteredEvents;
@@ -1956,10 +1961,12 @@ function doExport(fmt) {
   if (!selSession) return;
   const q    = document.getElementById('search-input').value.trim();
   const type = document.getElementById('type-filter').value;
+  const role = document.getElementById('role-filter').value;
   const p    = new URLSearchParams({ format: fmt });
 
   if (q)    p.set('q', q);
   if (type) p.set('type', type);
+  if (role) p.set('role', role);
 
   // Include token so the export endpoint can authenticate the download.
   const tok = getToken();

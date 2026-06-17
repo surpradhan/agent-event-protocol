@@ -79,6 +79,7 @@ const SCHEMA_DDL = `
 
   CREATE INDEX IF NOT EXISTS idx_events_session_id     ON events (session_id);
   CREATE INDEX IF NOT EXISTS idx_events_session_type   ON events (session_id, type);
+  CREATE INDEX IF NOT EXISTS idx_events_session_role   ON events (session_id, agent_role);
   CREATE INDEX IF NOT EXISTS idx_events_time           ON events (time);
   CREATE INDEX IF NOT EXISTS idx_events_trace_id       ON events (trace_id);
   CREATE INDEX IF NOT EXISTS idx_events_tenant_id      ON events (tenant_id);

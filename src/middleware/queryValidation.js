@@ -12,11 +12,13 @@
  *   DB binding (which would throw → 500). See coerceArrayParams below.
  * - ?q (free-text search): max 200 characters
  * - ?type: max 100 characters
- * - ?role: max 100 characters
+ * - ?role: max 100 characters; must be one of the closed enum values below
  * - ?cursor: must be valid base64url
  * - ?limit: must be positive integer
  * - session_id and trace_id in path: must be UUID v4 format
  */
+
+const VALID_AGENT_ROLES = new Set(["orchestrator", "subagent", "standalone"]);
 
 /**
  * Validate that a string is a valid base64url cursor.
@@ -133,6 +135,12 @@ function validateQueryParams(req, res, next) {
       return res.status(400).json({
         error: "Bad Request",
         message: "Query parameter 'role' exceeds maximum length of 100 characters"
+      });
+    }
+    if (role.length > 0 && !VALID_AGENT_ROLES.has(role)) {
+      return res.status(400).json({
+        error: "Bad Request",
+        message: "Query parameter 'role' must be one of: orchestrator, subagent, standalone"
       });
     }
   }
