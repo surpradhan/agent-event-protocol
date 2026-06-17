@@ -470,7 +470,8 @@ describe("GET /sessions/:sessionId/events", () => {
     );
     assert.equal(res.status, 400);
     const body = await res.json();
-    assert.ok(body.message.includes("orchestrator"));
+    assert.equal(body.error, "Bad Request");
+    assert.match(body.message, /must be one of.*orchestrator.*subagent.*standalone/i);
   });
 
   test("combined ?role and ?type filters return the intersection", async () => {
@@ -650,6 +651,16 @@ describe("GET /sessions/:sessionId/export", () => {
     const empty = await emptyRes.json();
 
     assert.equal(empty.events.length, absent.events.length);
+  });
+
+  test("invalid ?role value returns 400 on export", async () => {
+    const res = await fetch(`${baseUrl}/sessions/${SID}/export?role=invalid`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.error, "Bad Request");
+    assert.match(body.message, /must be one of.*orchestrator.*subagent.*standalone/i);
   });
 
   test("a repeated ?format param (array) coerces to the LAST value, not 500", async () => {

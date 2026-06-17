@@ -1870,7 +1870,10 @@ async function loadTimeline() {
   try {
     const d = await fetchJson(filtersUrl(selSession));
     const evs = d.events || [];
-    const filteredEvents = applyRoleFilter(evs);
+    // Server already filters by role when ?role= is set; applyRoleFilter is a
+    // client-side fallback for older servers that don't support ?role=.
+    const roleParam = document.getElementById('role-filter').value;
+    const filteredEvents = roleParam ? evs : applyRoleFilter(evs);
 
     buildTypeOptions(evs);
     curEvents = filteredEvents;
