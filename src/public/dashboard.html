@@ -1758,16 +1758,20 @@ function renderWorkflowGraph(g) {
       ${edgeSvg}${nodeSvg}
     </svg>`;
 
-  wrap.querySelectorAll('g[data-eid]').forEach(el => {
-    el.addEventListener('click', () => wfgClick(el.dataset.eid));
-    el.addEventListener('keydown', (event) => {
-      if( event.key === 'Enter' || event.key === ' ' ){
-        event.preventDefault();
-        event.stopPropagation();
-        wfgClick(el.dataset.eid);
-      } 
-      });
-  });
+    document.getElementById('dag-wrap').addEventListener('click', e => {
+      const g = e.target.closest('g[data-eid]');
+      if (g) wfgClick(g.dataset.eid);
+    });
+
+    document.getElementById('dag-wrap').addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        const g = e.target.closest('g[data-eid]');
+        if (g) {
+          e.preventDefault();
+          wfgClick(g.dataset.eid);
+        }
+      }
+    });
 }
 
 function wfgClick(id) {
@@ -1807,7 +1811,7 @@ function treeNodeHtml(node) {
           role="button" tabindex="0"
           aria-expanded="true" aria-label="Collapse session children"
           data-cid="${esc(cid)}" onclick="event.stopPropagation(); toggleTree(this.dataset.cid, this)"
-          onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();toggleTree(this.dataset.cid,this)}">▼</span>`
+          onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleTree(this.dataset.cid,this)}">▼</span>`
     : `<span class="tree-toggle-gap" aria-hidden="true"></span>`;
   const childrenHtml = ch.length
     ? `<div class="tree-children" id="${esc(cid)}">${ch.map(treeNodeHtml).join('')}</div>`
@@ -1854,10 +1858,12 @@ function drillSession(sessionId) {
 function filtersUrl(sid) {
   const q    = document.getElementById('search-input').value.trim();
   const type = document.getElementById('type-filter').value;
+  const role = document.getElementById('role-filter').value;
   const p    = new URLSearchParams();
 
   if (q)    p.set('q', q);
   if (type) p.set('type', type);
+  if (role) p.set('role', role);
 
   const qs = p.toString();
   return `/sessions/${encodeURIComponent(sid)}/events${qs ? '?' + qs : ''}`;
@@ -1875,7 +1881,11 @@ async function loadTimeline() {
   try {
     const d = await fetchJson(filtersUrl(selSession));
     const evs = d.events || [];
-    const filteredEvents = applyRoleFilter(evs);
+
+    // Server filters when ?role= is set; skip the old client-side pass to avoid
+    // double-filtering. When role is absent, applyRoleFilter is a no-op (role="" → identity).
+    const roleParam = document.getElementById('role-filter').value;
+    const filteredEvents = roleParam ? evs : applyRoleFilter(evs);
 
     buildTypeOptions(evs);
     curEvents = filteredEvents;
@@ -1963,10 +1973,12 @@ function doExport(fmt) {
   if (!selSession) return;
   const q    = document.getElementById('search-input').value.trim();
   const type = document.getElementById('type-filter').value;
+  const role = document.getElementById('role-filter').value;
   const p    = new URLSearchParams({ format: fmt });
 
   if (q)    p.set('q', q);
   if (type) p.set('type', type);
+  if (role) p.set('role', role);
 
   // Include token so the export endpoint can authenticate the download.
   const tok = getToken();
@@ -2854,9 +2866,6 @@ function renderWebhooks(webhooks) {
     }
     return `
       <div class="wh-row" id="wh-row-${esc(w.id)}" 
-      role="button" tabindex="0" 
-      aria-label="Webhook ${esc(w.id)}"
-      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();loadWebhookDeliveries('${esc(w.id)}')}">
         <div class="wh-row-head">
           <code>${esc(w.id)}</code>
           <span style="color:${enabledColor};font-size:11px;font-weight:600">${enabledLabel}</span>
@@ -2871,7 +2880,10 @@ function renderWebhooks(webhooks) {
           </div>
         </div>
         <div style="margin-top:5px;word-break:break-all;font-size:12px;color:var(--ink);cursor:pointer"
+             role="button" tabindex="0" 
+             aria-label="Webhook ${esc(w.id)}"
              onclick="loadWebhookDeliveries('${esc(w.id)}')"
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();loadWebhookDeliveries('${esc(w.id)}')}">
              title="View deliveries for this webhook">${esc(w.target_url)}</div>
         <div class="hint" style="font-size:11px;margin-top:3px">events: ${types}</div>
         ${secretBanner}
