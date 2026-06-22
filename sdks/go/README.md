@@ -2,6 +2,8 @@
 
 A production-ready Go client library for the Agent Event Protocol (AEP) v0.2.0.
 
+> **📍 Project direction (2026-06):** AEP is converging on OpenTelemetry rather than continuing as a standalone protocol. This SDK is **frozen / maintenance mode** — it remains published and installable, but active development has moved toward contributions to the OTel GenAI semantic conventions.
+
 ## Installation
 
 The Go SDK is a **subdirectory module** of the
