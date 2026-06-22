@@ -20,9 +20,8 @@ build/
 .cache/
 coverage/
 
-# Docs
-AEP_PRD.md
-AEP_competitive_analysis.md
+# Local working docs (not published to the repo)
+planning/
 
 # PDF exports (use SETUP.md as source of truth; PDF is for sharing only)
 *.pdf
