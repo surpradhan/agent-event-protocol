@@ -4,6 +4,8 @@ Python client library for the [Agent Event Protocol](https://github.com/surpradh
 
 **Version:** 0.4.1 · **Python:** ≥ 3.10 · **Schema:** AEP v0.2.0
 
+> **📍 Project direction (2026-06):** AEP is converging on OpenTelemetry rather than continuing as a standalone protocol. This SDK remains published and usable, and is the **carry-forward / reference** SDK — its framework auto-instrumentation, OTEL bridge, and signing feed contributions to the OTel GenAI semantic conventions.
+
 ---
 
 ## Installation

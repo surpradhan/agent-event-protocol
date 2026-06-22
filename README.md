@@ -7,6 +7,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Tests: 200+](https://img.shields.io/badge/tests-200%2B-brightgreen)](#testing)
 
+> **📍 Project direction (2026-06):** AEP is converging on OpenTelemetry rather than continuing as a standalone protocol. Active development is moving toward contributions to the OTel GenAI semantic conventions. This repo remains published and usable, but the envelope/server here is now a **reference implementation**, not the forward roadmap.
+
 **Stop flying blind with AI agents.** AEP is a lightweight, structured observability framework for multi-agent systems. Capture causation chains, debug orchestration logic, visualize agent workflows: all in real time.
 
 Perfect for:

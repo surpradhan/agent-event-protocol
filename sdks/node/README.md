@@ -9,6 +9,8 @@ HMAC signing contract, same client surface.
 > client) **and** zero-code **LangChain.js / LangGraph** auto-instrumentation via
 > `instrument()`.
 
+> **📍 Project direction (2026-06):** AEP is converging on OpenTelemetry rather than continuing as a standalone protocol. This SDK is **frozen / maintenance mode** — it remains published and installable, but active development has moved toward contributions to the OTel GenAI semantic conventions.
+
 ## Install
 
 ```bash
