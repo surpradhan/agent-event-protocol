@@ -195,7 +195,7 @@ Related to #456
 
 ## 🎯 Areas We're Looking For Help
 
-For the current roadmap and open work items, see the [Roadmap section in README.md](./README.md#-roadmap) and the [PRD](./PRD.md). The Good First Issues list below is current as of the last doc update — check the GitHub issue tracker for the freshest picture.
+For the current roadmap and open work items, see the [Roadmap section in README.md](./README.md#-roadmap). The Good First Issues list below is current as of the last doc update — check the GitHub issue tracker for the freshest picture.
 
 ### Good First Issues (For New Contributors)
 Look for issues tagged with `good-first-issue` label on GitHub:
@@ -361,7 +361,7 @@ test("validateEvent rejects null input", () => {
 ## 🎓 Learning Resources
 
 ### Understanding AEP
-- [Product roadmap & specification](./PRD.md)
+- [Product roadmap](./README.md#-roadmap)
 - [Setup guide with examples](./SETUP.md)
 - [Demo scenarios](./examples/demos/)
 
