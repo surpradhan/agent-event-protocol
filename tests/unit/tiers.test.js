@@ -42,7 +42,8 @@ describe("tiers.isValidTier", () => {
   test("returns false for unknown tier names", () => {
     assert.equal(isValidTier("premium"), false);
     assert.equal(isValidTier("basic"), false);
-    assert.equal(isValidTier(""), false);
+    assert.equal(isValidTier(null), false);
+    assert.equal(isValidTier(undefined), false);
   });
 });
 
@@ -89,6 +90,14 @@ describe("tiers.getTierDefinitions", () => {
     assert.equal(defs.enterprise.event_quota, null);
     assert.equal(defs.enterprise.retention_days, null);
   });
+
+  test("zero is returned as-is (not treated as fallback)", () => {
+  process.env.TIER_FREE_EVENT_QUOTA = "0";
+
+  const defs = getTierDefinitions();
+
+  assert.equal(defs.free.event_quota, 0);
+}); 
 
   test("falls back to defaults for invalid values", () => {
     process.env.TIER_FREE_EVENT_QUOTA = "-10";
