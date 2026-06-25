@@ -42,6 +42,7 @@ describe("tiers.isValidTier", () => {
   test("returns false for unknown tier names", () => {
     assert.equal(isValidTier("premium"), false);
     assert.equal(isValidTier("basic"), false);
+    assert.equal(isValidTier(""), false);
     assert.equal(isValidTier(null), false);
     assert.equal(isValidTier(undefined), false);
   });
