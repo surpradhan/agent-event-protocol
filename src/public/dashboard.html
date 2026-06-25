@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AEP Demo Dashboard</title>
+  <title>AEP Dashboard</title>
   <style>
     /* ═══════════════════════════════════════════════════
        SELF-HOSTED FONTS — served from /fonts/ so the
@@ -211,7 +211,7 @@
     .metric-grid .card:nth-child(5)::before { background: radial-gradient(ellipse at 22% 22%, rgba(255,179,71,0.16) 0%, transparent 68%); }
 
     .k {
-      color: var(--muted); font-size: 10px;
+      color: var(--muted); font-size: 11px;
       text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;
     }
     .v {
@@ -220,16 +220,43 @@
       color: var(--ink); letter-spacing: -0.02em;
     }
 
-    /* ── Main tabs ── */
+    /* ── Primary nav (3 groups) ── */
     .main-tabs {
+      display: flex; gap: 0;
+      border-bottom: 1px solid var(--line2);
+      margin-bottom: 0;
+    }
+    .primary-tab {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 10px 24px; font-size: 14px; font-weight: 600;
+      font-family: 'Inter', sans-serif; letter-spacing: 0.04em;
+      background: transparent; border: none;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+      color: var(--muted); cursor: pointer;
+      transition: color .15s, border-color .15s;
+    }
+    .primary-tab:hover { color: var(--ink); }
+    .primary-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .primary-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+    .ptab-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: transparent; flex-shrink: 0;
+      transition: background .2s, box-shadow .2s;
+    }
+    .ptab-dot.alert-warn { background: var(--warm); box-shadow: 0 0 6px var(--warm); }
+    .ptab-dot.alert-err  { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+
+    /* ── Sub-nav (leaf views within a group) ── */
+    .sub-nav {
       display: flex; gap: 2px;
       border-bottom: 1px solid var(--line2);
-      margin-bottom: 16px;
+      margin-bottom: 16px; padding-top: 4px;
     }
     .tab-btn {
       background: none; border: none;
       border-bottom: 2px solid transparent; margin-bottom: -1px;
-      padding: 10px 22px; font-size: 13px; font-weight: 600;
+      padding: 8px 18px; font-size: 13px; font-weight: 600;
       font-family: 'Inter', sans-serif;
       color: var(--muted); cursor: pointer;
       border-radius: 6px 6px 0 0; letter-spacing: 0.02em;
@@ -240,16 +267,12 @@
       color: var(--accent); border-bottom-color: var(--accent);
       text-shadow: 0 0 18px rgba(0,255,200,0.4);
     }
-    .tab-group-label {
-      font-size: 9px; font-weight: 700; letter-spacing: 0.1em;
-      text-transform: uppercase; color: var(--muted); opacity: 0.55;
-      align-self: flex-end; padding: 0 4px 12px 10px;
-      pointer-events: none; user-select: none; white-space: nowrap;
-    }
-    .tab-sep {
-      width: 1px; background: var(--line2);
-      margin: 6px; align-self: stretch; flex-shrink: 0;
-    }
+    .tab-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+    /* ── Clickable metric cards ── */
+    .metric-link { cursor: pointer; }
+    .metric-link:hover { background: var(--card-hover); }
+    .metric-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
     /* ── Layout ── */
     .layout { display: grid; grid-template-columns: 320px 1fr; gap: 14px; }
@@ -258,7 +281,7 @@
       align-items: center; margin-bottom: 14px; gap: 8px;
     }
     .panel-title {
-      font-size: 10px; font-weight: 700; margin-bottom: 12px;
+      font-size: 11px; font-weight: 700; margin-bottom: 12px;
       color: var(--muted); text-transform: uppercase; letter-spacing: 0.12em;
     }
     .panel-header .panel-title {
@@ -783,41 +806,48 @@
   <!-- Header -->
   <div class="hero">
     <div>
-      <h1>AEP Demo Dashboard</h1>
+      <h1>AEP Dashboard</h1>
       <p>Session timelines, causation graphs, workflow trees — in real time.</p>
     </div>
     <div class="live-pill">
       <span class="live-dot" id="live-dot"></span>
-      <span id="live-label">Connecting…</span>
+      <span id="live-label" role="status" aria-live="polite" aria-atomic="true">Connecting…</span>
     </div>
   </div>
 
   <!-- Metrics -->
   <div class="metric-grid">
-    <div class="card"><div class="k">Sessions</div><div id="m-sessions" class="v" aria-live="polite" aria-atomic="true">0</div></div>
+    <div class="card metric-link" role="button" tabindex="0" aria-label="Sessions — go to Sessions view" onclick="switchMain('sessions')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();switchMain('sessions');}"><div class="k">Sessions</div><div id="m-sessions" class="v" aria-live="polite" aria-atomic="true">0</div></div>
     <div class="card"><div class="k">Events Received</div><div id="m-received" class="v" aria-live="polite" aria-atomic="true">0</div></div>
     <div class="card"><div class="k">Accepted</div><div id="m-accepted" class="v" aria-live="polite" aria-atomic="true">0</div></div>
-    <div class="card"><div class="k">Rejected</div><div id="m-rejected" class="v" aria-live="polite" aria-atomic="true">0</div></div>
-    <div class="card"><div class="k">Workflows</div><div id="m-workflows" class="v" aria-live="polite" aria-atomic="true">0</div></div>
+    <div class="card metric-link" role="button" tabindex="0" aria-label="Rejected — go to Rejected view" onclick="switchMain('rejected')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();switchMain('rejected');}"><div class="k">Rejected</div><div id="m-rejected" class="v" aria-live="polite" aria-atomic="true">0</div></div>
+    <div class="card metric-link" role="button" tabindex="0" aria-label="Workflows — go to Workflows view" onclick="switchMain('workflows')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();switchMain('workflows');}"><div class="k">Workflows</div><div id="m-workflows" class="v" aria-live="polite" aria-atomic="true">0</div></div>
   </div>
 
-  <!-- Main tabs — grouped by concern (Wave 3 finding #5) -->
-  <!-- aria-selected kept on buttons as a styling/AT hint; full WAI-ARIA tablist
-       pattern (roving tabindex + arrow keys) is tracked as a follow-up issue. -->
-  <div class="main-tabs">
-    <span class="tab-group-label" role="presentation" aria-hidden="true">Observe</span>
-    <button class="tab-btn active" id="tab-sessions"    aria-selected="true"  onclick="switchMain('sessions')">Sessions</button>
-    <button class="tab-btn"        id="tab-workflows"   aria-selected="false" onclick="switchMain('workflows')">Workflows</button>
-    <span class="tab-sep" role="presentation" aria-hidden="true"></span>
-    <span class="tab-group-label" role="presentation" aria-hidden="true">Analyze</span>
-    <button class="tab-btn"        id="tab-analytics"   aria-selected="false" onclick="switchMain('analytics')">Policy Analytics</button>
-    <button class="tab-btn"        id="tab-performance" aria-selected="false" onclick="switchMain('performance')">Performance</button>
-    <button class="tab-btn"        id="tab-anomalies"   aria-selected="false" onclick="switchMain('anomalies')">Anomalies<span id="anomalies-badge" class="tab-badge" style="display:none">0</span></button>
-    <button class="tab-btn"        id="tab-custom"      aria-selected="false" onclick="switchMain('custom')">Custom Analytics</button>
-    <span class="tab-sep" role="presentation" aria-hidden="true"></span>
-    <span class="tab-group-label" role="presentation" aria-hidden="true">Ops</span>
-    <button class="tab-btn"        id="tab-rejected"    aria-selected="false" onclick="switchMain('rejected')">Rejected<span id="rejected-badge" class="tab-badge" style="display:none">0</span></button>
-    <button class="tab-btn"        id="tab-webhooks"    aria-selected="false" onclick="switchMain('webhooks')">Webhooks</button>
+  <!-- Primary navigation — 3 groups; sub-navs revealed contextually.
+       aria-selected is used as a styling/AT hint. Full WAI-ARIA tablist pattern
+       (roving tabindex, arrow keys, tabpanel wiring) is a known follow-up. -->
+  <div class="main-tabs" aria-label="Main navigation">
+    <button class="primary-tab active" id="ptab-observe" aria-selected="true"  onclick="switchGroup('observe')"><span class="ptab-dot" id="pdot-observe"></span>Observe</button>
+    <button class="primary-tab"        id="ptab-analyze" aria-selected="false" onclick="switchGroup('analyze')"><span class="ptab-dot" id="pdot-analyze"></span>Analyze</button>
+    <button class="primary-tab"        id="ptab-ops"     aria-selected="false" onclick="switchGroup('ops')"><span class="ptab-dot" id="pdot-ops"></span>Ops</button>
+  </div>
+
+  <div class="sub-nav" id="subnav-observe" aria-label="Observe views">
+    <button class="tab-btn active" id="tab-sessions"  aria-selected="true"  onclick="switchMain('sessions')">Sessions</button>
+    <button class="tab-btn"        id="tab-workflows" aria-selected="false" onclick="switchMain('workflows')">Workflows</button>
+  </div>
+
+  <div class="sub-nav" id="subnav-analyze" style="display:none" aria-label="Analyze views">
+    <button class="tab-btn" id="tab-analytics"   aria-selected="false" onclick="switchMain('analytics')">Policy Analytics</button>
+    <button class="tab-btn" id="tab-performance" aria-selected="false" onclick="switchMain('performance')">Performance</button>
+    <button class="tab-btn" id="tab-anomalies"   aria-selected="false" onclick="switchMain('anomalies')">Anomalies<span id="anomalies-badge" class="tab-badge" style="display:none">0</span></button>
+    <button class="tab-btn" id="tab-custom"      aria-selected="false" onclick="switchMain('custom')">Custom Analytics</button>
+  </div>
+
+  <div class="sub-nav" id="subnav-ops" style="display:none" aria-label="Ops views">
+    <button class="tab-btn" id="tab-rejected" aria-selected="false" onclick="switchMain('rejected')">Rejected<span id="rejected-badge" class="tab-badge" style="display:none">0</span></button>
+    <button class="tab-btn" id="tab-webhooks" aria-selected="false" onclick="switchMain('webhooks')">Webhooks</button>
   </div>
 
   <!-- ═══ Sessions view ═══ -->
@@ -1256,6 +1286,13 @@ function submitAuthToken() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Must stay in sync with the view IDs handled in switchMain() below.
 const VALID_VIEWS = ['sessions','workflows','rejected','analytics','performance','custom','anomalies','webhooks'];
+const VIEW_GROUP  = {
+  sessions: 'observe', workflows: 'observe',
+  analytics: 'analyze', performance: 'analyze', anomalies: 'analyze', custom: 'analyze',
+  rejected: 'ops', webhooks: 'ops'
+};
+const GROUP_DEFAULT = { observe: 'sessions', analyze: 'analytics', ops: 'rejected' };
+const GROUP_SUBNAVS = { observe: 'subnav-observe', analyze: 'subnav-analyze', ops: 'subnav-ops' };
 let mainView      = 'sessions';
 let subView       = 'timeline';
 let wfSubView     = 'tree';   // Workflows tab: 'tree' | 'graph'
@@ -1424,6 +1461,7 @@ async function initSSE() {
   sseConn.addEventListener('event.received', e => {
     try {
       const ev = JSON.parse(e.data);
+      _lastSeenTs = Date.now();
       // Optimistic metric bump
       nudge('m-received');
       nudge('m-accepted');
@@ -1444,9 +1482,29 @@ async function initSSE() {
     } catch(_) {}
   });
 }
+let _liveOn = false;
+let _lastSeenTs = Date.now();
+let _tickerInterval = null;
 function setLive(on) {
-  document.getElementById('live-dot').className   = 'live-dot' + (on ? ' on' : ' err');
-  document.getElementById('live-label').textContent = on ? 'Live' : 'Reconnecting…';
+  _liveOn = on;
+  if (on) _lastSeenTs = Date.now();
+  document.getElementById('live-dot').className = 'live-dot' + (on ? ' on' : ' err');
+  updateLiveLabel();
+  if (!_tickerInterval) {
+    _tickerInterval = setInterval(updateLiveLabel, 5000);
+  }
+}
+function updateLiveLabel() {
+  const el = document.getElementById('live-label');
+  if (_liveOn) {
+    const secs = Math.round((Date.now() - _lastSeenTs) / 1000);
+    el.textContent = secs < 5 ? 'Live' : `Live · updated ${secs}s ago`;
+  } else {
+    const secs = Math.round((Date.now() - _lastSeenTs) / 1000);
+    el.textContent = secs < 60
+      ? `Disconnected · last seen ${secs}s ago`
+      : `Disconnected · last seen ${Math.round(secs / 60)}m ago`;
+  }
 }
 function nudge(id) {
   const el = document.getElementById(id);
@@ -1468,9 +1526,26 @@ async function refreshSessions() {
 // ─────────────────────────────────────────────────────────────────────────────
 // View switching
 // ─────────────────────────────────────────────────────────────────────────────
+function syncPrimaryNav(v) {
+  const group = VIEW_GROUP[v] || 'observe';
+  for (const [g, navId] of Object.entries(GROUP_SUBNAVS)) {
+    document.getElementById(navId).style.display = g === group ? '' : 'none';
+  }
+  for (const g of ['observe', 'analyze', 'ops']) {
+    const btn = document.getElementById('ptab-' + g);
+    btn.classList.toggle('active', g === group);
+    btn.setAttribute('aria-selected', String(g === group));
+  }
+}
+function switchGroup(group) {
+  // Clicking an already-active primary tab intentionally resets to the group's
+  // default sub-view (e.g. Analyze → Policy Analytics), matching common nav UIs.
+  switchMain(GROUP_DEFAULT[group]);
+}
 function switchMain(v) {
   mainView = v;
   history.replaceState(null, '', '#' + v);
+  syncPrimaryNav(v);
   document.getElementById('view-sessions').style.display  = v === 'sessions'  ? '' : 'none';
   document.getElementById('view-workflows').style.display = v === 'workflows' ? '' : 'none';
   document.getElementById('view-rejected').style.display  = v === 'rejected'  ? '' : 'none';
@@ -1508,7 +1583,7 @@ function renderSessions(sessions) {
   allSessions = sessions;
   const box = document.getElementById('sessions-list');
   box.innerHTML = '';
-  if (!sessions.length) { box.innerHTML = '<div class="empty">No sessions yet. Run a demo script.</div>'; return; }
+  if (!sessions.length) { box.innerHTML = '<div class="empty">No sessions yet.<br><span class="hint">Emit an event with <code>npm run emit:example</code> or the Python/Go SDK.</span></div>'; return; }
   if (!selSession) selSession = sessions[0].session_id;
 
   // Apply client-side filter
@@ -1573,7 +1648,7 @@ function buildWorkflowList(sessions) {
 
   const box = document.getElementById('workflows-list');
   box.innerHTML = '';
-  if (!byTrace.size) { box.innerHTML = '<div class="empty">No workflows yet.</div>'; return; }
+  if (!byTrace.size) { box.innerHTML = '<div class="empty">No workflows yet.<br><span class="hint">Workflows appear when events share a <code>trace_id</code>.</span></div>'; return; }
 
   for (const [traceId, ws] of byTrace) {
     const el = document.createElement('div');
@@ -1956,6 +2031,11 @@ function togglePlay() {
 }
 function doExport(fmt) {
   if (!selSession) return;
+  const btns = Array.from(document.querySelectorAll('[onclick^="doExport"]'));
+  const origLabels = btns.map(b => b.textContent);
+  btns.forEach(b => { b.textContent = 'Preparing…'; b.disabled = true; });
+  setTimeout(() => btns.forEach((b, i) => { b.textContent = origLabels[i]; b.disabled = false; }), 1800);
+
   const q    = document.getElementById('search-input').value.trim();
   const type = document.getElementById('type-filter').value;
   const role = document.getElementById('role-filter').value;
@@ -2178,6 +2258,9 @@ function setBadge(total) {
   const badge = document.getElementById('rejected-badge');
   badge.style.display = total > 0 ? '' : 'none';
   if (total > 0) badge.textContent = total > 99 ? '99+' : String(total);
+  // Light up the Ops primary-nav dot when there are rejections
+  const dot = document.getElementById('pdot-ops');
+  if (dot) dot.className = 'ptab-dot' + (total > 0 ? ' alert-warn' : '');
 }
 
 /** Guard: skip DOM update and network overhead when the count hasn't changed. */
@@ -2662,6 +2745,9 @@ function renderAnomalies(a) {
   const badge = document.getElementById('anomalies-badge');
   badge.style.display = a.anomaly_count > 0 ? '' : 'none';
   badge.textContent = a.anomaly_count > 99 ? '99+' : String(a.anomaly_count);
+  // Light up the Analyze primary-nav dot when anomalies are flagged
+  const dot = document.getElementById('pdot-analyze');
+  if (dot) dot.className = 'ptab-dot' + (a.anomaly_count > 0 ? ' alert-warn' : '');
 
   const body = document.getElementById('ad-body');
   if (!a.anomaly_count) {
