@@ -887,7 +887,7 @@
     <div id="drill-breadcrumb" class="drill-breadcrumb" style="display:none" role="navigation" aria-label="Breadcrumb">
       <button class="btn secondary" onclick="drillBack()">← Back to <span id="drill-origin-label"></span></button>
     </div>
-  <div class="layout">
+    <div class="layout">
 
     <div class="card">
       <div class="panel-title">Sessions</div>
@@ -1939,12 +1939,15 @@ function drillBack() {
   switchMain(origin || 'sessions');
 }
 function drillSession(sessionId) {
-  drillOrigin = mainView;
+  // Guard: drilling from sessions into sessions has no meaningful origin
+  drillOrigin = (mainView !== 'sessions') ? mainView : null;
   selSession = sessionId; activeIdx = -1; stopPlay();
+  // drillOrigin set before switchMain so the updateBreadcrumb() inside it fires correctly
   switchMain('sessions');
-  // Encode origin in hash so breadcrumb survives back-navigation
-  history.replaceState(null, '', '#sessions?from=' + encodeURIComponent(drillOrigin));
-  updateBreadcrumb();
+  // Rewrite hash with origin so breadcrumb survives back-navigation/reload
+  if (drillOrigin) {
+    history.replaceState(null, '', '#sessions?from=' + encodeURIComponent(drillOrigin));
+  }
   renderSessions(allSessions);
   setSessionTitle(sessionId);
   loadTimeline();
@@ -3224,11 +3227,9 @@ document.getElementById('wfg-wrap').addEventListener('keydown', e => {
   const [view, query] = raw.split('?');
   const from = query ? new URLSearchParams(query).get('from') : null;
   if (VALID_VIEWS.includes(view)) {
+    // Set drillOrigin before switchMain so updateBreadcrumb() inside it fires correctly
+    if (from && VALID_VIEWS.includes(from)) drillOrigin = from;
     switchMain(view);
-    if (from && VALID_VIEWS.includes(from)) {
-      drillOrigin = from;
-      updateBreadcrumb();
-    }
   } else if (!location.hash) {
     history.replaceState(null, '', '#' + mainView);
   }
