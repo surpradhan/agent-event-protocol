@@ -10,7 +10,7 @@
  *   - tier policy resolution
  */
 
-const { test, describe, beforeEach, afterEach } = require("node:test");
+const { test, describe, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
@@ -21,15 +21,19 @@ const {
   isValidTier
 } = require("../../src/tiers");
 
-const ORIGINAL_ENV = { ...process.env };
-
-// Keep environment changes isolated between tests.
-beforeEach(() => {
-  process.env = { ...ORIGINAL_ENV };
-});
+const TIER_KEYS = [
+    "TIER_FREE_EVENT_QUOTA",
+    "TIER_FREE_RETENTION_DAYS",
+    "TIER_TEAM_EVENT_QUOTA",
+    "TIER_TEAM_RETENTION_DAYS",
+    "TIER_ENTERPRISE_EVENT_QUOTA",
+    "TIER_ENTERPRISE_RETENTION_DAYS",
+];
 
 afterEach(() => {
-  process.env = { ...ORIGINAL_ENV };
+    for (const key of TIER_KEYS) {
+      delete process.env[key];
+    }
 });
 
 describe("tiers.isValidTier", () => {
