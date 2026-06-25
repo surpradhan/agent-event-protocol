@@ -22,18 +22,18 @@ const {
 } = require("../../src/tiers");
 
 const TIER_KEYS = [
-    "TIER_FREE_EVENT_QUOTA",
-    "TIER_FREE_RETENTION_DAYS",
-    "TIER_TEAM_EVENT_QUOTA",
-    "TIER_TEAM_RETENTION_DAYS",
-    "TIER_ENTERPRISE_EVENT_QUOTA",
-    "TIER_ENTERPRISE_RETENTION_DAYS",
+  "TIER_FREE_EVENT_QUOTA",
+  "TIER_FREE_RETENTION_DAYS",
+  "TIER_TEAM_EVENT_QUOTA",
+  "TIER_TEAM_RETENTION_DAYS",
+  "TIER_ENTERPRISE_EVENT_QUOTA",
+  "TIER_ENTERPRISE_RETENTION_DAYS",
 ];
 
 afterEach(() => {
-    for (const key of TIER_KEYS) {
-      delete process.env[key];
-    }
+  for (const key of TIER_KEYS) {
+    delete process.env[key];
+  }
 });
 
 describe("tiers.isValidTier", () => {
@@ -102,7 +102,7 @@ describe("tiers.getTierDefinitions", () => {
     const defs = getTierDefinitions();
 
     assert.equal(defs.free.event_quota, 0);
-});
+  });
 
   test("falls back to defaults for invalid values", () => {
     process.env.TIER_FREE_EVENT_QUOTA = "-10";
