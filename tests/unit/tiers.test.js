@@ -92,12 +92,12 @@ describe("tiers.getTierDefinitions", () => {
   });
 
   test("zero is returned as-is (not treated as fallback)", () => {
-  process.env.TIER_FREE_EVENT_QUOTA = "0";
+    process.env.TIER_FREE_EVENT_QUOTA = "0";
 
-  const defs = getTierDefinitions();
+    const defs = getTierDefinitions();
 
-  assert.equal(defs.free.event_quota, 0);
-}); 
+    assert.equal(defs.free.event_quota, 0);
+});
 
   test("falls back to defaults for invalid values", () => {
     process.env.TIER_FREE_EVENT_QUOTA = "-10";
