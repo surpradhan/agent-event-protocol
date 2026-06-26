@@ -858,10 +858,17 @@ v1.get("/compliance/report", requireReadAccess, validateQueryParams, async (req,
 });
 
 // GET /metrics — counters + session count + workflow metrics (JSON)
+// Optional query params: since, until (ISO-8601) for time-windowed counts.
 v1.get("/metrics", requireReadAccess, async (req, res) => {
-  const dbStats = await db.getMetrics(req.tenant_id);
-  // Signature-form telemetry (issue #65) is process-wide / server-scoped, not
-  // tenant-filtered — surfaced alongside the DB counters for convenience.
+  const sinceRaw = req.query.since ? String(req.query.since) : null;
+  const untilRaw = req.query.until ? String(req.query.until) : null;
+  if ((sinceRaw && Number.isNaN(Date.parse(sinceRaw))) ||
+      (untilRaw && Number.isNaN(Date.parse(untilRaw)))) {
+    return res.status(400).json({ error: "invalid since/until — must be ISO-8601" });
+  }
+  const opts = (sinceRaw || untilRaw) ? { since: sinceRaw, until: untilRaw } : undefined;
+  const dbStats = await db.getMetrics(req.tenant_id, opts);
+  // Signature-form telemetry (issue #65) is process-wide / server-scoped; not time-windowed.
   res.json({ ...dbStats, signatures: getSignatureMetrics() });
 });
 

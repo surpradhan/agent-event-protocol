@@ -798,6 +798,59 @@ describe("GET /metrics", () => {
     const res = await fetch(`${baseUrl}/metrics`);
     assert.equal(res.status, 401);
   });
+
+  test("windowed: ?since returns 200 with windowed field", async () => {
+    const since = new Date(Date.now() - 3600 * 1000).toISOString();
+    const res = await fetch(`${baseUrl}/metrics?since=${encodeURIComponent(since)}`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(typeof body.accepted === "number");
+    assert.ok(typeof body.session_count === "number");
+    assert.ok(typeof body.workflow_count === "number");
+    assert.deepEqual(body.windowed, { since, until: null });
+  });
+
+  test("windowed: ?since and ?until returns 200 with both bounds", async () => {
+    const since = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+    const until = new Date(Date.now()).toISOString();
+    const res = await fetch(
+      `${baseUrl}/metrics?since=${encodeURIComponent(since)}&until=${encodeURIComponent(until)}`,
+      { headers: { Authorization: `Bearer ${readKey}` } }
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepEqual(body.windowed, { since, until });
+  });
+
+  test("windowed: invalid since returns 400", async () => {
+    const res = await fetch(`${baseUrl}/metrics?since=not-a-date`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.ok(body.error);
+  });
+
+  test("windowed: counts are <= lifetime totals", async () => {
+    // Emit one event so there's data, then compare 1-second window vs lifetime
+    await fetch(`${baseUrl}/events`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${writeKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(makeEvent()),
+    });
+    const lifetime = await (await fetch(`${baseUrl}/metrics`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    })).json();
+    const since = new Date(Date.now() + 60 * 1000).toISOString(); // 1 min in future → 0 results
+    const windowed = await (await fetch(`${baseUrl}/metrics?since=${encodeURIComponent(since)}`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    })).json();
+    assert.ok(windowed.accepted <= lifetime.accepted,
+      `windowed accepted (${windowed.accepted}) should be <= lifetime (${lifetime.accepted})`);
+    assert.ok(windowed.session_count <= lifetime.session_count);
+  });
 });
 
 // ---------------------------------------------------------------------------

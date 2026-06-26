@@ -148,8 +148,8 @@ async function getSessionCount(tenantId) {
   return getBackend().getSessionCount(tenantId);
 }
 
-async function getMetrics(tenantId) {
-  return getBackend().getMetrics(tenantId);
+async function getMetrics(tenantId, opts) {
+  return getBackend().getMetrics(tenantId, opts);
 }
 
 async function incrementCounter(key) {

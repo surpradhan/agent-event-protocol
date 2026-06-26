@@ -414,9 +414,8 @@ class PostgresBackend extends StorageBackend {
     return Number(rows[0].n);
   }
 
-  async getMetrics(tenantId = null) {
-    // Server-wide request counters are only meaningful for admin (tenantId=null).
-    // For tenant-scoped requests, set to 0 to prevent data leakage about other tenants.
+  async getMetrics(tenantId = null, { since, until } = {}) {
+    // Server-wide request counters live in server_metrics (no timestamps) — always lifetime totals.
     let received = 0, rejected = 0, duplicates = 0;
     if (!tenantId) {
       const { rows } = await this._pool.query(
@@ -429,32 +428,63 @@ class PostgresBackend extends StorageBackend {
       duplicates = byKey.duplicates ?? 0;
     }
 
-    const acceptedRes = tenantId
-      ? await this._pool.query("SELECT COUNT(*) AS n FROM events WHERE tenant_id = $1", [tenantId])
-      : await this._pool.query("SELECT COUNT(*) AS n FROM events");
+    const windowed = since !== null && since !== undefined || until !== null && until !== undefined;
+
+    // Build WHERE clauses dynamically for the windowed path.
+    const evtConds  = [];
+    const evtParams = [];
+    const sesConds  = [];
+    const sesParams = [];
+    if (tenantId) {
+      evtConds.push(`tenant_id = $${evtParams.push(tenantId)}`);
+      sesConds.push(`tenant_id = $${sesParams.push(tenantId)}`);
+    }
+    if (since) {
+      evtConds.push(`time >= $${evtParams.push(since)}`);
+      sesConds.push(`started_at >= $${sesParams.push(since)}`);
+    }
+    if (until) {
+      evtConds.push(`time < $${evtParams.push(until)}`);
+      sesConds.push(`started_at < $${sesParams.push(until)}`);
+    }
+    const evtWhere = evtConds.length ? "WHERE " + evtConds.join(" AND ") : "";
+    const sesWhere = sesConds.length ? "WHERE " + sesConds.join(" AND ") : "";
+
+    const acceptedRes = await this._pool.query(
+      `SELECT COUNT(*) AS n FROM events ${evtWhere}`, evtParams
+    );
     const accepted = Number(acceptedRes.rows[0].n);
 
-    const byTypeRes = tenantId
-      ? await this._pool.query("SELECT type, COUNT(*) AS n FROM events WHERE tenant_id = $1 GROUP BY type", [tenantId])
-      : await this._pool.query("SELECT type, COUNT(*) AS n FROM events GROUP BY type");
+    const byTypeRes = await this._pool.query(
+      `SELECT type, COUNT(*) AS n FROM events ${evtWhere} GROUP BY type`, evtParams
+    );
     const byType = {};
     for (const r of byTypeRes.rows) byType[r.type] = Number(r.n);
 
-    const wfRes = tenantId
-      ? await this._pool.query("SELECT COUNT(DISTINCT trace_id) AS n FROM sessions WHERE tenant_id = $1", [tenantId])
-      : await this._pool.query("SELECT COUNT(DISTINCT trace_id) AS n FROM sessions");
+    const wfRes = await this._pool.query(
+      `SELECT COUNT(DISTINCT trace_id) AS n FROM sessions ${sesWhere}`, sesParams
+    );
     const workflow_count = Number(wfRes.rows[0].n);
 
-    const subRes = tenantId
-      ? await this._pool.query("SELECT COUNT(*) AS n FROM sessions WHERE parent_session_id IS NOT NULL AND tenant_id = $1", [tenantId])
-      : await this._pool.query("SELECT COUNT(*) AS n FROM sessions WHERE parent_session_id IS NOT NULL");
+    const subCond = sesWhere ? sesWhere + " AND" : "WHERE";
+    const subRes = await this._pool.query(
+      `SELECT COUNT(*) AS n FROM sessions ${subCond} parent_session_id IS NOT NULL`, sesParams
+    );
     const subagent_session_count = Number(subRes.rows[0].n);
 
-    // Compute max_tree_depth across relevant sessions (in-memory traversal).
-    const depthRes = tenantId
-      ? await this._pool.query("SELECT session_id, parent_session_id FROM sessions WHERE tenant_id = $1", [tenantId])
-      : await this._pool.query("SELECT session_id, parent_session_id FROM sessions");
-    const max_tree_depth = computeMaxDepth(depthRes.rows);
+    const session_count_res = await this._pool.query(
+      `SELECT COUNT(*) AS n FROM sessions ${sesWhere}`, sesParams
+    );
+    const session_count = Number(session_count_res.rows[0].n);
+
+    // max_tree_depth is not meaningful over an arbitrary time window; skip it there.
+    let max_tree_depth = 0;
+    if (!windowed) {
+      const depthRes = tenantId
+        ? await this._pool.query("SELECT session_id, parent_session_id FROM sessions WHERE tenant_id = $1", [tenantId])
+        : await this._pool.query("SELECT session_id, parent_session_id FROM sessions");
+      max_tree_depth = computeMaxDepth(depthRes.rows);
+    }
 
     return {
       received,
@@ -462,10 +492,11 @@ class PostgresBackend extends StorageBackend {
       rejected,
       duplicates,
       byType,
-      session_count: await this.getSessionCount(tenantId),
+      session_count,
       workflow_count,
       subagent_session_count,
-      max_tree_depth
+      max_tree_depth,
+      windowed: windowed ? { since: since ?? null, until: until ?? null } : undefined,
     };
   }
 

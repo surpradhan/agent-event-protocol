@@ -181,6 +181,18 @@
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.5} }
 
     /* ── Metrics bar ── */
+    .metric-window-bar {
+      display: flex; align-items: center; gap: 6px; margin-bottom: 10px;
+    }
+    .metric-window-bar .hint { margin-right: 2px; }
+    .window-pill {
+      padding: 3px 10px; border-radius: 20px; font-size: 12px; cursor: pointer;
+      border: 1px solid var(--line2); background: transparent; color: var(--muted);
+      transition: background .15s, color .15s, border-color .15s;
+    }
+    .window-pill.active, .window-pill:hover {
+      background: var(--accent); color: var(--bg); border-color: var(--accent);
+    }
     .metric-grid {
       display: grid;
       grid-template-columns: repeat(5, minmax(120px, 1fr));
@@ -829,12 +841,19 @@
   </div>
 
   <!-- Metrics -->
+  <div class="metric-window-bar" role="group" aria-label="Metric time window">
+    <span class="hint">Window:</span>
+    <button class="window-pill active" id="wpill-all" onclick="setMetricWindow(null)">All time</button>
+    <button class="window-pill"        id="wpill-1"   onclick="setMetricWindow(1)">1h</button>
+    <button class="window-pill"        id="wpill-24"  onclick="setMetricWindow(24)">24h</button>
+    <button class="window-pill"        id="wpill-168" onclick="setMetricWindow(168)">7d</button>
+  </div>
   <div class="metric-grid">
-    <div class="card metric-link" role="button" tabindex="0" aria-label="Sessions — go to Sessions view" onclick="switchMain('sessions')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();switchMain('sessions');}"><div class="k">Sessions</div><div id="m-sessions" class="v" aria-live="polite" aria-atomic="true">0</div></div>
-    <div class="card"><div class="k">Events Received</div><div id="m-received" class="v" aria-live="polite" aria-atomic="true">0</div></div>
-    <div class="card"><div class="k">Accepted</div><div id="m-accepted" class="v" aria-live="polite" aria-atomic="true">0</div></div>
-    <div class="card metric-link" role="button" tabindex="0" aria-label="Rejected — go to Rejected view" onclick="switchMain('rejected')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();switchMain('rejected');}"><div class="k">Rejected</div><div id="m-rejected" class="v" aria-live="polite" aria-atomic="true">0</div></div>
-    <div class="card metric-link" role="button" tabindex="0" aria-label="Workflows — go to Workflows view" onclick="switchMain('workflows')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();switchMain('workflows');}"><div class="k">Workflows</div><div id="m-workflows" class="v" aria-live="polite" aria-atomic="true">0</div></div>
+    <div class="card metric-link" role="button" tabindex="0" aria-label="Sessions — go to Sessions view" onclick="switchMain('sessions')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();switchMain('sessions');}"><div id="mk-sessions" class="k">Sessions</div><div id="m-sessions" class="v" aria-live="polite" aria-atomic="true">0</div></div>
+    <div class="card"><div id="mk-received" class="k">Events Received</div><div id="m-received" class="v" aria-live="polite" aria-atomic="true">0</div></div>
+    <div class="card"><div id="mk-accepted" class="k">Accepted</div><div id="m-accepted" class="v" aria-live="polite" aria-atomic="true">0</div></div>
+    <div class="card metric-link" role="button" tabindex="0" aria-label="Rejected — go to Rejected view" onclick="switchMain('rejected')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();switchMain('rejected');}"><div id="mk-rejected" class="k">Rejected</div><div id="m-rejected" class="v" aria-live="polite" aria-atomic="true">0</div></div>
+    <div class="card metric-link" role="button" tabindex="0" aria-label="Workflows — go to Workflows view" onclick="switchMain('workflows')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();switchMain('workflows');}"><div id="mk-workflows" class="k">Workflows</div><div id="m-workflows" class="v" aria-live="polite" aria-atomic="true">0</div></div>
   </div>
 
   <!-- Primary navigation — 3 groups; sub-navs revealed contextually.
@@ -1298,6 +1317,7 @@ const GROUP_DEFAULT = { observe: 'sessions', analyze: 'analytics', ops: 'rejecte
 const GROUP_SUBNAVS = { observe: 'subnav-observe', analyze: 'subnav-analyze', ops: 'subnav-ops' };
 let mainView      = 'sessions';
 let subView       = 'timeline';
+let metricWindow  = null; // null = all time; number = hours
 let wfSubView     = 'tree';   // Workflows tab: 'tree' | 'graph'
 let wfGraph       = null;     // cached graph for the selected workflow
 let selSession    = null;
@@ -3123,13 +3143,68 @@ function renderWebhookDeliveries(deliveries) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Metric window picker
+// ─────────────────────────────────────────────────────────────────────────────
+const WINDOW_PILL_IDS = { null: 'wpill-all', 1: 'wpill-1', 24: 'wpill-24', 168: 'wpill-168' };
+const WINDOW_LABEL    = { 1: '1h', 24: '24h', 168: '7d' };
+
+function applyMetricWindowLabels(hours) {
+  const suffix = hours ? ` (${WINDOW_LABEL[hours] || hours + 'h'})` : '';
+  document.getElementById('mk-sessions').textContent  = 'Sessions'       + suffix;
+  document.getElementById('mk-accepted').textContent  = 'Accepted'       + suffix;
+  document.getElementById('mk-workflows').textContent = 'Workflows'      + suffix;
+  // Received/Rejected are server-wide counters with no timestamps — always lifetime totals.
+  document.getElementById('mk-received').textContent  = 'Events Received' + (hours ? ' (all time)' : '');
+  document.getElementById('mk-rejected').textContent  = 'Rejected'        + (hours ? ' (all time)' : '');
+  // Update pill active state
+  for (const [k, id] of Object.entries(WINDOW_PILL_IDS)) {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('active', String(k) === String(hours));
+  }
+}
+
+async function loadMetrics() {
+  document.querySelectorAll('.metric-grid .v').forEach(el => { el.style.opacity = '0.35'; el.style.transition = 'opacity .3s'; });
+  try {
+    let url = '/metrics';
+    if (metricWindow) {
+      const since = new Date(Date.now() - metricWindow * 3600 * 1000).toISOString();
+      url += '?since=' + encodeURIComponent(since);
+    }
+    const metrics = await fetchJson(url);
+    setMetric('m-sessions',  metrics.session_count || 0);
+    setMetric('m-received',  metrics.received      || 0);
+    setMetric('m-accepted',  metrics.accepted       || 0);
+    setRejectedMetric(metrics.rejected || 0);
+    setMetric('m-workflows', metrics.workflow_count || 0);
+  } catch(e) { console.error('loadMetrics:', e); }
+  finally {
+    document.querySelectorAll('.metric-grid .v').forEach(el => {
+      el.style.opacity = '';
+      setTimeout(() => { el.style.transition = ''; }, 350);
+    });
+  }
+}
+
+function setMetricWindow(hours) {
+  metricWindow = hours;
+  applyMetricWindowLabels(hours);
+  loadMetrics();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Full load
 // ─────────────────────────────────────────────────────────────────────────────
 async function loadAll() {
   // Show loading state while fetching
   document.querySelectorAll('.metric-grid .v').forEach(el => { el.style.opacity = '0.35'; el.style.transition = 'opacity .3s'; });
   try {
-    const [metrics, sd] = await Promise.all([fetchJson('/metrics'), fetchJson('/sessions?limit=500')]);
+    let metricsUrl = '/metrics';
+    if (metricWindow) {
+      const since = new Date(Date.now() - metricWindow * 3600 * 1000).toISOString();
+      metricsUrl += '?since=' + encodeURIComponent(since);
+    }
+    const [metrics, sd] = await Promise.all([fetchJson(metricsUrl), fetchJson('/sessions?limit=500')]);
     setMetric('m-sessions',  metrics.session_count || 0);
     setMetric('m-received',  metrics.received      || 0);
     setMetric('m-accepted',  metrics.accepted       || 0);
