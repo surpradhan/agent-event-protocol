@@ -24,7 +24,7 @@
  * ----------
  * init(), closeDb(), ping(), schemaReady()
  * insertEvent, getSessionEvents, getAllSessions, getSession, getSessionTree,
- * getWorkflow, getSessionCount, getMetrics, incrementCounter,
+ * getWorkflow, listWorkflows, getSessionCount, getMetrics, incrementCounter,
  * getPaginatedSessions, getPaginatedEvents,
  * createApiKey, getApiKeyByHash, getApiKeyById, listApiKeys, revokeApiKey,
  * createProject, getProject, listProjects, getProjectEventCount,
@@ -224,6 +224,10 @@ async function getWorkflowEvents(traceId, tenantId) {
   return getBackend().getWorkflowEvents(traceId, tenantId);
 }
 
+async function listWorkflows(tenantId, opts) {
+  return getBackend().listWorkflows(tenantId, opts);
+}
+
 async function createSavedQuery(record) {
   return getBackend().createSavedQuery(record);
 }
@@ -335,6 +339,8 @@ module.exports = {
   getPerformanceEvents,
   // Workflow causation graph (Phase 15-C)
   getWorkflowEvents,
+  // Workflow list (Finding #17 fix)
+  listWorkflows,
   // Saved custom-analytics queries (Phase 15-B)
   createSavedQuery,
   getSavedQuery,

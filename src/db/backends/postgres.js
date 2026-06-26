@@ -853,6 +853,56 @@ class PostgresBackend extends StorageBackend {
     return rows.map(r => JSON.parse(r.raw_payload));
   }
 
+  async listWorkflows(tenantId = null, { limit = 50, cursor = null } = {}) {
+    const pageSize = Math.min(Math.max(1, parseInt(limit, 10) || 50), 500);
+    const decoded  = decodeCursor(cursor);
+
+    // ::text casts on nullable params prevent Postgres "could not determine data
+    // type of parameter" errors — same pattern as getPaginatedSessions.
+    const sql = `
+      SELECT trace_id, session_count, last_active FROM (
+        SELECT trace_id,
+               COUNT(*)        AS session_count,
+               MAX(updated_at) AS last_active
+        FROM   sessions
+        WHERE  trace_id IS NOT NULL
+          AND  ($1::text IS NULL OR tenant_id = $2)
+        GROUP  BY trace_id
+      ) t
+      WHERE  ($3::text IS NULL OR last_active < $4 OR (last_active = $5 AND trace_id < $6))
+      ORDER  BY last_active DESC, trace_id DESC
+      LIMIT  $7
+    `;
+
+    const params = [
+      tenantId ?? null,
+      tenantId ?? null,
+      decoded?.last_active ?? null,
+      decoded?.last_active ?? null,
+      decoded?.last_active ?? null,
+      decoded?.trace_id    ?? null,
+      pageSize + 1
+    ];
+
+    const { rows } = await this._pool.query(sql, params);
+
+    let next_cursor = null;
+    if (rows.length > pageSize) {
+      rows.pop();
+      const last  = rows[rows.length - 1];
+      next_cursor = encodeCursor({ last_active: last.last_active, trace_id: last.trace_id });
+    }
+
+    return {
+      workflows: rows.map(r => ({
+        trace_id:      r.trace_id,
+        session_count: Number(r.session_count),
+        last_active:   r.last_active
+      })),
+      next_cursor
+    };
+  }
+
   // ----- API-key access log (Phase 14 PR-E) -----
 
   async recordApiKeyAccess({ id, apiKeyId, tenantId, method, path, status, ts }) {

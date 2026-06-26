@@ -269,6 +269,17 @@ class StorageBackend {
     throw new Error("StorageBackend.getWorkflowEvents() not implemented");
   }
 
+  /**
+   * Paginated list of workflows (unique trace_ids) for a tenant, ordered by
+   * most-recently-updated first. Each row: { trace_id, session_count, last_active }.
+   * @param {string|null} tenantId
+   * @param {{ limit?: number, cursor?: string|null }} opts
+   * @returns {Promise<{ workflows: Array<object>, next_cursor: string|null }>}
+   */
+  async listWorkflows(tenantId, opts) {
+    throw new Error("StorageBackend.listWorkflows() not implemented");
+  }
+
   // ----- saved queries (Phase 15-B) -----
 
   /**

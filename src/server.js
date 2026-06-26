@@ -525,6 +525,14 @@ v1.get("/sessions/:sessionId/export", requireReadAccess, validatePathParams, val
   return res.json({ session_id: sessionId, events });
 });
 
+// GET /workflows — paginated list of unique trace_ids for the authenticated tenant
+// Returns { workflows: [{ trace_id, session_count, last_active }], next_cursor }
+v1.get("/workflows", requireReadAccess, validateQueryParams, async (req, res) => {
+  const { limit, cursor } = req.query;
+  const result = await db.listWorkflows(req.tenant_id, { limit, cursor });
+  res.json({ workflows: result.workflows, next_cursor: result.next_cursor });
+});
+
 // GET /workflows/:traceId — all sessions sharing a trace_id assembled into a tree
 v1.get("/workflows/:traceId", requireReadAccess, validatePathParams, async (req, res) => {
   const workflow = await db.getWorkflow(req.params.traceId, req.tenant_id);

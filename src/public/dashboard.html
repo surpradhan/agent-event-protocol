@@ -1422,7 +1422,8 @@ function setSessionTitle(id) {
   const el = document.getElementById('session-title');
   el.innerHTML = `${esc(short(id, 30))} <button class="copy-btn" onclick="copyId(this)" data-copy="${esc(id)}" aria-label="Copy session ID" title="Copy session ID">⎘</button>`;
 }
-const debouncedRefreshSessions  = debounce(() => refreshSessions(), 600);
+const debouncedRefreshSessions      = debounce(() => refreshSessions(), 600);
+const debouncedRefreshWorkflowList  = debounce(() => loadWorkflowList(), 800);
 const debouncedLoadRejections   = debounce(() => loadRejections(), 300);
 function setRejectedMetric(count) {
   setMetric('m-rejected', count);
@@ -1495,6 +1496,8 @@ async function initSSE() {
       if (ev.session_id === selSession) loadTimeline();
       // Refresh session list debounced — avoid 2 fetches per SSE tick at high frequency
       debouncedRefreshSessions();
+      // Refresh workflow list (new sessions may introduce new workflows)
+      debouncedRefreshWorkflowList();
     } catch(_) {}
   });
 
@@ -1545,7 +1548,6 @@ async function refreshSessions() {
     // Keep metric card in sync — skip when a window is active (loadMetrics() owns it then)
     if (!metricWindow) setMetric('m-sessions', d.total ?? sessions.length);
     renderSessions(sessions);
-    buildWorkflowList(sessions);
     // Keep rejection badge current without requiring a manual tab switch
     updateRejectionBadge();
   } catch(_) {}
@@ -1676,28 +1678,27 @@ function renderSessions(sessions) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Workflows panel
 // ─────────────────────────────────────────────────────────────────────────────
-function buildWorkflowList(sessions) {
-  const byTrace = new Map();
-  for (const s of sessions) {
-    if (!s.trace_id) continue;
-    if (!byTrace.has(s.trace_id)) byTrace.set(s.trace_id, []);
-    byTrace.get(s.trace_id).push(s);
-  }
-  // Keep metric card in sync — skip when a window is active (loadMetrics() owns it then)
-  if (!metricWindow) setMetric('m-workflows', byTrace.size);
+async function loadWorkflowList() {
+  try {
+    const data = await fetchJson('/workflows?limit=500');
+    renderWorkflowList(data.workflows || []);
+  } catch(_) {}
+}
 
+function renderWorkflowList(workflows) {
   const box = document.getElementById('workflows-list');
   box.innerHTML = '';
-  if (!byTrace.size) { box.innerHTML = '<div class="empty">No workflows yet.<br><span class="hint">Workflows appear when events share a <code>trace_id</code>.</span></div>'; return; }
+  if (!workflows.length) { box.innerHTML = '<div class="empty">No workflows yet.<br><span class="hint">Workflows appear when events share a <code>trace_id</code>.</span></div>'; return; }
 
-  for (const [traceId, ws] of byTrace) {
+  for (const wf of workflows) {
     const el = document.createElement('div');
-    el.className = 'clickable-item' + (traceId === selTrace ? ' active' : '');
+    el.className = 'clickable-item' + (wf.trace_id === selTrace ? ' active' : '');
+    el.dataset.traceId = wf.trace_id;
     el.innerHTML = `
-      <div class="item-main" title="${esc(traceId)}">${esc(short(traceId))}</div>
-      <div class="item-sub">${ws.length} session${ws.length !== 1 ? 's' : ''}</div>
-      <div class="item-sub">Last active ${ago(ws[0].updated_at)}</div>`;
-    el.onclick = () => loadWorkflow(traceId);
+      <div class="item-main" title="${esc(wf.trace_id)}">${esc(short(wf.trace_id))}</div>
+      <div class="item-sub">${wf.session_count} session${wf.session_count !== 1 ? 's' : ''}</div>
+      <div class="item-sub">Last active ${ago(wf.last_active)}</div>`;
+    el.onclick = () => loadWorkflow(wf.trace_id);
     box.appendChild(el);
   }
 }
@@ -1705,7 +1706,10 @@ function buildWorkflowList(sessions) {
 async function loadWorkflow(traceId) {
   selTrace = traceId;
   wfGraph = null; // invalidate cached graph for the previous workflow
-  buildWorkflowList(allSessions); // refresh active state
+  // Update active state in the list without re-fetching
+  document.querySelectorAll('#workflows-list .clickable-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.traceId === traceId);
+  });
   document.getElementById('wf-subtabs').style.display = '';
   try {
     const data = await fetchJson('/workflows/' + encodeURIComponent(traceId));
@@ -3262,7 +3266,7 @@ async function loadAll() {
       selSession = sessions[0]?.session_id ?? null;
 
     renderSessions(sessions);
-    buildWorkflowList(sessions);
+    loadWorkflowList();
 
     if (selSession) {
       setSessionTitle(selSession);

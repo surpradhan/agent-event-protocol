@@ -750,6 +750,99 @@ describe("GET /sessions/:sessionId/export", () => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /workflows — paginated workflow list
+// ---------------------------------------------------------------------------
+
+describe("GET /workflows", () => {
+  const WL_TRACE_A = `trc_wl_a_${Date.now()}`;
+  const WL_TRACE_B = `trc_wl_b_${Date.now()}`;
+  let wlOtherKey;  // read key for a different tenant (isolation check)
+
+  before(async () => {
+    // Two sessions in trace A, one in trace B (default tenant)
+    await ingest(makeEvent({ session_id: `ses_wla_1_${Date.now()}`, trace_id: WL_TRACE_A }));
+    await ingest(makeEvent({ session_id: `ses_wla_2_${Date.now()}`, trace_id: WL_TRACE_A }));
+    await ingest(makeEvent({ session_id: `ses_wlb_1_${Date.now()}`, trace_id: WL_TRACE_B }));
+    // Mint a key for a different tenant
+    const oRes = await fetch(`${baseUrl}/admin/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ tenantId: "wl-other-tenant", label: "wl-other-read", scopes: ["read"] }),
+    });
+    wlOtherKey = (await oRes.json()).key;
+  });
+
+  test("returns 200 with workflows array and next_cursor field", async () => {
+    const res = await fetch(`${baseUrl}/workflows`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body.workflows), "workflows must be an array");
+    assert.ok("next_cursor" in body, "next_cursor field must be present");
+  });
+
+  test("includes seeded trace_ids with correct session counts", async () => {
+    const res = await fetch(`${baseUrl}/workflows?limit=500`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const { workflows } = await res.json();
+    const traceIds = workflows.map(w => w.trace_id);
+    assert.ok(traceIds.includes(WL_TRACE_A), "trace A must appear");
+    assert.ok(traceIds.includes(WL_TRACE_B), "trace B must appear");
+    const traceA = workflows.find(w => w.trace_id === WL_TRACE_A);
+    assert.equal(traceA.session_count, 2, "trace A should have 2 sessions");
+    const traceB = workflows.find(w => w.trace_id === WL_TRACE_B);
+    assert.equal(traceB.session_count, 1, "trace B should have 1 session");
+  });
+
+  test("each workflow entry has trace_id, session_count, last_active", async () => {
+    const res = await fetch(`${baseUrl}/workflows?limit=1`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const { workflows } = await res.json();
+    assert.ok(workflows.length >= 1);
+    const wf = workflows[0];
+    assert.ok(typeof wf.trace_id === "string");
+    assert.ok(typeof wf.session_count === "number");
+    assert.ok(typeof wf.last_active === "string");
+  });
+
+  test("pagination: limit=1 returns next_cursor, following it yields a different workflow", async () => {
+    const res1 = await fetch(`${baseUrl}/workflows?limit=1`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res1.status, 200);
+    const page1 = await res1.json();
+    if (!page1.next_cursor) return; // only one workflow in the tenant — skip
+    const res2 = await fetch(`${baseUrl}/workflows?limit=1&cursor=${encodeURIComponent(page1.next_cursor)}`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res2.status, 200);
+    const page2 = await res2.json();
+    assert.notEqual(page1.workflows[0].trace_id, page2.workflows[0].trace_id, "pages must not overlap");
+  });
+
+  test("returns 401 without auth", async () => {
+    const res = await fetch(`${baseUrl}/workflows`);
+    assert.equal(res.status, 401);
+  });
+
+  test("tenant scoping: other tenant cannot see this tenant's workflows", async () => {
+    const res = await fetch(`${baseUrl}/workflows?limit=500`, {
+      headers: { Authorization: `Bearer ${wlOtherKey}` },
+    });
+    assert.equal(res.status, 200);
+    const { workflows } = await res.json();
+    const traceIds = workflows.map(w => w.trace_id);
+    assert.ok(!traceIds.includes(WL_TRACE_A), "other tenant must not see trace A");
+    assert.ok(!traceIds.includes(WL_TRACE_B), "other tenant must not see trace B");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // GET /workflows/:traceId
 // ---------------------------------------------------------------------------
 
