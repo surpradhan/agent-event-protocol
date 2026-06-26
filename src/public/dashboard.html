@@ -1601,6 +1601,7 @@ function switchMain(v) {
     btn.className        = 'tab-btn' + (active ? ' active' : '');
     btn.setAttribute('aria-selected', String(active));
   }
+  if (v === 'workflows') loadWorkflowList();
   if (v === 'rejected') loadRejections();
   if (v === 'analytics') loadAnalytics();
   if (v === 'performance') loadPerformance();

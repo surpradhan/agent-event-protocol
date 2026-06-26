@@ -908,7 +908,14 @@ class SqliteBackend extends StorageBackend {
       next_cursor = encodeCursor({ last_active: last.last_active, trace_id: last.trace_id });
     }
 
-    return { workflows: rows, next_cursor };
+    return {
+      workflows: rows.map(r => ({
+        trace_id:      r.trace_id,
+        session_count: Number(r.session_count),
+        last_active:   r.last_active
+      })),
+      next_cursor
+    };
   }
 
   // ----- API-key access log (Phase 14 PR-E) -----

@@ -530,6 +530,13 @@ v1.get("/sessions/:sessionId/export", requireReadAccess, validatePathParams, val
 v1.get("/workflows", requireReadAccess, validateQueryParams, async (req, res) => {
   const { limit, cursor } = req.query;
   const result = await db.listWorkflows(req.tenant_id, { limit, cursor });
+
+  // Defense-in-depth: workflow rows have no tenant_id field so this passes
+  // vacuously, but keeps the pattern consistent with /sessions and /events.
+  if (!validateTenantOwnership(result.workflows, req.tenant_id, "workflows_list")) {
+    return res.status(403).json({ error: "Forbidden", message: "You do not have access to these workflows" });
+  }
+
   res.json({ workflows: result.workflows, next_cursor: result.next_cursor });
 });
 
