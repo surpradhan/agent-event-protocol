@@ -2775,14 +2775,18 @@ async function deleteSavedQuery(id) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────────────────────────────
 // Background anomaly count poll — keeps badge + nav dot live without requiring
 // the user to visit the Anomalies sub-tab.
 // ─────────────────────────────────────────────────────────────────────────────
 async function refreshAnomalyBadge() {
-  const thr = document.getElementById('ad-threshold').value.trim();
-  const qs  = new URLSearchParams();
-  if (thr) qs.set('threshold', thr);
+  if (document.hidden) return; // skip while tab is backgrounded; next tick fires when visible
+  const thr   = document.getElementById('ad-threshold').value.trim();
+  const since = toIso(document.getElementById('shared-since').value);
+  const until = toIso(document.getElementById('shared-until').value);
+  const qs    = new URLSearchParams();
+  if (thr)   qs.set('threshold', thr);
+  if (since) qs.set('since', since);
+  if (until) qs.set('until', until);
   try {
     const data = await fetchJson('/analytics/anomalies' + (qs.toString() ? '?' + qs : ''));
     // If the user is on the Anomalies tab, do a full render; otherwise just update the badge/dot.
@@ -2796,12 +2800,19 @@ async function refreshAnomalyBadge() {
       const dot = document.getElementById('pdot-analyze');
       if (dot) dot.className = 'ptab-dot' + (count > 0 ? ' alert-warn' : '');
     }
-  } catch (_) { /* silent — badge stays stale rather than flashing an error */ }
+  } catch (err) {
+    if (err && err.message === 'Unauthorized') {
+      // Session expired — stop polling; the auth overlay is already shown by fetchJson.
+      clearInterval(_anomalyPollInterval);
+      _anomalyPollInterval = null;
+    }
+    // All other errors: silent — badge stays stale rather than flashing.
+  }
 }
 
 function startAnomalyPoll() {
   if (_anomalyPollInterval) clearInterval(_anomalyPollInterval);
-  refreshAnomalyBadge();
+  void refreshAnomalyBadge(); // fire-and-forget; errors handled inside
   _anomalyPollInterval = setInterval(refreshAnomalyBadge, ANOMALY_POLL_MS);
 }
 
