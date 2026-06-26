@@ -580,6 +580,19 @@
     .reject-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
     .reject-toolbar input[type="datetime-local"] { flex: 1; min-width: 160px; color-scheme: dark; }
     .reject-toolbar input:not([type="datetime-local"]) { flex: 1; }
+
+    /* Shared range bar — sits between the Analyze sub-nav and view panels */
+    .shared-range-bar {
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+      padding: 10px 0 12px; border-bottom: 1px solid var(--line2);
+      margin-bottom: 16px;
+    }
+    .shared-range-bar input[type="datetime-local"] { min-width: 160px; color-scheme: dark; }
+    .sensitivity-wrap { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+
+    /* Drill breadcrumb — shown when session was opened via drillSession() */
+    .drill-breadcrumb { margin-bottom: 12px; }
+    .drill-breadcrumb .btn { font-size: 12px; }
     .qs-btns { display: flex; gap: 4px; flex-shrink: 0; }
     .qs-btns .btn { padding: 4px 8px; font-size: 11px; }
 
@@ -850,8 +863,31 @@
     <button class="tab-btn" id="tab-webhooks" aria-selected="false" onclick="switchMain('webhooks')">Webhooks</button>
   </div>
 
+  <!-- Shared range bar — shown for Policy/Performance/Anomalies; hidden for Custom -->
+  <div id="shared-range-bar" class="shared-range-bar" style="display:none">
+    <input id="shared-since" type="datetime-local" autocomplete="off" aria-label="Since" />
+    <input id="shared-until" type="datetime-local" autocomplete="off" aria-label="Until" />
+    <div class="qs-btns">
+      <button class="btn secondary" onclick="setQuickRange('shared',1);runCurrentAnalytics()">1h</button>
+      <button class="btn secondary" onclick="setQuickRange('shared',24);runCurrentAnalytics()">24h</button>
+      <button class="btn secondary" onclick="setQuickRange('shared',168);runCurrentAnalytics()">7d</button>
+      <button class="btn secondary" onclick="clearRange('shared');runCurrentAnalytics()">Clear</button>
+    </div>
+    <button class="btn secondary" onclick="runCurrentAnalytics()">Apply</button>
+    <!-- Sensitivity control — only visible on Anomalies sub-tab -->
+    <div id="sensitivity-wrap" class="sensitivity-wrap" style="display:none">
+      <label class="hint" for="ad-threshold">Sensitivity (z-score):</label>
+      <input id="ad-threshold" type="number" step="0.5" min="0.5" placeholder="3.5" style="max-width:80px" />
+    </div>
+  </div>
+
   <!-- ═══ Sessions view ═══ -->
-  <div id="view-sessions" class="layout">
+  <div id="view-sessions">
+    <!-- Drill breadcrumb — shown when session was opened via drillSession() -->
+    <div id="drill-breadcrumb" class="drill-breadcrumb" style="display:none" role="navigation" aria-label="Breadcrumb">
+      <button class="btn secondary" onclick="drillBack()">← Back to <span id="drill-origin-label"></span></button>
+    </div>
+    <div class="layout">
 
     <div class="card">
       <div class="panel-title">Sessions</div>
@@ -922,6 +958,7 @@
       </div>
     </div>
   </div>
+  </div><!-- /view-sessions -->
 
   <!-- ═══ Workflows view ═══ -->
   <div id="view-workflows" class="layout" style="display:none">
@@ -988,17 +1025,6 @@
         </div>
         <button class="btn secondary" onclick="loadAnalytics()">Refresh</button>
       </div>
-      <div class="reject-toolbar">
-        <input id="an-since" type="datetime-local" autocomplete="off" aria-label="Since (Policy)" />
-        <input id="an-until" type="datetime-local" autocomplete="off" aria-label="Until (Policy)" />
-        <div class="qs-btns">
-          <button class="btn secondary" onclick="setQuickRange('an',1);loadAnalytics()">1h</button>
-          <button class="btn secondary" onclick="setQuickRange('an',24);loadAnalytics()">24h</button>
-          <button class="btn secondary" onclick="setQuickRange('an',168);loadAnalytics()">7d</button>
-          <button class="btn secondary" onclick="clearRange('an');loadAnalytics()">Clear</button>
-        </div>
-        <button class="btn secondary" onclick="loadAnalytics()">Apply</button>
-      </div>
       <div id="an-body">
         <div class="empty">No policy.blocked events recorded for this tenant.</div>
       </div>
@@ -1014,17 +1040,6 @@
           <div class="hint" style="font-size:11px;margin-top:2px">Latency (p50/p95/p99) per tool, agent &amp; operation. Pairs <code>tool.called→tool.result</code> and <code>task.created→task.completed/failed</code> by causation.</div>
         </div>
         <button class="btn secondary" onclick="loadPerformance()">Refresh</button>
-      </div>
-      <div class="reject-toolbar">
-        <input id="pf-since" type="datetime-local" autocomplete="off" aria-label="Since (Performance)" />
-        <input id="pf-until" type="datetime-local" autocomplete="off" aria-label="Until (Performance)" />
-        <div class="qs-btns">
-          <button class="btn secondary" onclick="setQuickRange('pf',1);loadPerformance()">1h</button>
-          <button class="btn secondary" onclick="setQuickRange('pf',24);loadPerformance()">24h</button>
-          <button class="btn secondary" onclick="setQuickRange('pf',168);loadPerformance()">7d</button>
-          <button class="btn secondary" onclick="clearRange('pf');loadPerformance()">Clear</button>
-        </div>
-        <button class="btn secondary" onclick="loadPerformance()">Apply</button>
       </div>
       <div id="pf-body">
         <div class="empty">No completed operations recorded for this tenant.</div>
@@ -1112,18 +1127,6 @@
           <div class="hint" style="font-size:11px;margin-top:2px">Workflows that deviate from the baseline — error-rate, <code>policy.blocked</code> volume, or latency spikes (robust modified-z &gt; threshold across this tenant's traces).</div>
         </div>
         <button class="btn secondary" onclick="loadAnomalies()">Refresh</button>
-      </div>
-      <div class="reject-toolbar">
-        <input id="ad-since" type="datetime-local" autocomplete="off" aria-label="Since (Anomalies)" />
-        <input id="ad-until" type="datetime-local" autocomplete="off" aria-label="Until (Anomalies)" />
-        <div class="qs-btns">
-          <button class="btn secondary" onclick="setQuickRange('ad',1);loadAnomalies()">1h</button>
-          <button class="btn secondary" onclick="setQuickRange('ad',24);loadAnomalies()">24h</button>
-          <button class="btn secondary" onclick="setQuickRange('ad',168);loadAnomalies()">7d</button>
-          <button class="btn secondary" onclick="clearRange('ad');loadAnomalies()">Clear</button>
-        </div>
-        <input id="ad-threshold" type="number" step="0.5" min="0.5" placeholder="threshold (3.5)" style="max-width:130px" />
-        <button class="btn secondary" onclick="loadAnomalies()">Apply</button>
       </div>
       <div id="ad-body">
         <div class="empty">No anomalies detected for this tenant.</div>
@@ -1307,6 +1310,7 @@ let playTimer     = null;
 let sseConn       = null;
 let sessionFilter = '';        // persists across tab switches — cleared only on explicit input clear
 let sessionRoleFilter = '';    // agent-role filter for sessions sidebar
+let drillOrigin = null;        // view we drilled in from via drillSession(); null = no drill active
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Event-type style config — dark-mode neon palette for DAG nodes
@@ -1537,6 +1541,11 @@ function syncPrimaryNav(v) {
     btn.setAttribute('aria-selected', String(g === group));
   }
 }
+function runCurrentAnalytics() {
+  if (mainView === 'analytics') loadAnalytics();
+  else if (mainView === 'performance') loadPerformance();
+  else if (mainView === 'anomalies') loadAnomalies();
+}
 function switchGroup(group) {
   // Clicking an already-active primary tab intentionally resets to the group's
   // default sub-view (e.g. Analyze → Policy Analytics), matching common nav UIs.
@@ -1546,6 +1555,12 @@ function switchMain(v) {
   mainView = v;
   history.replaceState(null, '', '#' + v);
   syncPrimaryNav(v);
+  // Shared range bar: visible for Policy/Performance/Anomalies; hidden for Custom and all others
+  const analyzeWithRange = ['analytics', 'performance', 'anomalies'];
+  document.getElementById('shared-range-bar').style.display = analyzeWithRange.includes(v) ? '' : 'none';
+  document.getElementById('sensitivity-wrap').style.display = v === 'anomalies' ? '' : 'none';
+  // Clear drill state when navigating away from sessions; refresh breadcrumb when entering
+  if (v !== 'sessions') { drillOrigin = null; } else { updateBreadcrumb(); }
   document.getElementById('view-sessions').style.display  = v === 'sessions'  ? '' : 'none';
   document.getElementById('view-workflows').style.display = v === 'workflows' ? '' : 'none';
   document.getElementById('view-rejected').style.display  = v === 'rejected'  ? '' : 'none';
@@ -1904,9 +1919,35 @@ function toggleTree(cid, btn) {
   btn.setAttribute('aria-label', hide ? 'Expand session children' : 'Collapse session children');
 }
 
+const DRILL_ORIGIN_LABELS = {
+  analytics: 'Policy Analytics', performance: 'Performance',
+  anomalies: 'Anomalies', workflows: 'Workflows'
+};
+function updateBreadcrumb() {
+  const bar   = document.getElementById('drill-breadcrumb');
+  const label = document.getElementById('drill-origin-label');
+  if (drillOrigin && DRILL_ORIGIN_LABELS[drillOrigin]) {
+    label.textContent = DRILL_ORIGIN_LABELS[drillOrigin];
+    bar.style.display = '';
+  } else {
+    bar.style.display = 'none';
+  }
+}
+function drillBack() {
+  const origin = drillOrigin;
+  drillOrigin = null;
+  switchMain(origin || 'sessions');
+}
 function drillSession(sessionId) {
+  // Guard: drilling from sessions into sessions has no meaningful origin
+  drillOrigin = (mainView !== 'sessions') ? mainView : null;
   selSession = sessionId; activeIdx = -1; stopPlay();
+  // drillOrigin set before switchMain so the updateBreadcrumb() inside it fires correctly
   switchMain('sessions');
+  // Rewrite hash with origin so breadcrumb survives back-navigation/reload
+  if (drillOrigin) {
+    history.replaceState(null, '', '#sessions?from=' + encodeURIComponent(drillOrigin));
+  }
   renderSessions(allSessions);
   setSessionTitle(sessionId);
   loadTimeline();
@@ -2385,8 +2426,8 @@ function renderRejections() {
 // ─────────────────────────────────────────────────────────────────────────────
 async function loadAnalytics() {
   const body  = document.getElementById('an-body');
-  const since = toIso(document.getElementById('an-since').value);
-  const until = toIso(document.getElementById('an-until').value);
+  const since = toIso(document.getElementById('shared-since').value);
+  const until = toIso(document.getElementById('shared-until').value);
   const qs = new URLSearchParams();
   if (since) qs.set('since', since);
   if (until) qs.set('until', until);
@@ -2464,8 +2505,8 @@ function renderAnalytics(a) {
 // ─────────────────────────────────────────────────────────────────────────────
 async function loadPerformance() {
   const body  = document.getElementById('pf-body');
-  const since = toIso(document.getElementById('pf-since').value);
-  const until = toIso(document.getElementById('pf-until').value);
+  const since = toIso(document.getElementById('shared-since').value);
+  const until = toIso(document.getElementById('shared-until').value);
   const qs = new URLSearchParams();
   if (since) qs.set('since', since);
   if (until) qs.set('until', until);
@@ -2713,8 +2754,8 @@ async function deleteSavedQuery(id) {
 // ─────────────────────────────────────────────────────────────────────────────
 async function loadAnomalies() {
   const body = document.getElementById('ad-body');
-  const since = toIso(document.getElementById('ad-since').value);
-  const until = toIso(document.getElementById('ad-until').value);
+  const since = toIso(document.getElementById('shared-since').value);
+  const until = toIso(document.getElementById('shared-until').value);
   const thr   = document.getElementById('ad-threshold').value.trim();
   const qs = new URLSearchParams();
   if (since) qs.set('since', since);
@@ -3166,24 +3207,42 @@ document.getElementById('wfg-wrap').addEventListener('keydown', e => {
   }
 });
 
+// Auto-trigger the active Analyze sub-view when both shared range inputs change
+(function wireSharedRange() {
+  ['shared-since', 'shared-until'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => {
+      const since = document.getElementById('shared-since').value;
+      const until = document.getElementById('shared-until').value;
+      if (since && until) runCurrentAnalytics();
+    });
+  });
+})();
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Hash routing — deep-link tab state via location.hash (#sessions, #workflows…)
+// Supports #view?from=origin for drill-through breadcrumb survival.
 // ─────────────────────────────────────────────────────────────────────────────
 (function applyInitialHash() {
-  const h = location.hash.slice(1);
-  if (VALID_VIEWS.includes(h)) {
-    // Call switchMain immediately so the correct tab is visible without a
-    // sessions→target flash — DOM is fully rendered by script-parse time.
-    switchMain(h);
+  const raw  = location.hash.slice(1);
+  const [view, query] = raw.split('?');
+  const from = query ? new URLSearchParams(query).get('from') : null;
+  if (VALID_VIEWS.includes(view)) {
+    // Set drillOrigin before switchMain so updateBreadcrumb() inside it fires correctly
+    if (from && VALID_VIEWS.includes(from)) drillOrigin = from;
+    switchMain(view);
   } else if (!location.hash) {
-    // No hash yet — write the default so the address bar is always meaningful.
     history.replaceState(null, '', '#' + mainView);
   }
 })();
 
 window.addEventListener('hashchange', () => {
-  const h = location.hash.slice(1);
-  if (VALID_VIEWS.includes(h) && h !== mainView) switchMain(h);
+  const raw  = location.hash.slice(1);
+  const [view] = raw.split('?');
+  if (VALID_VIEWS.includes(view) && view !== mainView) {
+    // Manual hash navigation clears drill state
+    drillOrigin = null;
+    switchMain(view);
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
