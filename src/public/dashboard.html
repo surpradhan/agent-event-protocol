@@ -1511,6 +1511,8 @@ async function initSSE() {
 let _liveOn = false;
 let _lastSeenTs = Date.now();
 let _tickerInterval = null;
+let _anomalyPollInterval = null;
+const ANOMALY_POLL_MS = 30_000;
 function setLive(on) {
   _liveOn = on;
   if (on) _lastSeenTs = Date.now();
@@ -2773,6 +2775,47 @@ async function deleteSavedQuery(id) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Background anomaly count poll — keeps badge + nav dot live without requiring
+// the user to visit the Anomalies sub-tab.
+// ─────────────────────────────────────────────────────────────────────────────
+async function refreshAnomalyBadge() {
+  if (document.hidden) return; // skip while tab is backgrounded; next tick fires when visible
+  const thr   = document.getElementById('ad-threshold').value.trim();
+  const since = toIso(document.getElementById('shared-since').value);
+  const until = toIso(document.getElementById('shared-until').value);
+  const qs    = new URLSearchParams();
+  if (thr)   qs.set('threshold', thr);
+  if (since) qs.set('since', since);
+  if (until) qs.set('until', until);
+  try {
+    const data = await fetchJson('/analytics/anomalies' + (qs.toString() ? '?' + qs : ''));
+    // If the user is on the Anomalies tab, do a full render; otherwise just update the badge/dot.
+    if (mainView === 'anomalies') {
+      renderAnomalies(data);
+    } else {
+      const count = data.anomaly_count || 0;
+      const badge = document.getElementById('anomalies-badge');
+      badge.textContent = count > 99 ? '99+' : String(count);
+      badge.style.display = count > 0 ? '' : 'none';
+      const dot = document.getElementById('pdot-analyze');
+      if (dot) dot.className = 'ptab-dot' + (count > 0 ? ' alert-warn' : '');
+    }
+  } catch (err) {
+    if (err && err.message === 'Unauthorized') {
+      // Session expired — stop polling; the auth overlay is already shown by fetchJson.
+      clearInterval(_anomalyPollInterval);
+      _anomalyPollInterval = null;
+    }
+    // All other errors: silent — badge stays stale rather than flashing.
+  }
+}
+
+function startAnomalyPoll() {
+  if (_anomalyPollInterval) clearInterval(_anomalyPollInterval);
+  void refreshAnomalyBadge(); // fire-and-forget; errors handled inside
+  _anomalyPollInterval = setInterval(refreshAnomalyBadge, ANOMALY_POLL_MS);
+}
+
 // Anomaly detection panel (Phase 15-D)
 // ─────────────────────────────────────────────────────────────────────────────
 async function loadAnomalies() {
@@ -3225,6 +3268,8 @@ async function loadAll() {
       setSessionTitle(selSession);
       await loadTimeline();
     }
+    // Start background anomaly poll after first successful load
+    startAnomalyPoll();
   } catch(e) { console.error('loadAll:', e); }
   finally {
     document.querySelectorAll('.metric-grid .v').forEach(el => {
