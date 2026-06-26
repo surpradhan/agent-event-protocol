@@ -529,6 +529,9 @@ v1.get("/sessions/:sessionId/export", requireReadAccess, validatePathParams, val
 // Returns { workflows: [{ trace_id, session_count, last_active }], next_cursor }
 v1.get("/workflows", requireReadAccess, validateQueryParams, async (req, res) => {
   const { limit, cursor } = req.query;
+  if (limit !== undefined && parseInt(limit, 10) > 500) {
+    return res.status(400).json({ error: "limit must be between 1 and 500" });
+  }
   const result = await db.listWorkflows(req.tenant_id, { limit, cursor });
 
   // Defense-in-depth: workflow rows have no tenant_id field so this passes

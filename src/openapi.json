@@ -964,6 +964,7 @@
               }
             }
           },
+          "400": { "description": "Invalid query parameter (limit outside 1–500 or malformed cursor)" },
           "401": { "$ref": "#/components/responses/Unauthorized" }
         }
       }

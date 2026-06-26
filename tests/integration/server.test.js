@@ -816,13 +816,20 @@ describe("GET /workflows", () => {
     });
     assert.equal(res1.status, 200);
     const page1 = await res1.json();
-    if (!page1.next_cursor) return; // only one workflow in the tenant — skip
+    assert.ok(page1.next_cursor, "expected next_cursor with limit=1 and 2+ seeded workflows");
     const res2 = await fetch(`${baseUrl}/workflows?limit=1&cursor=${encodeURIComponent(page1.next_cursor)}`, {
       headers: { Authorization: `Bearer ${readKey}` },
     });
     assert.equal(res2.status, 200);
     const page2 = await res2.json();
     assert.notEqual(page1.workflows[0].trace_id, page2.workflows[0].trace_id, "pages must not overlap");
+  });
+
+  test("returns 400 for limit > 500", async () => {
+    const res = await fetch(`${baseUrl}/workflows?limit=501`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
   });
 
   test("returns 401 without auth", async () => {
