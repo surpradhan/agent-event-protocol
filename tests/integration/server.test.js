@@ -798,6 +798,65 @@ describe("GET /metrics", () => {
     const res = await fetch(`${baseUrl}/metrics`);
     assert.equal(res.status, 401);
   });
+
+  test("windowed: ?since returns 200 with windowed field", async () => {
+    const since = new Date(Date.now() - 3600 * 1000).toISOString();
+    const res = await fetch(`${baseUrl}/metrics?since=${encodeURIComponent(since)}`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(typeof body.accepted === "number");
+    assert.ok(typeof body.session_count === "number");
+    assert.ok(typeof body.workflow_count === "number");
+    assert.deepEqual(body.windowed, { since, until: null });
+  });
+
+  test("windowed: ?since and ?until returns 200 with both bounds", async () => {
+    const since = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+    const until = new Date(Date.now()).toISOString();
+    const res = await fetch(
+      `${baseUrl}/metrics?since=${encodeURIComponent(since)}&until=${encodeURIComponent(until)}`,
+      { headers: { Authorization: `Bearer ${readKey}` } }
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepEqual(body.windowed, { since, until });
+  });
+
+  test("windowed: invalid since returns 400", async () => {
+    const res = await fetch(`${baseUrl}/metrics?since=not-a-date`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.ok(body.error);
+  });
+
+  test("windowed: recent window includes just-emitted event; future window excludes all", async () => {
+    // Emit an event, then verify a past-10-min window captures it (positive side)
+    // and a future window returns 0 (exclusion side).
+    await fetch(`${baseUrl}/events`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${writeKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(makeEvent()),
+    });
+    const pastSince = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const recent = await (await fetch(`${baseUrl}/metrics?since=${encodeURIComponent(pastSince)}`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    })).json();
+    assert.ok(recent.accepted >= 1,
+      `expected at least 1 accepted event in the past-10-min window, got ${recent.accepted}`);
+    assert.ok(recent.session_count >= 1,
+      `expected at least 1 session in the past-10-min window, got ${recent.session_count}`);
+
+    const futureSince = new Date(Date.now() + 60 * 1000).toISOString(); // 1 min in future → 0 rows
+    const future = await (await fetch(`${baseUrl}/metrics?since=${encodeURIComponent(futureSince)}`, {
+      headers: { Authorization: `Bearer ${readKey}` },
+    })).json();
+    assert.equal(future.accepted, 0, "future window should return 0 accepted events");
+    assert.equal(future.session_count, 0, "future window should return 0 sessions");
+  });
 });
 
 // ---------------------------------------------------------------------------

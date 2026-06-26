@@ -620,38 +620,83 @@ class SqliteBackend extends StorageBackend {
       : this._stmts.getSessionCount.get().n;
   }
 
-  async getMetrics(tenantId = null) {
-    // Server-wide request counters are only meaningful for admin (tenantId=null).
-    // For tenant-scoped requests, set to 0 to prevent data leakage about other tenants.
+  async getMetrics(tenantId = null, { since, until } = {}) {
+    // Server-wide request counters live in server_metrics (no timestamps) — always lifetime totals.
     const received   = !tenantId ? (this._stmts.getCounter.get("received")?.value   ?? 0) : 0;
     const rejected   = !tenantId ? (this._stmts.getCounter.get("rejected")?.value   ?? 0) : 0;
     const duplicates = !tenantId ? (this._stmts.getCounter.get("duplicates")?.value ?? 0) : 0;
 
-    const accepted = tenantId
-      ? this._stmts.getAcceptedCountTenant.get(tenantId).n
-      : this._stmts.getAcceptedCount.get().n;
+    const windowed = (since !== null && since !== undefined) || (until !== null && until !== undefined);
 
-    const byTypeRows = tenantId
-      ? this._stmts.getByTypeTenant.all(tenantId)
-      : this._stmts.getByType.all();
-    const byType = {};
-    for (const row of byTypeRows) {
-      byType[row.type] = row.n;
+    let accepted, byType, workflow_count, subagent_session_count, session_count, max_tree_depth;
+
+    if (!windowed) {
+      // Fast path: use pre-compiled prepared statements.
+      accepted = tenantId
+        ? this._stmts.getAcceptedCountTenant.get(tenantId).n
+        : this._stmts.getAcceptedCount.get().n;
+
+      const byTypeRows = tenantId
+        ? this._stmts.getByTypeTenant.all(tenantId)
+        : this._stmts.getByType.all();
+      byType = {};
+      for (const row of byTypeRows) byType[row.type] = row.n;
+
+      workflow_count = tenantId
+        ? this._stmts.getWorkflowCountTenant.get(tenantId).n
+        : this._stmts.getWorkflowCount.get().n;
+
+      subagent_session_count = tenantId
+        ? this._stmts.getSubagentSessionCountTenant.get(tenantId).n
+        : this._stmts.getSubagentSessionCount.get().n;
+
+      session_count = await this.getSessionCount(tenantId);
+
+      const allRows = tenantId
+        ? this._stmts.getAllSessionsForDepthTenant.all(tenantId)
+        : this._stmts.getAllSessionsForDepth.all();
+      max_tree_depth = computeMaxDepth(allRows);
+    } else {
+      // Windowed path: dynamic WHERE clauses; one-off prepare is cheap for this infrequent call.
+      const evtConds  = [];
+      const evtParams = [];
+      const sesConds  = [];
+      const sesParams = [];
+      if (tenantId) {
+        evtConds.push("tenant_id = ?");  evtParams.push(tenantId);
+        sesConds.push("tenant_id = ?");  sesParams.push(tenantId);
+      }
+      if (since) {
+        evtConds.push("time >= ?");      evtParams.push(since);
+        sesConds.push("started_at >= ?"); sesParams.push(since);
+      }
+      if (until) {
+        evtConds.push("time < ?");       evtParams.push(until);
+        sesConds.push("started_at < ?"); sesParams.push(until);
+      }
+      const evtWhere = evtConds.length  ? "WHERE " + evtConds.join(" AND ")  : "";
+      const sesWhere = sesConds.length  ? "WHERE " + sesConds.join(" AND ")  : "";
+
+      accepted = this._db.prepare(`SELECT COUNT(*) AS n FROM events ${evtWhere}`).get(...evtParams).n;
+
+      byType = {};
+      for (const row of this._db.prepare(`SELECT type, COUNT(*) AS n FROM events ${evtWhere} GROUP BY type`).all(...evtParams)) {
+        byType[row.type] = row.n;
+      }
+
+      workflow_count = this._db.prepare(
+        `SELECT COUNT(DISTINCT trace_id) AS n FROM sessions ${sesWhere}`
+      ).get(...sesParams).n;
+
+      subagent_session_count = this._db.prepare(
+        `SELECT COUNT(*) AS n FROM sessions ${sesWhere ? sesWhere + " AND" : "WHERE"} parent_session_id IS NOT NULL`
+      ).get(...sesParams).n;
+
+      session_count = this._db.prepare(`SELECT COUNT(*) AS n FROM sessions ${sesWhere}`).get(...sesParams).n;
+
+      // max_tree_depth is not meaningful over an arbitrary time window; omit it.
+      max_tree_depth = 0;
     }
-
-    const workflow_count = tenantId
-      ? this._stmts.getWorkflowCountTenant.get(tenantId).n
-      : this._stmts.getWorkflowCount.get().n;
-
-    const subagent_session_count = tenantId
-      ? this._stmts.getSubagentSessionCountTenant.get(tenantId).n
-      : this._stmts.getSubagentSessionCount.get().n;
-
-    // Compute max_tree_depth across relevant sessions (in-memory traversal).
-    const allRows = tenantId
-      ? this._stmts.getAllSessionsForDepthTenant.all(tenantId)
-      : this._stmts.getAllSessionsForDepth.all();
-    const max_tree_depth = computeMaxDepth(allRows);
 
     return {
       received,
@@ -659,10 +704,11 @@ class SqliteBackend extends StorageBackend {
       rejected,
       duplicates,
       byType,
-      session_count: await this.getSessionCount(tenantId),
+      session_count,
       workflow_count,
       subagent_session_count,
-      max_tree_depth
+      max_tree_depth,
+      windowed: windowed ? { since: since ?? null, until: until ?? null } : undefined,
     };
   }
 

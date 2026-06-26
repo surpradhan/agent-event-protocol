@@ -105,8 +105,8 @@ class StorageBackend {
 
   // ----- metrics -----
 
-  /** Return a metrics snapshot. */
-  async getMetrics(tenantId) {
+  /** Return a metrics snapshot, optionally time-windowed. */
+  async getMetrics(tenantId, { since, until } = {}) {
     throw new Error("StorageBackend.getMetrics() not implemented");
   }
 
