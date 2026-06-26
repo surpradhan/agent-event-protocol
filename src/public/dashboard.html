@@ -1540,8 +1540,8 @@ async function refreshSessions() {
   try {
     const d = await fetchJson('/sessions?limit=500');
     const sessions = d.sessions || [];
-    /* FIX 1: keep SESSIONS metric card in sync on every live refresh */
-    setMetric('m-sessions', d.total ?? sessions.length);
+    // Keep metric card in sync — skip when a window is active (loadMetrics() owns it then)
+    if (!metricWindow) setMetric('m-sessions', d.total ?? sessions.length);
     renderSessions(sessions);
     buildWorkflowList(sessions);
     // Keep rejection badge current without requiring a manual tab switch
@@ -1681,7 +1681,8 @@ function buildWorkflowList(sessions) {
     if (!byTrace.has(s.trace_id)) byTrace.set(s.trace_id, []);
     byTrace.get(s.trace_id).push(s);
   }
-  setMetric('m-workflows', byTrace.size);
+  // Keep metric card in sync — skip when a window is active (loadMetrics() owns it then)
+  if (!metricWindow) setMetric('m-workflows', byTrace.size);
 
   const box = document.getElementById('workflows-list');
   box.innerHTML = '';
