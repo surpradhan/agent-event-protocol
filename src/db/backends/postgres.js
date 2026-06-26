@@ -428,7 +428,7 @@ class PostgresBackend extends StorageBackend {
       duplicates = byKey.duplicates ?? 0;
     }
 
-    const windowed = since !== null && since !== undefined || until !== null && until !== undefined;
+    const windowed = (since !== null && since !== undefined) || (until !== null && until !== undefined);
 
     // Build WHERE clauses dynamically for the windowed path.
     const evtConds  = [];

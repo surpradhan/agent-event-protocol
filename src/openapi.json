@@ -1017,8 +1017,23 @@
       "get": {
         "tags": ["Metrics"],
         "summary": "Get aggregate counters and statistics",
+        "description": "Returns lifetime or time-windowed counters for the authenticated tenant. When `since`/`until` are provided, DB-backed counts (accepted, session_count, workflow_count) are scoped to that window; server-wide process counters (received, rejected, duplicates) are always lifetime totals.",
         "operationId": "getMetrics",
         "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Inclusive lower bound on event/session time. ISO-8601. When set, DB-backed counts are scoped to `time >= since`.",
+            "schema": { "type": "string", "format": "date-time" }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "description": "Exclusive upper bound on event/session time. ISO-8601. When set, DB-backed counts are scoped to `time < until`.",
+            "schema": { "type": "string", "format": "date-time" }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Metrics snapshot",
@@ -1027,15 +1042,29 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "received":   { "type": "integer", "description": "Total events received" },
-                    "rejected":   { "type": "integer", "description": "Events that failed validation" },
-                    "duplicates": { "type": "integer", "description": "Duplicate events detected" },
-                    "sessions":   { "type": "integer", "description": "Total distinct sessions" }
+                    "received":              { "type": "integer", "description": "Lifetime events received (server-wide, not windowed)" },
+                    "rejected":              { "type": "integer", "description": "Lifetime events that failed validation (server-wide, not windowed)" },
+                    "duplicates":            { "type": "integer", "description": "Lifetime duplicate events detected (server-wide, not windowed)" },
+                    "accepted":              { "type": "integer", "description": "Accepted events (windowed when since/until provided)" },
+                    "session_count":         { "type": "integer", "description": "Sessions started (windowed when since/until provided)" },
+                    "workflow_count":        { "type": "integer", "description": "Distinct trace IDs / workflows (windowed when since/until provided)" },
+                    "subagent_session_count":{ "type": "integer", "description": "Sessions with a parent (windowed when since/until provided)" },
+                    "max_tree_depth":        { "type": "integer", "description": "Maximum session tree depth (0 when windowed)" },
+                    "byType":                { "type": "object",  "description": "Per-type event counts (windowed when since/until provided)", "additionalProperties": { "type": "integer" } },
+                    "windowed": {
+                      "description": "Present only when at least one of since/until was provided.",
+                      "type": "object",
+                      "properties": {
+                        "since": { "type": ["string", "null"], "format": "date-time" },
+                        "until": { "type": ["string", "null"], "format": "date-time" }
+                      }
+                    }
                   }
                 }
               }
             }
           },
+          "400": { "description": "Invalid since/until value (not parseable as ISO-8601)" },
           "401": { "$ref": "#/components/responses/Unauthorized" }
         }
       }

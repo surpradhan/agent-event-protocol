@@ -1486,9 +1486,11 @@ async function initSSE() {
     try {
       const ev = JSON.parse(e.data);
       _lastSeenTs = Date.now();
-      // Optimistic metric bump
-      nudge('m-received');
-      nudge('m-accepted');
+      // Optimistic bump only on all-time view; windowed view gets accurate counts on next loadMetrics()
+      if (!metricWindow) {
+        nudge('m-received');
+        nudge('m-accepted');
+      }
       // If viewing the affected session, refresh timeline
       if (ev.session_id === selSession) loadTimeline();
       // Refresh session list debounced — avoid 2 fetches per SSE tick at high frequency

@@ -866,7 +866,11 @@ v1.get("/metrics", requireReadAccess, async (req, res) => {
       (untilRaw && Number.isNaN(Date.parse(untilRaw)))) {
     return res.status(400).json({ error: "invalid since/until — must be ISO-8601" });
   }
-  const opts = (sinceRaw || untilRaw) ? { since: sinceRaw, until: untilRaw } : undefined;
+  // Normalize to ISO-8601 so both backends (SQLite text compare, Postgres timestamptz)
+  // receive a canonical form regardless of what Date.parse accepted.
+  const since = sinceRaw ? new Date(sinceRaw).toISOString() : null;
+  const until = untilRaw ? new Date(untilRaw).toISOString() : null;
+  const opts = (since || until) ? { since, until } : undefined;
   const dbStats = await db.getMetrics(req.tenant_id, opts);
   // Signature-form telemetry (issue #65) is process-wide / server-scoped; not time-windowed.
   res.json({ ...dbStats, signatures: getSignatureMetrics() });

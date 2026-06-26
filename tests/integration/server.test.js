@@ -833,23 +833,29 @@ describe("GET /metrics", () => {
     assert.ok(body.error);
   });
 
-  test("windowed: counts are <= lifetime totals", async () => {
-    // Emit one event so there's data, then compare 1-second window vs lifetime
+  test("windowed: recent window includes just-emitted event; future window excludes all", async () => {
+    // Emit an event, then verify a past-10-min window captures it (positive side)
+    // and a future window returns 0 (exclusion side).
     await fetch(`${baseUrl}/events`, {
       method: "POST",
       headers: { Authorization: `Bearer ${writeKey}`, "Content-Type": "application/json" },
       body: JSON.stringify(makeEvent()),
     });
-    const lifetime = await (await fetch(`${baseUrl}/metrics`, {
+    const pastSince = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const recent = await (await fetch(`${baseUrl}/metrics?since=${encodeURIComponent(pastSince)}`, {
       headers: { Authorization: `Bearer ${readKey}` },
     })).json();
-    const since = new Date(Date.now() + 60 * 1000).toISOString(); // 1 min in future → 0 results
-    const windowed = await (await fetch(`${baseUrl}/metrics?since=${encodeURIComponent(since)}`, {
+    assert.ok(recent.accepted >= 1,
+      `expected at least 1 accepted event in the past-10-min window, got ${recent.accepted}`);
+    assert.ok(recent.session_count >= 1,
+      `expected at least 1 session in the past-10-min window, got ${recent.session_count}`);
+
+    const futureSince = new Date(Date.now() + 60 * 1000).toISOString(); // 1 min in future → 0 rows
+    const future = await (await fetch(`${baseUrl}/metrics?since=${encodeURIComponent(futureSince)}`, {
       headers: { Authorization: `Bearer ${readKey}` },
     })).json();
-    assert.ok(windowed.accepted <= lifetime.accepted,
-      `windowed accepted (${windowed.accepted}) should be <= lifetime (${lifetime.accepted})`);
-    assert.ok(windowed.session_count <= lifetime.session_count);
+    assert.equal(future.accepted, 0, "future window should return 0 accepted events");
+    assert.equal(future.session_count, 0, "future window should return 0 sessions");
   });
 });
 

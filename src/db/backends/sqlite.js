@@ -626,7 +626,7 @@ class SqliteBackend extends StorageBackend {
     const rejected   = !tenantId ? (this._stmts.getCounter.get("rejected")?.value   ?? 0) : 0;
     const duplicates = !tenantId ? (this._stmts.getCounter.get("duplicates")?.value ?? 0) : 0;
 
-    const windowed = since !== null && since !== undefined || until !== null && until !== undefined;
+    const windowed = (since !== null && since !== undefined) || (until !== null && until !== undefined);
 
     let accepted, byType, workflow_count, subagent_session_count, session_count, max_tree_depth;
 
