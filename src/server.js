@@ -525,6 +525,24 @@ v1.get("/sessions/:sessionId/export", requireReadAccess, validatePathParams, val
   return res.json({ session_id: sessionId, events });
 });
 
+// GET /workflows — paginated list of unique trace_ids for the authenticated tenant
+// Returns { workflows: [{ trace_id, session_count, last_active }], next_cursor }
+v1.get("/workflows", requireReadAccess, validateQueryParams, async (req, res) => {
+  const { limit, cursor } = req.query;
+  if (limit !== undefined && parseInt(limit, 10) > 500) {
+    return res.status(400).json({ error: "limit must be between 1 and 500" });
+  }
+  const result = await db.listWorkflows(req.tenant_id, { limit, cursor });
+
+  // Defense-in-depth: workflow rows have no tenant_id field so this passes
+  // vacuously, but keeps the pattern consistent with /sessions and /events.
+  if (!validateTenantOwnership(result.workflows, req.tenant_id, "workflows_list")) {
+    return res.status(403).json({ error: "Forbidden", message: "You do not have access to these workflows" });
+  }
+
+  res.json({ workflows: result.workflows, next_cursor: result.next_cursor });
+});
+
 // GET /workflows/:traceId — all sessions sharing a trace_id assembled into a tree
 v1.get("/workflows/:traceId", requireReadAccess, validatePathParams, async (req, res) => {
   const workflow = await db.getWorkflow(req.params.traceId, req.tenant_id);

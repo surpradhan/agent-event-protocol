@@ -916,6 +916,59 @@
         }
       }
     },
+    "/workflows": {
+      "get": {
+        "tags": ["Workflows"],
+        "summary": "List workflows (paginated)",
+        "description": "Returns a paginated list of unique trace_ids for the authenticated tenant, ordered by most-recently-updated first. Each entry includes the session count and last-active timestamp. Use `next_cursor` for subsequent pages.",
+        "operationId": "listWorkflows",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 500, "default": 50 },
+            "description": "Maximum workflows per page"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": { "type": "string" },
+            "description": "Opaque pagination cursor from a previous response"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated workflow list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "workflows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "trace_id":      { "type": "string" },
+                          "session_count": { "type": "integer" },
+                          "last_active":   { "type": "string", "format": "date-time" }
+                        },
+                        "required": ["trace_id", "session_count", "last_active"]
+                      }
+                    },
+                    "next_cursor": { "type": "string", "nullable": true }
+                  },
+                  "required": ["workflows", "next_cursor"]
+                }
+              }
+            }
+          },
+          "400": { "description": "Invalid query parameter (limit outside 1–500 or malformed cursor)" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
     "/workflows/{traceId}": {
       "get": {
         "tags": ["Workflows"],

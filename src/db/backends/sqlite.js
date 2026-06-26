@@ -869,6 +869,55 @@ class SqliteBackend extends StorageBackend {
     return rows.map(r => JSON.parse(r.raw_payload));
   }
 
+  async listWorkflows(tenantId = null, { limit = 50, cursor = null } = {}) {
+    const pageSize = Math.min(Math.max(1, parseInt(limit, 10) || 50), 500);
+    const decoded  = decodeCursor(cursor);
+
+    // Subquery aggregates per trace_id so the outer WHERE can apply the keyset
+    // cursor on the computed columns without repeating the aggregate expressions.
+    const sql = `
+      SELECT trace_id, session_count, last_active FROM (
+        SELECT trace_id,
+               COUNT(*)       AS session_count,
+               MAX(updated_at) AS last_active
+        FROM   sessions
+        WHERE  trace_id IS NOT NULL
+          AND  (? IS NULL OR tenant_id = ?)
+        GROUP  BY trace_id
+      ) t
+      WHERE (? IS NULL OR last_active < ? OR (last_active = ? AND trace_id < ?))
+      ORDER  BY last_active DESC, trace_id DESC
+      LIMIT  ?
+    `;
+
+    const params = [
+      tenantId, tenantId,
+      decoded?.last_active ?? null,
+      decoded?.last_active ?? null,
+      decoded?.last_active ?? null,
+      decoded?.trace_id    ?? null,
+      pageSize + 1
+    ];
+
+    const rows = this._db.prepare(sql).all(...params);
+
+    let next_cursor = null;
+    if (rows.length > pageSize) {
+      rows.pop();
+      const last  = rows[rows.length - 1];
+      next_cursor = encodeCursor({ last_active: last.last_active, trace_id: last.trace_id });
+    }
+
+    return {
+      workflows: rows.map(r => ({
+        trace_id:      r.trace_id,
+        session_count: Number(r.session_count),
+        last_active:   r.last_active
+      })),
+      next_cursor
+    };
+  }
+
   // ----- API-key access log (Phase 14 PR-E) -----
 
   async recordApiKeyAccess({ id, apiKeyId, tenantId, method, path, status, ts }) {
