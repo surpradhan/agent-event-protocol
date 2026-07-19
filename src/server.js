@@ -1914,7 +1914,13 @@ if (require.main === module) {
         );
 
         if (!process.env.DASHBOARD_TOKEN) {
-          logger.warn("DASHBOARD_TOKEN not set — dashboard is open (dev mode)");
+          if (process.env.NODE_ENV === "production") {
+            logger.warn(
+              "DASHBOARD_TOKEN not set — dashboard returns 503 and unauthenticated reads are rejected (production fails closed)"
+            );
+          } else {
+            logger.warn("DASHBOARD_TOKEN not set — dashboard is open (dev mode)");
+          }
         }
         if (!process.env.ADMIN_TOKEN) {
           logger.warn("ADMIN_TOKEN not set — /admin/* endpoints will return 503");

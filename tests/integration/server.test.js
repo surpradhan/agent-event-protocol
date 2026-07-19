@@ -4483,3 +4483,74 @@ describe("API versioning — /v1 prefix and API-Version header", () => {
     assert.equal(res.status, 404);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fail-closed auth in production (DASHBOARD_TOKEN unset + NODE_ENV=production)
+// ---------------------------------------------------------------------------
+
+describe("production fail-closed auth when DASHBOARD_TOKEN is unset", () => {
+  let savedDashToken;
+  let savedNodeEnv;
+
+  before(() => {
+    savedDashToken = process.env.DASHBOARD_TOKEN;
+    savedNodeEnv   = process.env.NODE_ENV;
+    delete process.env.DASHBOARD_TOKEN;
+    process.env.NODE_ENV = "production";
+  });
+
+  after(() => {
+    process.env.DASHBOARD_TOKEN = savedDashToken;
+    if (savedNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = savedNodeEnv;
+  });
+
+  test("unauthenticated GET /sessions returns 401 (no cross-tenant fallback)", async () => {
+    const res = await fetch(`${baseUrl}/sessions`);
+    assert.equal(res.status, 401);
+    const body = await res.json();
+    assert.ok(body.error);
+  });
+
+  test("API-key reads keep working without DASHBOARD_TOKEN", async () => {
+    const res = await fetch(`${baseUrl}/sessions`, {
+      headers: { Authorization: `Bearer ${readKey}` }
+    });
+    assert.equal(res.status, 200);
+  });
+
+  test("GET /dashboard returns 503 when unconfigured in production", async () => {
+    const res = await fetch(`${baseUrl}/dashboard`);
+    assert.equal(res.status, 503);
+    const body = await res.json();
+    assert.match(body.error, /not configured/i);
+  });
+});
+
+describe("dev-mode open read access preserved when DASHBOARD_TOKEN is unset", () => {
+  let savedDashToken;
+  let savedNodeEnv;
+
+  before(() => {
+    savedDashToken = process.env.DASHBOARD_TOKEN;
+    savedNodeEnv   = process.env.NODE_ENV;
+    delete process.env.DASHBOARD_TOKEN;
+    delete process.env.NODE_ENV;
+  });
+
+  after(() => {
+    process.env.DASHBOARD_TOKEN = savedDashToken;
+    if (savedNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = savedNodeEnv;
+  });
+
+  test("unauthenticated GET /sessions succeeds in dev mode", async () => {
+    const res = await fetch(`${baseUrl}/sessions`);
+    assert.equal(res.status, 200);
+  });
+
+  test("GET /dashboard is open in dev mode", async () => {
+    const res = await fetch(`${baseUrl}/dashboard`);
+    assert.equal(res.status, 200);
+  });
+});

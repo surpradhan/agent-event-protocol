@@ -13,7 +13,11 @@
  *
  *   2. Dashboard auth  (requireDashboardAuth)
  *      Protects GET /dashboard.  Reads DASHBOARD_TOKEN from the environment.
- *      If the env var is not set the endpoint is open (dev-mode convenience).
+ *      If the env var is not set the endpoint is open in development
+ *      (dev-mode convenience) but fails closed with a 503 when
+ *      NODE_ENV=production — a forgotten token must never expose the
+ *      dashboard, and read endpoints must never fall back to
+ *      unauthenticated cross-tenant access, in production.
  *      Accepts the token via:
  *        • Authorization: Bearer <token>  header
  *        • ?token=<token>                 query param  (browser-friendly)
@@ -61,6 +65,15 @@ function hashKey(key) {
  * @param {string} b
  * @returns {boolean}
  */
+/**
+ * True when the server runs in production mode (NODE_ENV=production).
+ * Read per call (not cached) so tests can toggle the environment.
+ * @returns {boolean}
+ */
+function isProduction() {
+  return process.env.NODE_ENV === "production";
+}
+
 function safeEqual(a, b) {
   try {
     const ab = Buffer.from(String(a));
@@ -266,9 +279,13 @@ async function requireReadAccess(req, res, next) {
     }
   }
 
-  // 3. If DASHBOARD_TOKEN is not configured, allow unauthenticated read access.
-  //    This preserves backward-compat in dev environments where auth is not set up.
-  if (!dashToken) {
+  // 3. If DASHBOARD_TOKEN is not configured, allow unauthenticated read access
+  //    in development only — this preserves backward-compat in dev environments
+  //    where auth is not set up. In production a missing DASHBOARD_TOKEN fails
+  //    closed: unauthenticated callers must never receive cross-tenant reads
+  //    because of a forgotten environment variable. API-key reads (step 2)
+  //    keep working either way.
+  if (!dashToken && !isProduction()) {
     req.tenant_id = null;
     req.is_admin  = true;
     return next();
@@ -291,6 +308,13 @@ function requireDashboardAuth(req, res, next) {
   const dashToken = process.env.DASHBOARD_TOKEN;
 
   if (!dashToken) {
+    if (isProduction()) {
+      // Production fails closed, mirroring requireAdminAuth's unconfigured 503.
+      return res.status(503).json({
+        error: "Dashboard not configured",
+        hint:  "Set the DASHBOARD_TOKEN environment variable to enable the dashboard in production"
+      });
+    }
     // Dev mode: no token configured → open access.
     return next();
   }
