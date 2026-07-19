@@ -402,8 +402,17 @@ app.get("/dashboard", requireDashboardAuth, (_req, res) => {
   res.sendFile("dashboard.html", { root: path.join(__dirname, "public") });
 });
 
-// Static assets served from public/
-app.use(express.static(path.join(__dirname, "public")));
+// dashboard.html must pass the same auth gate as /dashboard.
+app.get("/dashboard.html", requireDashboardAuth, (_req, res) => {
+  res.sendFile("dashboard.html", { root: path.join(__dirname, "public") });
+});
+
+// Static assets: mount ONLY public/fonts. dashboard.html is deliberately not
+// statically served — express.static resolves "//", "." / ".." segments and
+// %2E-style encodings, so any static mount covering it would let normalized
+// path variants bypass requireDashboardAuth. The gated routes above are the
+// only way to fetch it.
+app.use("/fonts", express.static(path.join(__dirname, "public", "fonts")));
 
 // ---------------------------------------------------------------------------
 // Routes — read endpoints (require API key OR dashboard token)
@@ -1914,7 +1923,13 @@ if (require.main === module) {
         );
 
         if (!process.env.DASHBOARD_TOKEN) {
-          logger.warn("DASHBOARD_TOKEN not set — dashboard is open (dev mode)");
+          if (process.env.NODE_ENV === "production") {
+            logger.warn(
+              "DASHBOARD_TOKEN not set — dashboard returns 503 and unauthenticated reads are rejected (production fails closed)"
+            );
+          } else {
+            logger.warn("DASHBOARD_TOKEN not set — dashboard is open (dev mode)");
+          }
         }
         if (!process.env.ADMIN_TOKEN) {
           logger.warn("ADMIN_TOKEN not set — /admin/* endpoints will return 503");
