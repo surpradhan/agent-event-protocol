@@ -347,6 +347,8 @@ This shows all keys (without revealing the raw key values) so you can identify w
 
 ## Common curl Examples
 
+> **API versioning:** the consumer-facing endpoints (`/events`, `/sessions`, `/workflows`, `/metrics`, `/stream`, …) are also served under the `/v1` prefix (e.g. `POST /v1/events`). The unversioned paths used below remain supported for backward compatibility, and every response includes an `API-Version: 1` header. Admin endpoints (`/admin/*`) and infra probes (`/health`, `/ready`, `/metrics/prometheus`) are unversioned.
+
 ### Health Check
 
 Verify the server is running:
@@ -485,6 +487,6 @@ If a key is exposed or compromised:
 
 ---
 
-**Last Updated:** June 5, 2026  
+**Last Updated:** July 19, 2026  
 **Server Version:** 1.0.0 · **Event Protocol:** v0.2.0  
 **Documentation:** [github.com/surpradhan/agent-event-protocol](https://github.com/surpradhan/agent-event-protocol)

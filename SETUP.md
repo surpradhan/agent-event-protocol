@@ -1,6 +1,6 @@
 # AEP Setup & Integration Guide
 
-**Version:** 0.2.0 · **Last Updated:** June 15, 2026
+**Event Protocol:** v0.2.0 · **Last Updated:** July 19, 2026
 
 This guide walks you through setting up the AEP reference implementation and integrating event emission into your existing AI agents. By the end, your agents will emit structured, traceable events that you can observe in real time through the AEP dashboard.
 
@@ -114,7 +114,7 @@ curl http://localhost:8787/health
 Expected response:
 
 ```json
-{ "ok": true, "service": "aep-ingest", "version": "0.2.0" }
+{ "ok": true, "service": "aep-ingest", "version": "1.0.0", "checks": { "db": "ok" } }
 ```
 
 > **Note:** The `version` field reflects the server build, not the AEP `specversion`. The server defaults to port `8787`. Set the `PORT` environment variable to change it (e.g., `PORT=9000 npm run ingest`).
@@ -532,6 +532,8 @@ Interactive API docs are also available at `http://localhost:8787/docs` (Swagger
 ## 14. API Reference
 
 Authentication requirements: `[key:write]` = API key with write scope; `[key:read or dash]` = API key with read scope OR dashboard token; `[admin]` = `ADMIN_TOKEN` bearer; `[none]` = no auth.
+
+> **API versioning:** the consumer-facing endpoints below are also served under the `/v1` prefix (e.g. `POST /v1/events`). The unversioned paths shown remain supported for backward compatibility, and every response includes an `API-Version: 1` header. Infra endpoints (`/health`, `/ready`, `/metrics/prometheus`), the dashboard/docs UI, and `/admin/*` are **not** versioned.
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|

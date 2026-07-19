@@ -1,20 +1,28 @@
 # AEP Operations & Deployment Guide
 
-**Last Updated:** 2026-06-06 · Covers Phase 13 (Hosted SaaS): Postgres backend, projects / tiers / quotas, and retention / pruning.
+**Last Updated:** 2026-07-19 · Self-hosted production operations: Postgres backend, projects / tiers / quotas, retention / pruning, webhooks & alerts, and export / cold storage.
 
-This guide is for **operators** running AEP in production. It picks up where
+This guide is for **operators** running AEP in production as a self-hosted
+deployment (AEP is maintained as a reference implementation — see the project
+direction note in [README.md](./README.md)). It picks up where
 [SETUP.md](./SETUP.md) (integration) and [SECURITY.md](./SECURITY.md) (hardening)
-leave off and focuses on the storage, multi-tenancy, and data-lifecycle controls
-introduced in Phase 13:
+leave off and focuses on storage, multi-tenancy, and data-lifecycle controls:
 
 1. [Choosing a storage backend](#1-choosing-a-storage-backend)
 2. [Postgres production deployment](#2-postgres-production-deployment)
 3. [Projects, tiers & quotas](#3-projects-tiers--quotas)
 4. [Retention & pruning runbook](#4-retention--pruning-runbook)
 5. [Phase 13 production checklist](#5-phase-13-production-checklist)
+6. [Webhooks & alerts](#6-webhooks--alerts-phase-16)
+7. [Export & cold storage](#7-export--cold-storage-phase-17)
 
 Everything below is verified against the source. Where a value comes from code,
 the file is cited (e.g. `src/tiers.js`) so you can confirm it yourself.
+
+Endpoint examples use the unversioned root paths (e.g. `POST /webhooks`); every
+consumer-facing endpoint is also served under the `/v1` prefix with an
+`API-Version: 1` response header, while `/admin/*` and the infra probes
+(`/health`, `/ready`, `/metrics/prometheus`) are unversioned.
 
 ---
 
