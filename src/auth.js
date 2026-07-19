@@ -60,12 +60,6 @@ function hashKey(key) {
 }
 
 /**
- * Constant-time string comparison that also handles length differences.
- * @param {string} a
- * @param {string} b
- * @returns {boolean}
- */
-/**
  * True when the server runs in production mode (NODE_ENV=production).
  * Read per call (not cached) so tests can toggle the environment.
  * @returns {boolean}
@@ -74,6 +68,12 @@ function isProduction() {
   return process.env.NODE_ENV === "production";
 }
 
+/**
+ * Constant-time string comparison that also handles length differences.
+ * @param {string} a
+ * @param {string} b
+ * @returns {boolean}
+ */
 function safeEqual(a, b) {
   try {
     const ab = Buffer.from(String(a));
@@ -300,7 +300,8 @@ async function requireReadAccess(req, res, next) {
 /**
  * Middleware for GET /dashboard.
  * Requires DASHBOARD_TOKEN via Authorization: Bearer or ?token= query param.
- * If DASHBOARD_TOKEN is not configured, access is open (dev mode).
+ * If DASHBOARD_TOKEN is not configured, access is open in development but
+ * returns 503 when NODE_ENV=production (fail closed).
  *
  * @type {import('express').RequestHandler}
  */

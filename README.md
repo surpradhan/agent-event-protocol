@@ -293,6 +293,9 @@ See [AUTH.md](./AUTH.md) for auth setup, [SECURITY.md](./SECURITY.md) for harden
 
 ```bash
 cp .env.example .env
+# .env.example sets NODE_ENV=production, where the server fails closed:
+# set DASHBOARD_TOKEN (and ADMIN_TOKEN) in .env or the dashboard returns 503
+# and unauthenticated reads return 401.
 docker compose up -d
 ```
 

@@ -4500,7 +4500,8 @@ describe("production fail-closed auth when DASHBOARD_TOKEN is unset", () => {
   });
 
   after(() => {
-    process.env.DASHBOARD_TOKEN = savedDashToken;
+    if (savedDashToken === undefined) delete process.env.DASHBOARD_TOKEN;
+    else process.env.DASHBOARD_TOKEN = savedDashToken;
     if (savedNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = savedNodeEnv;
   });
@@ -4525,6 +4526,11 @@ describe("production fail-closed auth when DASHBOARD_TOKEN is unset", () => {
     const body = await res.json();
     assert.match(body.error, /not configured/i);
   });
+
+  test("GET /dashboard.html cannot bypass the gate via the static mount", async () => {
+    const res = await fetch(`${baseUrl}/dashboard.html`);
+    assert.equal(res.status, 503);
+  });
 });
 
 describe("dev-mode open read access preserved when DASHBOARD_TOKEN is unset", () => {
@@ -4539,7 +4545,8 @@ describe("dev-mode open read access preserved when DASHBOARD_TOKEN is unset", ()
   });
 
   after(() => {
-    process.env.DASHBOARD_TOKEN = savedDashToken;
+    if (savedDashToken === undefined) delete process.env.DASHBOARD_TOKEN;
+    else process.env.DASHBOARD_TOKEN = savedDashToken;
     if (savedNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = savedNodeEnv;
   });
@@ -4551,6 +4558,11 @@ describe("dev-mode open read access preserved when DASHBOARD_TOKEN is unset", ()
 
   test("GET /dashboard is open in dev mode", async () => {
     const res = await fetch(`${baseUrl}/dashboard`);
+    assert.equal(res.status, 200);
+  });
+
+  test("GET /dashboard.html is open in dev mode", async () => {
+    const res = await fetch(`${baseUrl}/dashboard.html`);
     assert.equal(res.status, 200);
   });
 });

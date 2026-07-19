@@ -402,6 +402,13 @@ app.get("/dashboard", requireDashboardAuth, (_req, res) => {
   res.sendFile("dashboard.html", { root: path.join(__dirname, "public") });
 });
 
+// dashboard.html must pass the same auth gate as /dashboard — the static
+// mount below would otherwise serve it unauthenticated at GET /dashboard.html,
+// bypassing requireDashboardAuth (routes match in registration order).
+app.get("/dashboard.html", requireDashboardAuth, (_req, res) => {
+  res.sendFile("dashboard.html", { root: path.join(__dirname, "public") });
+});
+
 // Static assets served from public/
 app.use(express.static(path.join(__dirname, "public")));
 
