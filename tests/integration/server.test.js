@@ -4588,3 +4588,102 @@ describe("dev-mode open read access preserved when DASHBOARD_TOKEN is unset", ()
     assert.equal(res.status, 200);
   });
 });
+
+// ---------------------------------------------------------------------------
+// METRICS_TOKEN auth for GET /metrics/prometheus
+// ---------------------------------------------------------------------------
+
+describe("METRICS_TOKEN auth for /metrics/prometheus", () => {
+  const METRICS_TOKEN = "test-metrics-token";
+  let savedMetricsToken;
+  let savedNodeEnv;
+
+  before(() => {
+    savedMetricsToken = process.env.METRICS_TOKEN;
+    savedNodeEnv      = process.env.NODE_ENV;
+  });
+
+  after(() => {
+    if (savedMetricsToken === undefined) delete process.env.METRICS_TOKEN;
+    else process.env.METRICS_TOKEN = savedMetricsToken;
+    if (savedNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = savedNodeEnv;
+  });
+
+  describe("dev mode, METRICS_TOKEN unset (open scrape preserved)", () => {
+    before(() => {
+      delete process.env.METRICS_TOKEN;
+      delete process.env.NODE_ENV;
+    });
+
+    test("unauthenticated scrape succeeds", async () => {
+      const res = await fetch(`${baseUrl}/metrics/prometheus`);
+      assert.equal(res.status, 200);
+      const text = await res.text();
+      assert.match(text, /aep_events_received_total/);
+    });
+  });
+
+  describe("METRICS_TOKEN set (any environment)", () => {
+    before(() => {
+      process.env.METRICS_TOKEN = METRICS_TOKEN;
+      delete process.env.NODE_ENV;
+    });
+
+    test("unauthenticated scrape returns 401", async () => {
+      const res = await fetch(`${baseUrl}/metrics/prometheus`);
+      assert.equal(res.status, 401);
+      const body = await res.json();
+      assert.ok(body.error);
+    });
+
+    test("wrong bearer token returns 401", async () => {
+      const res = await fetch(`${baseUrl}/metrics/prometheus`, {
+        headers: { Authorization: "Bearer wrong-token" }
+      });
+      assert.equal(res.status, 401);
+    });
+
+    test("correct bearer token returns the scrape payload", async () => {
+      const res = await fetch(`${baseUrl}/metrics/prometheus`, {
+        headers: { Authorization: `Bearer ${METRICS_TOKEN}` }
+      });
+      assert.equal(res.status, 200);
+      const text = await res.text();
+      assert.match(text, /aep_events_received_total/);
+    });
+  });
+
+  describe("production, METRICS_TOKEN unset (fail closed)", () => {
+    before(() => {
+      delete process.env.METRICS_TOKEN;
+      process.env.NODE_ENV = "production";
+    });
+
+    test("scrape returns 503 when unconfigured in production", async () => {
+      const res = await fetch(`${baseUrl}/metrics/prometheus`);
+      assert.equal(res.status, 503);
+      const body = await res.json();
+      assert.match(body.error, /not configured/i);
+    });
+  });
+
+  describe("production, METRICS_TOKEN set", () => {
+    before(() => {
+      process.env.METRICS_TOKEN = METRICS_TOKEN;
+      process.env.NODE_ENV = "production";
+    });
+
+    test("correct bearer token returns the scrape payload", async () => {
+      const res = await fetch(`${baseUrl}/metrics/prometheus`, {
+        headers: { Authorization: `Bearer ${METRICS_TOKEN}` }
+      });
+      assert.equal(res.status, 200);
+    });
+
+    test("unauthenticated scrape returns 401 (not 503) when configured", async () => {
+      const res = await fetch(`${baseUrl}/metrics/prometheus`);
+      assert.equal(res.status, 401);
+    });
+  });
+});

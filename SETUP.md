@@ -531,7 +531,7 @@ Interactive API docs are also available at `http://localhost:8787/docs` (Swagger
 
 ## 14. API Reference
 
-Authentication requirements: `[key:write]` = API key with write scope; `[key:read or dash]` = API key with read scope OR dashboard token; `[admin]` = `ADMIN_TOKEN` bearer; `[none]` = no auth.
+Authentication requirements: `[key:write]` = API key with write scope; `[key:read or dash]` = API key with read scope OR dashboard token; `[admin]` = `ADMIN_TOKEN` bearer; `[metrics]` = `METRICS_TOKEN` bearer; `[none]` = no auth.
 
 > **API versioning:** the consumer-facing endpoints below are also served under the `/v1` prefix (e.g. `POST /v1/events`). The unversioned paths shown remain supported for backward compatibility, and every response includes an `API-Version: 1` header. Infra endpoints (`/health`, `/ready`, `/metrics/prometheus`), the dashboard/docs UI (`/dashboard`, `/docs`, `/openapi.json`), and `/admin/*` are **not** versioned.
 
@@ -541,7 +541,7 @@ Authentication requirements: `[key:write]` = API key with write scope; `[key:rea
 | GET | `/health` | none | Liveness probe. Returns `{ ok, service, version, checks: { db } }`. HTTP 503 if DB unreachable. |
 | GET | `/ready` | none | Readiness probe. HTTP 200 only when DB is connected and migrations have run. Use for Kubernetes `readinessProbe`. |
 | GET | `/metrics` | key:read or dash | Counters: received, accepted, rejected, duplicates, by-type breakdown, session/workflow counts, max tree depth. |
-| GET | `/metrics/prometheus` | none | Prometheus text format 0.0.4. Unauthenticated — restrict at the network layer if needed. |
+| GET | `/metrics/prometheus` | metrics | Prometheus text format 0.0.4. Open in dev when `METRICS_TOKEN` is unset; 503 in production until it is set. Scrapers send `Authorization: Bearer <token>`. |
 | GET | `/stream` | key:read or dash | Server-Sent Events. Delivers `event.received` frames in real time. Heartbeat every 15 seconds. |
 | GET | `/sessions` | key:read or dash | Paginated session list. Query: `?limit=<1-500>`, `?cursor=<token>`. |
 | GET | `/sessions/:id/events` | key:read or dash | Ordered event timeline. Query: `?type`, `?q`, `?limit=<1-1000>`, `?cursor`. |
@@ -597,7 +597,7 @@ Use the optional `schema` field in the envelope to version your payloads as they
 
 ### Observability
 
-`GET /metrics/prometheus` exports event counters, per-type breakdowns, HTTP request counts, and latency histograms in Prometheus text format 0.0.4. Wire this into your existing Prometheus/Grafana stack for production monitoring.
+`GET /metrics/prometheus` exports event counters, per-type breakdowns, HTTP request counts, and latency histograms in Prometheus text format 0.0.4. Wire this into your existing Prometheus/Grafana stack for production monitoring. In production, set `METRICS_TOKEN` and pass it to your scraper via the Prometheus `authorization` scrape config — the endpoint returns 503 until the token is set (see [SECURITY.md](./SECURITY.md) §8).
 
 ### OpenTelemetry
 

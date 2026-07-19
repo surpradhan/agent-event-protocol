@@ -26,6 +26,7 @@ const {
   requireApiKey,
   requireReadAccess,
   requireDashboardAuth,
+  requireMetricsAuth,
   requireAdminAuth,
   generateApiKey
 } = require("./auth");
@@ -1336,11 +1337,13 @@ v1.get("/webhooks/:id/deliveries", requireReadAccess, validatePathParams, valida
  * Exports event counters, session/workflow gauges, per-type breakdowns,
  * HTTP request counts, and latency histograms.
  *
- * This endpoint is intentionally unauthenticated so Prometheus scrapers can
- * reach it without an API key.  To restrict access, place this behind a
- * network-layer control (reverse proxy, firewall, etc.).
+ * Gated by requireMetricsAuth: when METRICS_TOKEN is set, scrapers must send
+ * it as  Authorization: Bearer <token>  (Prometheus `authorization` scrape
+ * config).  When unset the endpoint is open in development but returns 503
+ * in production (fail closed).  The payload is aggregate and tenant-label-free
+ * either way (see src/metrics.js).
  */
-app.get("/metrics/prometheus", async (_req, res) => {
+app.get("/metrics/prometheus", requireMetricsAuth, async (_req, res) => {
   // Use server-wide (no tenant filter) stats for Prometheus
   const dbStats = await db.getMetrics(null);
   res.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
@@ -1929,6 +1932,15 @@ if (require.main === module) {
             );
           } else {
             logger.warn("DASHBOARD_TOKEN not set — dashboard is open (dev mode)");
+          }
+        }
+        if (!process.env.METRICS_TOKEN) {
+          if (process.env.NODE_ENV === "production") {
+            logger.warn(
+              "METRICS_TOKEN not set — /metrics/prometheus returns 503 (production fails closed)"
+            );
+          } else {
+            logger.warn("METRICS_TOKEN not set — /metrics/prometheus is open (dev mode)");
           }
         }
         if (!process.env.ADMIN_TOKEN) {

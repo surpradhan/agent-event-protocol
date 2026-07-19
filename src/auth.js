@@ -3,7 +3,7 @@
 /**
  * src/auth.js — Authentication & authorisation middleware
  *
- * Three independent auth layers:
+ * Four independent auth layers:
  *
  *   1. API Key auth  (requireApiKey)
  *      Used on all /events (write) and /sessions, /metrics, … (read) endpoints.
@@ -22,7 +22,14 @@
  *        • Authorization: Bearer <token>  header
  *        • ?token=<token>                 query param  (browser-friendly)
  *
- *   3. Admin auth  (requireAdminAuth)
+ *   3. Metrics auth  (requireMetricsAuth)
+ *      Protects GET /metrics/prometheus.  Reads METRICS_TOKEN from the
+ *      environment.  If the env var is not set the scrape endpoint is open
+ *      in development but fails closed with a 503 when NODE_ENV=production,
+ *      mirroring the dashboard behaviour.
+ *      Accepts the token via Authorization: Bearer <token> only.
+ *
+ *   4. Admin auth  (requireAdminAuth)
  *      Protects POST/GET /admin/* endpoints used for key management.
  *      Reads ADMIN_TOKEN from the environment.
  *      If ADMIN_TOKEN is not set all admin endpoints return 503.
@@ -339,6 +346,39 @@ function requireDashboardAuth(req, res, next) {
 }
 
 /**
+ * Middleware for GET /metrics/prometheus.
+ * Requires METRICS_TOKEN via Authorization: Bearer (the header Prometheus
+ * sends with an `authorization.credentials` scrape config).
+ * If METRICS_TOKEN is not configured, the scrape endpoint is open in
+ * development but returns 503 when NODE_ENV=production (fail closed,
+ * mirroring requireDashboardAuth).
+ *
+ * @type {import('express').RequestHandler}
+ */
+function requireMetricsAuth(req, res, next) {
+  const metricsToken = process.env.METRICS_TOKEN;
+
+  if (!metricsToken) {
+    if (isProduction()) {
+      return res.status(503).json({
+        error: "Metrics not configured",
+        hint:  "Set the METRICS_TOKEN environment variable to enable /metrics/prometheus in production"
+      });
+    }
+    // Dev mode: no token configured → open scrape endpoint.
+    return next();
+  }
+
+  const provided = extractBearer(req);
+
+  if (!provided || !safeEqual(provided, metricsToken)) {
+    return res.status(401).json({ error: "Invalid metrics token" });
+  }
+
+  next();
+}
+
+/**
  * Middleware for /admin/* endpoints.
  * Requires ADMIN_TOKEN via Authorization: Bearer.
  * Returns 503 if ADMIN_TOKEN is not configured.
@@ -422,5 +462,6 @@ module.exports = {
   requireApiKey,
   requireReadAccess,
   requireDashboardAuth,
+  requireMetricsAuth,
   requireAdminAuth
 };
