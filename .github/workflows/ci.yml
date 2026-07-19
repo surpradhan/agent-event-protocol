@@ -192,9 +192,10 @@ jobs:
     runs-on: ubuntu-latest
 
     # Runs the *same* integration suite as the `test` job, but against a real
-    # Postgres backend (STORAGE_BACKEND=postgres). The point is parity: the 50
-    # HTTP integration tests must pass identically on SQLite and Postgres,
-    # proving the StorageBackend abstraction is behaviour-preserving.
+    # Postgres backend (STORAGE_BACKEND=postgres). The point is parity: the
+    # integration suite (tests/integration/*.test.js) must pass identically on
+    # SQLite and Postgres, proving the StorageBackend abstraction is
+    # behaviour-preserving.
     services:
       postgres:
         image: postgres:16
