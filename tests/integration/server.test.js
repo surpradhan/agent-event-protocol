@@ -4531,6 +4531,28 @@ describe("production fail-closed auth when DASHBOARD_TOKEN is unset", () => {
     const res = await fetch(`${baseUrl}/dashboard.html`);
     assert.equal(res.status, 503);
   });
+
+  test("path-normalization variants of dashboard.html never serve it", async () => {
+    const variants = [
+      "//dashboard.html",
+      "/./dashboard.html",
+      "/x/../dashboard.html",
+      "/dashboard%2Ehtml",
+      "/fonts/../dashboard.html"
+    ];
+    for (const variant of variants) {
+      const res = await fetch(`${baseUrl}${variant}`);
+      assert.notEqual(res.status, 200, `expected non-200 for ${variant}, got 200`);
+      const type = res.headers.get("content-type") || "";
+      assert.ok(!type.includes("text/html") || res.status >= 400,
+        `variant ${variant} must not serve the dashboard (status ${res.status}, type ${type})`);
+    }
+  });
+
+  test("font assets still serve without auth", async () => {
+    const res = await fetch(`${baseUrl}/fonts/inter-latin.woff2`);
+    assert.equal(res.status, 200);
+  });
 });
 
 describe("dev-mode open read access preserved when DASHBOARD_TOKEN is unset", () => {

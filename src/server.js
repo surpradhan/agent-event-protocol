@@ -402,15 +402,17 @@ app.get("/dashboard", requireDashboardAuth, (_req, res) => {
   res.sendFile("dashboard.html", { root: path.join(__dirname, "public") });
 });
 
-// dashboard.html must pass the same auth gate as /dashboard — the static
-// mount below would otherwise serve it unauthenticated at GET /dashboard.html,
-// bypassing requireDashboardAuth (routes match in registration order).
+// dashboard.html must pass the same auth gate as /dashboard.
 app.get("/dashboard.html", requireDashboardAuth, (_req, res) => {
   res.sendFile("dashboard.html", { root: path.join(__dirname, "public") });
 });
 
-// Static assets served from public/
-app.use(express.static(path.join(__dirname, "public")));
+// Static assets: mount ONLY public/fonts. dashboard.html is deliberately not
+// statically served — express.static resolves "//", "." / ".." segments and
+// %2E-style encodings, so any static mount covering it would let normalized
+// path variants bypass requireDashboardAuth. The gated routes above are the
+// only way to fetch it.
+app.use("/fonts", express.static(path.join(__dirname, "public", "fonts")));
 
 // ---------------------------------------------------------------------------
 // Routes — read endpoints (require API key OR dashboard token)
