@@ -4,6 +4,27 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Python SDK 0.5.0 — retry transient failures with full-jitter backoff — 2026-07-19
+
+`AEPClient` and `AsyncAEPClient` now retry transient failures automatically:
+connection/timeout/network errors, HTTP 429 and HTTP 5xx (honouring
+`Retry-After` on any retryable status), with full-jitter exponential backoff
+(`max_retries=3`, `retry_backoff_base=0.5`, `retry_backoff_max=30.0`;
+`max_retries=0` disables). Other 4xx and deterministic local errors are never
+retried. Retrying `POST /events` is idempotent — the server deduplicates on
+the client-generated event `id`.
+
+- **Behaviour change:** all transport errors — including timeouts, which
+  previously leaked as raw `httpx.TimeoutException` — now raise
+  `AEPConnectionError` once retries are exhausted.
+- Internal background emitters (`aep.instrument()`'s worker and the OTEL
+  exporter) use an explicit `max_retries=1` so a down server doesn't multiply
+  their per-event hold time.
+- New shared helpers in `aep/_http.py` (`RetryConfig`, `is_retryable_status`,
+  `is_retryable_exception`, `compute_retry_delay`); 18 new unit tests.
+
+---
+
 ## Export & prune cover tenants with events but no project (issue #122) — 2026-06-15
 
 A key's `tenant_id` is independent of its bound project's `tenant_id`: a key

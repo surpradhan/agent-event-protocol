@@ -38,7 +38,9 @@ class AEPSpanExporter(SpanExporter):
         self.server_url = server_url
         self.api_key = api_key
         self.batch_size = batch_size
-        self._client = AEPClient(server_url=server_url, api_key=api_key)
+        # Export batches run on the OTel exporter thread: keep the retry
+        # budget small so a down server doesn't stall span export.
+        self._client = AEPClient(server_url=server_url, api_key=api_key, max_retries=1)
         self._resource = None
 
     def set_resource(self, resource: Any) -> None:
