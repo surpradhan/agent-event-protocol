@@ -1,6 +1,8 @@
 """Shared HTTP response helpers for AEPClient and AsyncAEPClient."""
 from __future__ import annotations
 
+import random
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -60,3 +62,42 @@ def _safe_json(resp: httpx.Response) -> dict:
         return resp.json()
     except Exception:
         return {}
+
+
+# ── retry support ──────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class RetryConfig:
+    """Retry policy for transient failures.
+
+    ``max_retries`` counts retry attempts *after* the initial request
+    (``max_retries=3`` → up to 4 requests total). ``0`` disables retries.
+    """
+
+    max_retries: int = 3
+    backoff_base: float = 0.5
+    backoff_max: float = 30.0
+
+
+def is_retryable_status(status_code: int) -> bool:
+    """429 and every 5xx are transient; all other statuses are final."""
+    return status_code == 429 or status_code >= 500
+
+
+def compute_retry_delay(
+    attempt: int,
+    config: RetryConfig,
+    *,
+    retry_after: float = 0.0,
+    rand: Any = random.random,
+) -> float:
+    """Full-jitter exponential backoff, floored by a server-provided Retry-After.
+
+    ``attempt`` is 0-based (0 = delay before the first retry). The jittered
+    delay is ``rand() * min(backoff_max, backoff_base * 2**attempt)``; a
+    ``Retry-After`` value raises the floor, and ``backoff_max`` caps the result.
+    """
+    ceiling = min(config.backoff_max, config.backoff_base * (2**attempt))
+    delay = rand() * ceiling
+    return min(config.backoff_max, max(delay, float(retry_after)))

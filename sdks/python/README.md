@@ -394,6 +394,26 @@ Notes:
 | `health()` | GET `/health` | same, `await`-able |
 | `ready()` | GET `/ready` | same, `await`-able |
 
+### Retries (v0.5.0+)
+
+Both clients automatically retry **transient** failures — connection/timeout
+errors, HTTP 429 (honouring `Retry-After`) and HTTP 5xx — with full-jitter
+exponential backoff. Other 4xx responses are never retried. Retrying
+`POST /events` is safe because events carry a client-generated `id` and the
+server deduplicates on it (a replay returns `"duplicate": true`).
+
+```python
+AEPClient(
+    max_retries=3,            # retries after the initial attempt; 0 disables
+    retry_backoff_base=0.5,   # seconds; delay ceiling is base * 2**attempt
+    retry_backoff_max=30.0,   # hard cap per delay, also caps Retry-After
+)
+```
+
+Since v0.5.0 every transport-level failure (including timeouts, previously a
+raw `httpx.TimeoutException`) is raised as `AEPConnectionError` after retries
+are exhausted.
+
 ---
 
 ## HMAC signing
