@@ -150,6 +150,10 @@ honours libpq-style query parameters).
 - **Multi-instance:** each server replica is its own pool. Behind a connection
   pooler (PgBouncer in transaction mode), a few hundred app connections collapse
   onto a small server-side pool — recommended past a handful of replicas.
+  **But see [§8](#8-known-limitations-reference-implementation)** before running
+  more than one replica: several application features (SSE, rate limits,
+  quotas, metrics) degrade with instance count even though the database layer
+  scales fine.
 - **Transactions:** ingest (`insertEvent`) and pruning (`pruneEventsBefore`) each
   run inside a single `BEGIN … COMMIT` and check out one pooled client for the
   duration, so a backlog of either can briefly saturate the pool — size with
@@ -774,7 +778,7 @@ it. Each is deliberate scope, not an accident; where a workaround exists it is
 noted. As elsewhere in this guide, every claim is verified against the cited
 source file.
 
-### Single-process runtime state — do not run more than one instance
+### Single-process runtime state — replicas degrade several features
 
 Several runtime mechanisms live in per-process memory with no shared store: SSE
 fan-out and the one-time SSE tickets (the `sseClients` / `sseTickets` maps,
@@ -785,14 +789,16 @@ Prometheus counters (`src/metrics.js`). Behind a load balancer this means: a
 dashboard connected to one replica misses events ingested on the others, the
 effective per-key rate limit multiplies by the instance count, an SSE ticket
 minted on one replica is unknown to the rest (the ticket → `/stream` two-step
-needs sticky sessions), and each replica exports only its own metrics. The
-Postgres backend removes only the database-layer constraint (SQLite's single
-writer) — it does not make the application horizontally scalable. Run one
-instance and scale vertically; scaling out would need shared state (e.g. a
-Redis-backed rate limit/quota counter and an SSE broker) that is out of scope
-for the reference implementation.
+needs sticky sessions), and each replica exports only its own metrics. Ingest
+and read **correctness** are unaffected on the Postgres backend (see
+[§2](#2-postgres-production-deployment) for pool sizing across replicas) — what
+degrades is real-time delivery, limit/quota precision, and metrics locality.
+The recommended posture is one instance scaled vertically; scale out only if
+you accept those degradations (or front them with sticky sessions), since the
+shared state that would fix them (a Redis-backed rate-limit/quota counter and
+an SSE broker) is out of scope for the reference implementation.
 
-### Webhook delivery is at-most-once
+### Webhook delivery is best-effort, not durable
 
 Delivery is scheduled fire-and-forget on a microtask off the ingest path
 (`scheduleDelivery`, `src/webhookDelivery.js`), and the `webhook_deliveries`
@@ -800,9 +806,12 @@ row is written only once an attempt actually starts — there is no durable
 outbox, and nothing re-drives `pending` rows at startup. A restart therefore
 drops deliveries that were queued or mid-retry (an interrupted delivery is
 visible afterwards as a row stuck in `pending`; one that never started leaves no
-row at all). Do not treat webhooks as a reliable event bus: use them as a
-low-latency signal and reconcile by polling `GET /webhooks/:id/deliveries`
-([§6](#6-webhooks--alerts-phase-16)) or re-querying the read API.
+row at all). Duplicates are also possible: a timed-out attempt that in fact
+reached the receiver is retried, so receivers should de-duplicate on the
+`X-AEP-Delivery-Id` header. Do not treat webhooks as a reliable event bus: use
+them as a low-latency signal and reconcile by polling
+`GET /webhooks/:id/deliveries` ([§6](#6-webhooks--alerts-phase-16)) or
+re-querying the read API.
 
 ### The Postgres schema is hand-mirrored, not migrated
 
@@ -832,7 +841,8 @@ programmatic access, avoid logging query strings at your proxy, and rotate
 
 On SIGTERM / SIGINT the server stops accepting connections and waits for
 in-flight requests, but open `/stream` (SSE) connections are never proactively
-closed — with any dashboard connected, `httpServer.close()` cannot complete and
+closed — with any SSE client connected (typically a dashboard),
+`httpServer.close()` cannot complete and
 shutdown falls through to the 30 s hard timeout, exiting with code 1
 (`"shutdown timeout exceeded — forcing exit"`, `src/server.js`). Expect rolling
 restarts to take the full 30 s per instance while dashboards are open, and
