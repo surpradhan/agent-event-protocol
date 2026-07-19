@@ -5,7 +5,7 @@
 [![GitHub](https://img.shields.io/badge/GitHub-surpradhan/agent--event--protocol-blue?logo=github)](https://github.com/surpradhan/agent-event-protocol)
 [![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Tests: 200+](https://img.shields.io/badge/tests-200%2B-brightgreen)](#testing)
+[![Tests: 700+](https://img.shields.io/badge/tests-700%2B-brightgreen)](#testing)
 
 > **📍 Project direction (2026-06):** AEP is converging on OpenTelemetry rather than continuing as a standalone protocol. Active development is moving toward contributions to the OTel GenAI semantic conventions. This repo remains published and usable, but the envelope/server here is now a **reference implementation**, not the forward roadmap.
 
@@ -316,22 +316,24 @@ docker run -p 8787:8787 \
 
 Reference these common response structures when building clients and integrations.
 
-**202 Accepted** — `POST /events` (async ingest)
+> **API versioning:** every consumer-facing endpoint is served both under the `/v1` prefix (e.g. `POST /v1/events`) and at the unversioned root path (e.g. `POST /events`), which remains supported for backward compatibility. All responses carry an `API-Version: 1` header. Infrastructure and admin endpoints (`/health`, `/ready`, `/metrics/prometheus`, `/admin/*`, `/dashboard`, `/docs`, `/openapi.json`) are not versioned.
+
+**202 Accepted** — `POST /v1/events` (async ingest)
 ```json
 { "accepted": true, "duplicate": false, "id": "evt_01HXYZ..." }
 ```
 
-**200 OK** — `GET /sessions`
+**200 OK** — `GET /v1/sessions`
 ```json
 { "sessions": [ { "session_id": "ses_01HXYZ...", "created_at": "..." } ], "next_cursor": "..." }
 ```
 
-**200 OK** — `GET /sessions/{sessionId}/events`
+**200 OK** — `GET /v1/sessions/{sessionId}/events`
 ```json
 { "session_id": "ses_01HXYZ...", "events": [ { "id": "evt_...", "type": "task.created", ... } ] }
 ```
 
-**200 OK** — `GET /sessions/{sessionId}/audit-bundle` and `GET /workflows/{traceId}/audit-bundle`
+**200 OK** — `GET /v1/sessions/{sessionId}/audit-bundle` and `GET /v1/workflows/{traceId}/audit-bundle`
 ```json
 {
   "aep_audit_version": "0.1.0",
@@ -419,20 +421,20 @@ Typically indicates cross-tenant access attempt or insufficient scopes for the r
 
 ## 🧪 Testing
 
-**JavaScript server (Node.js) — 82 tests**
+**JavaScript server (Node.js) — 700+ tests (490+ unit + 250+ integration)**
 ```bash
-npm test                  # full suite (55 unit + 27 integration)
-npm run test:unit         # 55 unit tests (event protocol, validation, CLI)
-npm run test:integration  # 27 integration tests (HTTP server flow)
+npm test                  # full suite
+npm run test:unit         # unit tests (event protocol, validation, analytics, export, CLI)
+npm run test:integration  # integration tests (HTTP server flow, auth, /v1 versioning)
 npm run lint              # ESLint checks
 ```
 
-**Python SDK — 118 tests**
+**Python SDK — 300+ tests (280+ unit + 20 integration)**
 ```bash
 cd sdks/python
 pip install -e ".[dev]"
-pytest tests/unit/        # 107 unit tests (no server needed)
-pytest tests/integration/ # 11 integration tests (auto-skip if server is down)
+pytest tests/unit/        # unit tests (no server needed)
+pytest tests/integration/ # integration tests (auto-skip if server is down)
 ```
 
 **Go SDK — 80+ tests**
@@ -509,6 +511,8 @@ MIT License: see [LICENSE](./LICENSE) for details.
 - [x] Advanced filtering & visualization in dashboard (Phase 15)
 - [x] Webhook integration for alerts (Phase 16)
 - [x] S3/cloud export for long-term storage (Phase 17: JSONL/CSV/Parquet, gzip/brotli, local + S3 sink, export-before-prune)
+
+> Phases 13–17 (Postgres/quotas, compliance & audit, analytics, webhooks, cloud export) are built and tested, but parked: per the project direction note at the top of this README, this stack is now a reference implementation and new effort goes toward the OTel GenAI semantic conventions.
 
 ---
 
