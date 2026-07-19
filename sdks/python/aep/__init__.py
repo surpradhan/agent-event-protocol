@@ -1,4 +1,4 @@
-"""Agent Event Protocol (AEP) Python SDK — v0.4.1.
+"""Agent Event Protocol (AEP) Python SDK — v0.5.0.
 
 Quick start::
 

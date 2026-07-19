@@ -150,6 +150,39 @@ def test_429_honours_retry_after(monkeypatch):
 
 
 @respx.mock
+def test_503_honours_retry_after(monkeypatch):
+    sleeps = _patch_sync_sleep(monkeypatch)
+    event = _event()
+    respx.post(f"{_BASE}/events").mock(
+        side_effect=[
+            httpx.Response(503, headers={"Retry-After": "5"}, json={"error": "maintenance"}),
+            _accepted(event),
+        ]
+    )
+    with AEPClient(server_url=_BASE) as client:
+        result = client.emit(event)
+    assert result["accepted"] is True
+    assert len(sleeps) == 1
+    assert sleeps[0] >= 5.0
+
+
+@respx.mock
+def test_deterministic_local_error_fails_fast(monkeypatch):
+    sleeps = _patch_sync_sleep(monkeypatch)
+    route = respx.post(f"{_BASE}/events").mock(
+        side_effect=httpx.UnsupportedProtocol("bad scheme")
+    )
+    try:
+        with AEPClient(server_url=_BASE, max_retries=3) as client:
+            client.emit(_event())
+        raise AssertionError("expected AEPConnectionError")
+    except AEPConnectionError:
+        pass
+    assert route.call_count == 1  # no retries burned on a deterministic failure
+    assert sleeps == []
+
+
+@respx.mock
 def test_429_exhaustion_still_raises_rate_limit(monkeypatch):
     _patch_sync_sleep(monkeypatch)
     route = respx.post(f"{_BASE}/events").mock(

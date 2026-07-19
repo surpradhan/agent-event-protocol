@@ -85,6 +85,20 @@ def is_retryable_status(status_code: int) -> bool:
     return status_code == 429 or status_code >= 500
 
 
+def is_retryable_exception(exc: httpx.TransportError) -> bool:
+    """Only genuinely transient transport failures are worth retrying.
+
+    Timeouts, network errors, and a server hanging up mid-response
+    (``RemoteProtocolError``) can succeed on a second attempt. Deterministic
+    local failures (``UnsupportedProtocol``, ``LocalProtocolError``, proxy
+    misconfiguration) will fail identically every time — raise immediately.
+    """
+    return isinstance(
+        exc,
+        (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError),
+    )
+
+
 def compute_retry_delay(
     attempt: int,
     config: RetryConfig,

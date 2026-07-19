@@ -27,7 +27,11 @@ class AEPNotFoundError(AEPError):
 
 
 class AEPConnectionError(AEPError):
-    """Cannot connect to the AEP ingest server."""
+    """Transport-level failure reaching the AEP ingest server.
+
+    Raised for connection errors, timeouts, and mid-flight network failures —
+    after the client's transient-failure retries (if any) are exhausted.
+    """
 
 
 class AEPServerError(AEPError):

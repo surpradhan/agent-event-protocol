@@ -2679,7 +2679,12 @@ def instrument(
             try:
                 from aep.client import AEPClient
 
-                _active_client = AEPClient(server_url=server_url, api_key=api_key)
+                # The background emitter holds one event at a time: keep its
+                # retry budget small so a down server doesn't multiply the
+                # per-event hold time and fill the bounded queue.
+                _active_client = AEPClient(
+                    server_url=server_url, api_key=api_key, max_retries=1
+                )
                 _owns_client = True
             except Exception as e:
                 logger.error("AEP: failed to create client; instrumentation disabled: %s", e)

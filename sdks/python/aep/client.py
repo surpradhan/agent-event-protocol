@@ -12,6 +12,7 @@ from ._http import (
     RetryConfig,
     compute_retry_delay,
     handle_response,
+    is_retryable_exception,
     is_retryable_status,
     parse_retry_after,
 )
@@ -203,19 +204,18 @@ class AEPClient:
                     method, url, headers=self._headers(), params=params, json=json_body
                 )
             except httpx.TransportError as exc:
-                # Covers ConnectError, timeouts, and mid-flight network errors.
-                if attempt < self._retry.max_retries:
+                # Transient transport failures (timeouts, network errors,
+                # server hang-ups) are retried; deterministic local errors
+                # raise immediately.
+                if is_retryable_exception(exc) and attempt < self._retry.max_retries:
                     time.sleep(compute_retry_delay(attempt, self._retry))
                     continue
                 raise AEPConnectionError(
                     f"Cannot reach AEP server at {self._server_url}: {exc}"
                 ) from exc
             if is_retryable_status(resp.status_code) and attempt < self._retry.max_retries:
-                retry_after = (
-                    parse_retry_after(resp.headers.get("Retry-After", "0"))
-                    if resp.status_code == 429
-                    else 0
-                )
+                # RFC 7231 allows Retry-After on any response (typically 429/503).
+                retry_after = parse_retry_after(resp.headers.get("Retry-After", "0"))
                 time.sleep(compute_retry_delay(attempt, self._retry, retry_after=retry_after))
                 continue
             return handle_response(resp)
