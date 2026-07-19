@@ -153,7 +153,8 @@ npm audit --production             # Check production deps only
 ```bash
 DASHBOARD_TOKEN=$(openssl rand -hex 32)
 ADMIN_TOKEN=$(openssl rand -hex 32)
-export DASHBOARD_TOKEN ADMIN_TOKEN
+METRICS_TOKEN=$(openssl rand -hex 32)
+export DASHBOARD_TOKEN ADMIN_TOKEN METRICS_TOKEN
 ```
 
 ### 3. Rotate API Keys Regularly
