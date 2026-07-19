@@ -377,6 +377,7 @@ Typically indicates cross-tenant access attempt or insufficient scopes for the r
 | **[SETUP.md](./SETUP.md)** | Installation, configuration, troubleshooting |
 | **[OPERATIONS.md](./OPERATIONS.md)** | Operations & deployment: Postgres backend, projects/tiers/quotas, retention/pruning (cron + k8s CronJob), S3/cloud export (Phase 17) |
 | **[CHANGELOG.md](./CHANGELOG.md)** | Version history (Phases 1–17) and breaking changes |
+| **[VERSIONING.md](./VERSIONING.md)** | How the protocol, API, server, SDK, and audit-bundle versions relate |
 | **[CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)** | Community standards and expectations |
 
 ---
