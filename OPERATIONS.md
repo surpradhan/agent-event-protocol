@@ -15,6 +15,7 @@ leave off and focuses on storage, multi-tenancy, and data-lifecycle controls:
 5. [Phase 13 production checklist](#5-phase-13-production-checklist)
 6. [Webhooks & alerts](#6-webhooks--alerts-phase-16)
 7. [Export & cold storage](#7-export--cold-storage-phase-17)
+8. [Known limitations (reference implementation)](#8-known-limitations-reference-implementation)
 
 Everything below is verified against the source. Where a value comes from code,
 the file is cited (e.g. `src/tiers.js`) so you can confirm it yourself.
@@ -763,6 +764,81 @@ The crontab equivalent mirrors [§4's recipe](#scheduling-recipe--crontab) with
 `--export-before-prune` added and the `EXPORT_*` vars exported in the cron
 environment. Alert on a non-zero exit (export failure blocked a prune) or a
 missing success log.
+
+---
+
+## 8. Known limitations (reference implementation)
+
+Constraints of the current implementation that shape how you deploy and operate
+it. Each is deliberate scope, not an accident; where a workaround exists it is
+noted. As elsewhere in this guide, every claim is verified against the cited
+source file.
+
+### Single-process runtime state — do not run more than one instance
+
+Several runtime mechanisms live in per-process memory with no shared store: SSE
+fan-out and the one-time SSE tickets (the `sseClients` / `sseTickets` maps,
+`src/server.js`), the per-key ingest rate-limit windows
+(`src/middleware/rateLimit.js`), the per-project quota usage cache
+(`src/middleware/quota.js` — its own header documents the drift), and the
+Prometheus counters (`src/metrics.js`). Behind a load balancer this means: a
+dashboard connected to one replica misses events ingested on the others, the
+effective per-key rate limit multiplies by the instance count, an SSE ticket
+minted on one replica is unknown to the rest (the ticket → `/stream` two-step
+needs sticky sessions), and each replica exports only its own metrics. The
+Postgres backend removes only the database-layer constraint (SQLite's single
+writer) — it does not make the application horizontally scalable. Run one
+instance and scale vertically; scaling out would need shared state (e.g. a
+Redis-backed rate limit/quota counter and an SSE broker) that is out of scope
+for the reference implementation.
+
+### Webhook delivery is at-most-once
+
+Delivery is scheduled fire-and-forget on a microtask off the ingest path
+(`scheduleDelivery`, `src/webhookDelivery.js`), and the `webhook_deliveries`
+row is written only once an attempt actually starts — there is no durable
+outbox, and nothing re-drives `pending` rows at startup. A restart therefore
+drops deliveries that were queued or mid-retry (an interrupted delivery is
+visible afterwards as a row stuck in `pending`; one that never started leaves no
+row at all). Do not treat webhooks as a reliable event bus: use them as a
+low-latency signal and reconcile by polling `GET /webhooks/:id/deliveries`
+([§6](#6-webhooks--alerts-phase-16)) or re-querying the read API.
+
+### The Postgres schema is hand-mirrored, not migrated
+
+SQLite evolves through versioned migrations tracked in a `schema_migrations`
+table (`src/db/migrate.js`); Postgres instead applies a single hand-maintained,
+idempotent `SCHEMA_DDL` string on every boot (`src/db/backends/postgres.js`)
+with no migration tracking of its own. Every new SQLite migration must be
+mirrored into that string by hand, and drift is not detected automatically —
+the `Postgres parity tests` CI job ([§1](#1-choosing-a-storage-backend))
+catches behavioural divergence only on paths the integration suite exercises.
+When reviewing a change that adds a migration, check that the matching
+`SCHEMA_DDL` edit is present.
+
+### The dashboard token can appear in URLs
+
+`GET /dashboard` — and, when the dashboard token is used, the read endpoints —
+accepts `?token=` as an alternative to the `Authorization` header so a browser
+can simply navigate to the page (`extractBearerOrQuery`, `src/auth.js`). The
+application never logs query strings (the access log records the path only, and
+`/stream` uses one-time SSE tickets precisely to keep credentials out of that
+URL), but the token can still persist in browser history and in the access logs
+of any reverse proxy or load balancer in front. Prefer the Bearer header for
+programmatic access, avoid logging query strings at your proxy, and rotate
+`DASHBOARD_TOKEN` if a URL may have leaked.
+
+### Graceful shutdown waits out connected SSE clients
+
+On SIGTERM / SIGINT the server stops accepting connections and waits for
+in-flight requests, but open `/stream` (SSE) connections are never proactively
+closed — with any dashboard connected, `httpServer.close()` cannot complete and
+shutdown falls through to the 30 s hard timeout, exiting with code 1
+(`"shutdown timeout exceeded — forcing exit"`, `src/server.js`). Expect rolling
+restarts to take the full 30 s per instance while dashboards are open, and
+don't alert on that exit path alone. The dashboard reconnects automatically
+after the drop (it exchanges a fresh SSE ticket on error), so the visible
+impact is a brief gap in live updates.
 
 ---
 
