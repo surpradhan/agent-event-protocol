@@ -533,7 +533,7 @@ Interactive API docs are also available at `http://localhost:8787/docs` (Swagger
 
 Authentication requirements: `[key:write]` = API key with write scope; `[key:read or dash]` = API key with read scope OR dashboard token; `[admin]` = `ADMIN_TOKEN` bearer; `[none]` = no auth.
 
-> **API versioning:** the consumer-facing endpoints below are also served under the `/v1` prefix (e.g. `POST /v1/events`). The unversioned paths shown remain supported for backward compatibility, and every response includes an `API-Version: 1` header. Infra endpoints (`/health`, `/ready`, `/metrics/prometheus`), the dashboard/docs UI, and `/admin/*` are **not** versioned.
+> **API versioning:** the consumer-facing endpoints below are also served under the `/v1` prefix (e.g. `POST /v1/events`). The unversioned paths shown remain supported for backward compatibility, and every response includes an `API-Version: 1` header. Infra endpoints (`/health`, `/ready`, `/metrics/prometheus`), the dashboard/docs UI (`/dashboard`, `/docs`, `/openapi.json`), and `/admin/*` are **not** versioned.
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|

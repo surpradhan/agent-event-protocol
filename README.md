@@ -328,12 +328,12 @@ Reference these common response structures when building clients and integration
 { "sessions": [ { "session_id": "ses_01HXYZ...", "created_at": "..." } ], "next_cursor": "..." }
 ```
 
-**200 OK** — `GET /sessions/{sessionId}/events`
+**200 OK** — `GET /v1/sessions/{sessionId}/events`
 ```json
 { "session_id": "ses_01HXYZ...", "events": [ { "id": "evt_...", "type": "task.created", ... } ] }
 ```
 
-**200 OK** — `GET /sessions/{sessionId}/audit-bundle` and `GET /workflows/{traceId}/audit-bundle`
+**200 OK** — `GET /v1/sessions/{sessionId}/audit-bundle` and `GET /v1/workflows/{traceId}/audit-bundle`
 ```json
 {
   "aep_audit_version": "0.1.0",

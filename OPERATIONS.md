@@ -20,9 +20,9 @@ Everything below is verified against the source. Where a value comes from code,
 the file is cited (e.g. `src/tiers.js`) so you can confirm it yourself.
 
 Endpoint examples use the unversioned root paths (e.g. `POST /webhooks`); every
-consumer-facing endpoint is also served under the `/v1` prefix with an
-`API-Version: 1` response header, while `/admin/*` and the infra probes
-(`/health`, `/ready`, `/metrics/prometheus`) are unversioned.
+consumer-facing endpoint is also served under the `/v1` prefix, and all
+responses carry an `API-Version: 1` header, while `/admin/*` and the infra
+probes (`/health`, `/ready`, `/metrics/prometheus`) are unversioned.
 
 ---
 
@@ -483,9 +483,10 @@ Notes:
 
 ## 5. Phase 13 production checklist
 
-Phase 13 (Hosted SaaS groundwork) is complete: Postgres backend (PR-B),
+The Phase 13 infrastructure shipped in full — Postgres backend (PR-B),
 projects / tiers / quotas (PR-C), retention / pruning (PR-D), and these ops docs
-(PR-E). Before going live:
+(PR-E) — and this checklist remains current for any self-hosted production
+deployment. Before going live:
 
 - [ ] **Backend:** `STORAGE_BACKEND=postgres` with `DATABASE_URL` (or `PG*`)
       pointed at a durable, backed-up Postgres. Confirm `GET /ready` returns 200.
