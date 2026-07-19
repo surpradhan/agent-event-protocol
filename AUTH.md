@@ -4,15 +4,16 @@ This document covers authentication, tenant isolation, and HMAC signature verifi
 
 ## Overview
 
-The server has three independent auth layers:
+The server has four independent auth layers:
 
 | Layer | Protects | Credential |
 |---|---|---|
 | API Key | `/events` (write), `/sessions*`, `/metrics`, `/workflows*`, `/stream` (read) | `aep_<48 hex chars>` bearer token |
 | Dashboard Token | `GET /dashboard` (browser UI) | Arbitrary secret set in `DASHBOARD_TOKEN` env var |
+| Metrics Token | `GET /metrics/prometheus` (Prometheus scrape) | Arbitrary secret set in `METRICS_TOKEN` env var |
 | Admin Token | `/admin/keys*` (key management) | Arbitrary secret set in `ADMIN_TOKEN` env var |
 
-If `DASHBOARD_TOKEN` is not set, the dashboard and all read endpoints are **open** (dev-mode convenience). Production deployments should set both `DASHBOARD_TOKEN` and `ADMIN_TOKEN`.
+If `DASHBOARD_TOKEN` is not set, the dashboard and all read endpoints are **open** (dev-mode convenience); likewise the Prometheus scrape endpoint is open when `METRICS_TOKEN` is not set. With `NODE_ENV=production` the server fails closed instead: an unset `DASHBOARD_TOKEN` yields a 503 dashboard and 401 unauthenticated reads, and an unset `METRICS_TOKEN` yields a 503 scrape endpoint. Production deployments should set `DASHBOARD_TOKEN`, `METRICS_TOKEN`, and `ADMIN_TOKEN`.
 
 > **Ingest is the exception — it is authenticated in every mode.** `POST /events` always requires a write-scoped API key; there is no keyless/dev bypass. To emit events locally you must set `ADMIN_TOKEN`, mint a key via `POST /admin/keys`, and pass it as a bearer token (the bundled emitter and demo scripts read it from `AEP_API_KEY`). "Dev mode" only relaxes the dashboard and read endpoints.
 
@@ -24,6 +25,7 @@ If `DASHBOARD_TOKEN` is not set, the dashboard and all read endpoints are **open
 |---|---|---|
 | `ADMIN_TOKEN` | For key management | Secret used to authenticate `/admin/*` requests |
 | `DASHBOARD_TOKEN` | For dashboard protection | Secret used to authenticate dashboard access and read-only API calls |
+| `METRICS_TOKEN` | For scrape protection | Secret used to authenticate `GET /metrics/prometheus`. Unset: open in dev, 503 in production. Prometheus sends it via the `authorization` scrape config. |
 | `PORT` | No (default: `8787`) | TCP port the server listens on |
 | `DATABASE_PATH` | No (default: `./data/aep.db`) | Path to the SQLite database |
 | `LOG_LEVEL` | No (default: `info`) | Pino log level: `trace` \| `debug` \| `info` \| `warn` \| `error` \| `fatal` |
@@ -460,5 +462,6 @@ The token is stripped from the URL after being saved to sessionStorage.
 - **HMAC secrets** — Stored as plaintext in the SQLite database. For production, consider encrypting the DB or using an external secrets manager (Vault, AWS Secrets Manager, etc.).
 - **Admin token** — Set `ADMIN_TOKEN` to a long random string (≥ 32 chars). The admin API can create and revoke keys for any tenant.
 - **Dashboard token** — The dashboard token grants full cross-tenant read access. Treat it as an admin credential.
+- **Metrics token** — `GET /metrics/prometheus` serves only aggregate, tenant-label-free counters (see `src/metrics.js`), but it still reveals traffic volumes and route shapes. Set `METRICS_TOKEN` and configure your scraper's `authorization` credentials; in production the endpoint returns 503 until the token is set.
 - **Key rotation** — Revoke old keys via `DELETE /admin/keys/:id` before replacing them.
 - **Timing attacks** — All token comparisons use `crypto.timingSafeEqual` to prevent timing-based leaks.

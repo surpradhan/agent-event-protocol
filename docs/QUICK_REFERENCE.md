@@ -75,9 +75,11 @@ curl -s -X POST http://localhost:8787/admin/keys \
 
 Most keys should include both scopes: `["read", "write"]`
 
-> Note: `/metrics/prometheus` (the Prometheus scrape endpoint) is intentionally
-> unauthenticated and does not require a `read` key. The `read` scope above
-> applies to the JSON `/metrics` endpoint.
+> Note: `/metrics/prometheus` (the Prometheus scrape endpoint) does not use API
+> keys — it is protected by the `METRICS_TOKEN` environment variable instead
+> (sent as `Authorization: Bearer <token>`). When `METRICS_TOKEN` is unset the
+> endpoint is open in development and returns 503 in production (fail closed).
+> The `read` scope above applies to the JSON `/metrics` endpoint.
 
 ---
 

@@ -495,8 +495,8 @@ deployment. Before going live:
 
 - [ ] **Backend:** `STORAGE_BACKEND=postgres` with `DATABASE_URL` (or `PG*`)
       pointed at a durable, backed-up Postgres. Confirm `GET /ready` returns 200.
-- [ ] **Auth:** `ADMIN_TOKEN` and `DASHBOARD_TOKEN` set; server behind TLS.
-      (See [SECURITY.md](./SECURITY.md).)
+- [ ] **Auth:** `ADMIN_TOKEN`, `DASHBOARD_TOKEN`, and `METRICS_TOKEN` set; server
+      behind TLS. (See [SECURITY.md](./SECURITY.md).)
 - [ ] **Projects:** real projects created on the right tiers; production API keys
       bound to their project via `projectId` (not the seeded `default`).
 - [ ] **Quotas:** `QUOTA_ENFORCEMENT=true` once validated; `TIER_*` overrides set
@@ -504,7 +504,10 @@ deployment. Before going live:
 - [ ] **Retention:** `npm run prune` scheduled (cron or k8s CronJob) against the
       same DB; validated with `--dry-run`; the prune job has the same `TIER_*`
       retention env as the server; success/failure is alerted on.
-- [ ] **Observability:** `/metrics/prometheus` scraped; prune job logs collected.
+- [ ] **Observability:** `/metrics/prometheus` scraped with the `METRICS_TOKEN`
+      bearer credential (Prometheus `authorization` scrape config — in
+      production the endpoint returns 503 until the token is set; see
+      [SECURITY.md](./SECURITY.md) §8); prune job logs collected.
 - [ ] **Signature enforcement:** the server accepts **only** payload-covering
       `canon:"v2"` per-event signatures — legacy v1 (envelope-only) signatures are
       rejected with `401`, and (as of issue #65 Phase E) there is **no**

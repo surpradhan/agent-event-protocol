@@ -187,12 +187,34 @@ curl http://localhost:8787/metrics | grep rejections
 # In cloud: security groups / VPCs
 ```
 
+### 8. Protect the Prometheus Scrape Endpoint
+
+`GET /metrics/prometheus` serves aggregate, tenant-label-free counters only
+(no per-tenant series — see `src/metrics.js`), but traffic volumes and route
+shapes are still operational intelligence. Set `METRICS_TOKEN` and give it to
+your scraper:
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: aep
+    metrics_path: /metrics/prometheus
+    authorization:            # sends: Authorization: Bearer <token>
+      credentials: <METRICS_TOKEN>
+```
+
+When `METRICS_TOKEN` is unset the endpoint is open in development, but with
+`NODE_ENV=production` it fails closed (503) — the same posture as
+`DASHBOARD_TOKEN`. There is no keyless production scrape; if you would rather
+rely on a scrape-network boundary alone, you must still set a token and share
+it with the scraper.
+
 ---
 
 ## Security Checklist
 
 - [ ] Deploy behind TLS reverse proxy
-- [ ] Set strong `DASHBOARD_TOKEN` and `ADMIN_TOKEN`
+- [ ] Set strong `DASHBOARD_TOKEN`, `ADMIN_TOKEN`, and `METRICS_TOKEN`
 - [ ] Enable HMAC signing in production
 - [ ] Configure rate limiting in reverse proxy
 - [ ] Set up database backups
