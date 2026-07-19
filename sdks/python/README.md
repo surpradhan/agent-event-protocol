@@ -2,7 +2,7 @@
 
 Python client library for the [Agent Event Protocol](https://github.com/surpradhan/agent-event-protocol#readme) — an observability framework for agent workflows.
 
-**Version:** 0.4.1 · **Python:** ≥ 3.10 · **Schema:** AEP v0.2.0
+**Version:** 0.5.0 · **Python:** ≥ 3.10 · **Schema:** AEP v0.2.0
 
 > **📍 Project direction (2026-06):** AEP is converging on OpenTelemetry rather than continuing as a standalone protocol. This SDK remains published and usable, and is the **carry-forward / reference** SDK — its framework auto-instrumentation, OTEL bridge, and signing feed contributions to the OTel GenAI semantic conventions.
 
@@ -394,6 +394,28 @@ Notes:
 | `health()` | GET `/health` | same, `await`-able |
 | `ready()` | GET `/ready` | same, `await`-able |
 
+### Retries (v0.5.0+)
+
+Both clients automatically retry **transient** failures — connection/timeout
+errors, HTTP 429 and HTTP 5xx (honouring `Retry-After` on any retryable
+status, per RFC 7231) — with full-jitter exponential backoff. Other 4xx
+responses, and deterministic local errors (e.g. an unsupported URL scheme),
+are never retried. Retrying `POST /events` is safe because events carry a
+client-generated `id` and the server deduplicates on it (a replay returns
+`"duplicate": true`).
+
+```python
+AEPClient(
+    max_retries=3,            # retries after the initial attempt; 0 disables
+    retry_backoff_base=0.5,   # seconds; delay ceiling is base * 2**attempt
+    retry_backoff_max=30.0,   # hard cap per delay, also caps Retry-After
+)
+```
+
+Since v0.5.0 every transport-level failure (including timeouts, previously a
+raw `httpx.TimeoutException`) is raised as `AEPConnectionError` after retries
+are exhausted.
+
 ---
 
 ## HMAC signing
@@ -569,7 +591,7 @@ Before the first release, configure the publisher side (cannot be done from code
 # 1. Bump sdks/python/pyproject.toml `version` AND aep/__init__.py `__version__`
 #    (keep them in sync) on a PR; squash-merge to main.
 # 2. From main, tag the release commit and push the tag:
-git tag python-sdk-v0.4.1
-git push origin python-sdk-v0.4.1
+git tag python-sdk-v0.5.0
+git push origin python-sdk-v0.5.0
 # 3. Approve the `pypi-publish` deployment in the Actions UI once `verify` is green.
 ```

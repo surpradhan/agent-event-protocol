@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import os
+import time
 import warnings
 from typing import Any
 
 import httpx
 
 from ._constants import DEFAULT_SERVER_URL
-from ._http import handle_response
+from ._http import (
+    RetryConfig,
+    compute_retry_delay,
+    handle_response,
+    is_retryable_exception,
+    is_retryable_status,
+    parse_retry_after,
+)
 from ._signature import sign_event
 from .exceptions import AEPConnectionError
 
@@ -19,6 +27,12 @@ class AEPClient:
 
         with AEPClient(api_key="aep_...") as client:
             result = client.emit(event)
+
+    Transient failures — connection/timeout errors, HTTP 429 and HTTP 5xx
+    (honouring ``Retry-After`` on any retryable status) — are retried up to
+    ``max_retries`` times with full-jitter exponential backoff. Retrying ``POST /events`` is safe:
+    events carry a client-generated ``id`` and the server deduplicates on it.
+    Set ``max_retries=0`` to disable retries.
     """
 
     def __init__(
@@ -27,12 +41,20 @@ class AEPClient:
         api_key: str | None = None,
         hmac_secret: str | None = None,
         timeout: float = 10.0,
+        max_retries: int = 3,
+        retry_backoff_base: float = 0.5,
+        retry_backoff_max: float = 30.0,
     ) -> None:
         self._server_url = (
             server_url or os.environ.get("AEP_INGEST_URL") or DEFAULT_SERVER_URL
         ).rstrip("/")
         self._api_key = api_key or os.environ.get("AEP_API_KEY")
         self._hmac_secret = hmac_secret
+        self._retry = RetryConfig(
+            max_retries=max(0, max_retries),
+            backoff_base=retry_backoff_base,
+            backoff_max=retry_backoff_max,
+        )
         self._http = httpx.Client(timeout=timeout)
 
     # ── context manager ───────────────────────────────────────────────────────
@@ -162,19 +184,41 @@ class AEPClient:
         return h
 
     def _get(self, path: str, *, params: dict | None = None) -> dict[str, Any]:
-        url = self._server_url + path
-        try:
-            resp = self._http.get(url, headers=self._headers(), params=params)
-        except httpx.ConnectError as exc:
-            raise AEPConnectionError(f"Cannot reach AEP server at {self._server_url}: {exc}") from exc
-        return handle_response(resp)
+        return self._request("GET", path, params=params)
 
     def _post(self, path: str, body: dict) -> dict[str, Any]:
+        return self._request("POST", path, json_body=body)
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict | None = None,
+        json_body: dict | None = None,
+    ) -> dict[str, Any]:
         url = self._server_url + path
-        try:
-            resp = self._http.post(url, headers=self._headers(), json=body)
-        except httpx.ConnectError as exc:
-            raise AEPConnectionError(f"Cannot reach AEP server at {self._server_url}: {exc}") from exc
-        return handle_response(resp)
+        for attempt in range(self._retry.max_retries + 1):
+            try:
+                resp = self._http.request(
+                    method, url, headers=self._headers(), params=params, json=json_body
+                )
+            except httpx.TransportError as exc:
+                # Transient transport failures (timeouts, network errors,
+                # server hang-ups) are retried; deterministic local errors
+                # raise immediately.
+                if is_retryable_exception(exc) and attempt < self._retry.max_retries:
+                    time.sleep(compute_retry_delay(attempt, self._retry))
+                    continue
+                raise AEPConnectionError(
+                    f"Cannot reach AEP server at {self._server_url}: {exc}"
+                ) from exc
+            if is_retryable_status(resp.status_code) and attempt < self._retry.max_retries:
+                # RFC 7231 allows Retry-After on any response (typically 429/503).
+                retry_after = parse_retry_after(resp.headers.get("Retry-After", "0"))
+                time.sleep(compute_retry_delay(attempt, self._retry, retry_after=retry_after))
+                continue
+            return handle_response(resp)
+        raise AssertionError("unreachable")  # loop always returns or raises
 
 
