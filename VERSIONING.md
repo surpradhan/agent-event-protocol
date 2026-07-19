@@ -9,9 +9,9 @@ single place that reconciles them.
 | Artifact | Where the number lives | Current | What it versions |
 |---|---|---|---|
 | **Protocol (`specversion`)** | Event envelope (`"specversion": "0.2.0"`), `schemas/` | **0.2.0** | The wire format: envelope fields + the 12 core event types. Changes only when the event shape changes. |
-| **HTTP API** | `/v1` path prefix + `API-Version: 1` response header | **v1** | The REST surface. All API routes are also served unversioned at `/` for backward compatibility; infra endpoints (`/health`, `/ready`, `/metrics/prometheus`, `/admin/*`, `/dashboard`) are unversioned by design. |
+| **HTTP API** | `/v1` path prefix + `API-Version: 1` response header | **v1** | The REST surface. All API routes are also served unversioned at `/` for backward compatibility; app-level endpoints (e.g. `/health`, `/ready`, `/metrics/prometheus`, `/admin/*`, `/dashboard`, `/docs`, `/openapi.json`) are unversioned by design. |
 | **Server package** | Root `package.json` | **1.0.0** | The Node.js ingest server + dashboard + CLI codebase. **Not released anywhere** — there is no npm publish or Docker-registry pipeline for the server; it runs from source (or a locally-built image). The number is a package-manifest formality, not a release claim. |
-| **Python SDK** | `sdks/python/pyproject.toml` | **0.4.x** on PyPI as [`agent-event-protocol`](https://pypi.org/project/agent-event-protocol/) | The active, carry-forward SDK. |
+| **Python SDK** | `sdks/python/pyproject.toml` | latest on PyPI as [`agent-event-protocol`](https://pypi.org/project/agent-event-protocol/) (0.4.x at time of writing) | The active, carry-forward SDK — the registry is the authority; this cell is not updated per release. |
 | **Node SDK** | `sdks/node/package.json` | **0.4.0** on npm as [`@surpradhan/aep`](https://www.npmjs.com/package/@surpradhan/aep) | Frozen (maintenance mode) per the project direction note in the [README](README.md). |
 | **Go SDK** | git tag | **`sdks/go/v0.3.0`** (`go get github.com/surpradhan/agent-event-protocol/sdks/go`) | Frozen (maintenance mode). Nothing is "published" for Go beyond the tag — the module proxy serves the repo. |
 | **Audit bundle** | `aep_audit_version` field | **0.1.0** | The signed audit-bundle document format produced by `aep audit export` and the audit-bundle endpoints. |
@@ -28,8 +28,10 @@ is installable.
 - The **server's 1.0.0** predates this policy and overstates maturity relative
   to its unreleased status; treat `specversion` and the API version as the
   meaningful compatibility signals, not the server package number.
-- **SDK versions** move independently per language, released via tag-triggered,
-  human-approved workflows (`.github/workflows/release-{python,node,go}-sdk.yml`).
+- **SDK versions** move independently per language, released via tag-triggered
+  workflows (`.github/workflows/release-{python,node,go}-sdk.yml`) — with a
+  human-approved publish gate for Python and Node, and verification-only for
+  Go, where the tag itself is the release (see Release mechanics below).
 
 ## Release mechanics
 
