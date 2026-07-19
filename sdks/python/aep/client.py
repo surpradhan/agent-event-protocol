@@ -28,9 +28,9 @@ class AEPClient:
         with AEPClient(api_key="aep_...") as client:
             result = client.emit(event)
 
-    Transient failures — connection/timeout errors, HTTP 429 (honouring
-    ``Retry-After``) and HTTP 5xx — are retried up to ``max_retries`` times
-    with full-jitter exponential backoff. Retrying ``POST /events`` is safe:
+    Transient failures — connection/timeout errors, HTTP 429 and HTTP 5xx
+    (honouring ``Retry-After`` on any retryable status) — are retried up to
+    ``max_retries`` times with full-jitter exponential backoff. Retrying ``POST /events`` is safe:
     events carry a client-generated ``id`` and the server deduplicates on it.
     Set ``max_retries=0`` to disable retries.
     """
