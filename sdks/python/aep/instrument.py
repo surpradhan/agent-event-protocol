@@ -652,6 +652,47 @@ class _EmissionCore:
             },
         )
 
+    # -- policy decisions ------------------------------------------------------
+
+    def emit_policy_blocked(
+        self,
+        key: Any,
+        *,
+        policy: str,
+        reason: str | None = None,
+        action_blocked: str | None = None,
+        framework: str | None = None,
+    ) -> str | None:
+        """Emit a ``policy.blocked`` decision on a tracked run's session.
+
+        The event chains off the run's opening event via ``causation_id``, so
+        the decision is joined to the operation it gated. The payload keeps the
+        protocol's shipped shape (``policy`` / ``reason`` / ``action_blocked``)
+        plus an optional ``framework`` marker. An unknown ``key`` (e.g. an
+        evicted run) is dropped with no event — a lost decision label, never an
+        exception into the host. Returns the event id, or None.
+        """
+        info = self.get(key)
+        if info is None:
+            return None
+        payload = {
+            "policy": policy,
+            **({"reason": reason} if reason else {}),
+            **({"action_blocked": action_blocked} if action_blocked else {}),
+            **({"framework": framework} if framework else {}),
+        }
+        return self._emit(
+            source=info.source,
+            type="policy.blocked",
+            session_id=info.session_id,
+            trace_id=info.trace_id,
+            agent_role=info.agent_role,
+            parent_session_id=info.parent_session_id,
+            subject=policy,
+            causation_id=info.open_event_id or None,
+            payload=payload,
+        )
+
 
 # ── LangChain callback handler (LangGraph transport) ────────────────────────
 
@@ -1422,6 +1463,9 @@ class AEPOpenAIAgentsTracer:
       on the handed-to agent's ``task.created`` payload as ``handoff_from``;
     - every **function** span is a tool run, paired exactly by its ``span_id``
       (one span carries both start and end — no LIFO heuristics);
+    - a **guardrail** span that ends *triggered* emits a ``policy.blocked`` on
+      its owning agent's session (untripped guardrails emit nothing — the
+      protocol has no "evaluated and passed" event type);
     - a tool/agent's parent is resolved by walking ``parent_id`` to the nearest
       open agent span, falling back to the always-open workflow root — so a tool
       nests on its owning agent's session and the whole run stays one trace. This
@@ -1532,10 +1576,11 @@ class AEPOpenAIAgentsTracer:
             data = getattr(span, "span_data", None)
             if getattr(data, "type", None) == "agent":
                 self._open_agent(span, data)
-            # function/handoff spans carry their input/output/to_agent only at
-            # end, so they're mapped in on_span_end; other span types (turn,
-            # generation, response, custom, guardrail) are not AEP boundaries —
-            # their parent_id is still recorded above so the walk can pass through.
+            # function/handoff/guardrail spans carry their input/output/to_agent/
+            # triggered state only at end, so they're mapped in on_span_end; other
+            # span types (turn, generation, response, custom) are not AEP
+            # boundaries — their parent_id is still recorded above so the walk
+            # can pass through.
         except Exception as e:  # pragma: no cover - defensive
             logger.warning("AEP: OpenAI Agents on_span_start error: %s", e)
 
@@ -1549,6 +1594,8 @@ class AEPOpenAIAgentsTracer:
                 self._tool(span, data)
             elif kind == "handoff":
                 self._record_handoff(span, data)
+            elif kind == "guardrail":
+                self._guardrail(span, data)
         except Exception as e:  # pragma: no cover - defensive
             logger.warning("AEP: OpenAI Agents on_span_end error: %s", e)
         finally:
@@ -1683,6 +1730,32 @@ class AEPOpenAIAgentsTracer:
             self._core.fail_tool_run(sid, error=error)
         else:
             self._core.close_tool_run(sid, output=getattr(data, "output", None))
+
+    def _guardrail(self, span: Any, data: Any) -> None:
+        """Emit a ``policy.blocked`` for a guardrail span that ended *tripped*.
+
+        Only triggered guardrails produce an event — the protocol has no
+        "policy evaluated and passed" type, and blocked-only is AEP's shipped
+        semantic. The decision lands on the owning agent's session (workflow
+        root when no agent ancestor — input guardrails can run before the
+        agent span opens), chained off that run's opening event. Untripped
+        guardrail spans emit nothing; their parent linkage was already
+        recorded on start so the walk still passes through them.
+        """
+        if not getattr(data, "triggered", False):
+            return
+        name = getattr(data, "name", None) or "guardrail"
+        self._warn_if_orphan(getattr(span, "trace_id", None))
+        owner_key = self._resolve_parent(span)
+        owner = self._core.get(owner_key)
+        action = f"{owner.kind}/{owner.name}" if owner is not None else None
+        self._core.emit_policy_blocked(
+            owner_key,
+            policy=name,
+            reason=f"Guardrail '{name}' tripwire triggered",
+            action_blocked=action,
+            framework="openai-agents",
+        )
 
     def _record_handoff(self, span: Any, data: Any) -> None:
         trace_id = getattr(span, "trace_id", None)
