@@ -668,13 +668,18 @@ class _EmissionCore:
         The event chains off the run's opening event via ``causation_id``, so
         the decision is joined to the operation it gated. The payload keeps the
         protocol's shipped shape (``policy`` / ``reason`` / ``action_blocked``)
-        plus an optional ``framework`` marker. An unknown ``key`` (e.g. an
-        evicted run) is dropped with no event — a lost decision label, never an
-        exception into the host. Returns the event id, or None.
+        plus an optional ``framework`` marker. When ``action_blocked`` is None
+        it defaults to the gated run's own identity (``<kind>/<name>``) — the
+        single lookup here keeps that derivation atomic with the emission. An
+        unknown ``key`` (e.g. an evicted run) is dropped with no event — a lost
+        decision label, never an exception into the host. Returns the event id,
+        or None.
         """
         info = self.get(key)
         if info is None:
             return None
+        if action_blocked is None:
+            action_blocked = f"{info.kind}/{info.name}"
         payload = {
             "policy": policy,
             **({"reason": reason} if reason else {}),
@@ -1747,13 +1752,12 @@ class AEPOpenAIAgentsTracer:
         name = getattr(data, "name", None) or "guardrail"
         self._warn_if_orphan(getattr(span, "trace_id", None))
         owner_key = self._resolve_parent(span)
-        owner = self._core.get(owner_key)
-        action = f"{owner.kind}/{owner.name}" if owner is not None else None
+        # action_blocked defaults inside the core to the owner run's
+        # "<kind>/<name>" — one atomic lookup, no read-then-emit race.
         self._core.emit_policy_blocked(
             owner_key,
             policy=name,
             reason=f"Guardrail '{name}' tripwire triggered",
-            action_blocked=action,
             framework="openai-agents",
         )
 

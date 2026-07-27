@@ -680,6 +680,45 @@ def test_triggered_guardrail_without_name_falls_back():
     assert blocked[0]["payload"]["policy"] == "guardrail"
 
 
+def test_triggered_guardrail_with_no_tracked_trace_drops_silently():
+    # The documented silent-drop path: a guardrail span for a trace that never
+    # got on_trace_start. The parent-walk falls to an untracked trace_id, the
+    # core resolves no run, and the decision is dropped — no event, no raise.
+    guard = _span(
+        "g1", None, _guardrail_data("input_check", triggered=True),
+        trace_id="trc_never_started",
+    )
+    rec, _ = _play([
+        ("on_span_start", guard),
+        ("on_span_end", guard),
+    ])
+    assert rec.events == []
+
+
+def test_triggered_guardrail_after_agent_closed_falls_back_to_root():
+    # A tripwire whose span ends after its owning agent already closed (a real
+    # ordering the exception path can produce): the agent is gone from
+    # _open_agents, so the walk falls to the still-open workflow root.
+    agent = _span("a1", "task", _agent_data("triage"))
+    guard = _span("g1", "a1", _guardrail_data("pii_filter", triggered=True))
+    rec, _ = _play([
+        ("on_trace_start", _trace(name="wf")),
+        ("on_span_start", agent),
+        ("on_span_start", guard),
+        ("on_span_end", agent),   # agent closes first
+        ("on_span_end", guard),   # tripwire lands afterwards
+        ("on_trace_end", _trace(name="wf")),
+    ])
+    blocked = [e for e in rec.events if e["type"] == "policy.blocked"]
+    assert len(blocked) == 1
+    root_created = rec.events[0]
+    assert root_created["type"] == "task.created"
+    assert blocked[0]["session_id"] == root_created["session_id"]
+    assert blocked[0]["agent_role"] == "orchestrator"
+    assert blocked[0]["payload"]["action_blocked"] == "workflow/wf"
+    assert _no_dangling(rec.events) == []
+
+
 def test_guardrail_span_stays_walkthrough_for_children():
     # A (non-triggered) guardrail span between an agent and a tool must not
     # break the parent-walk: the tool still lands on the agent's session.
