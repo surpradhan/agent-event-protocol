@@ -24,7 +24,6 @@ import pytest
 
 from aep.instrument import AEPOpenAIAgentsTracer
 
-
 # ── Fakes ────────────────────────────────────────────────────────────────────
 
 
@@ -572,6 +571,179 @@ def test_force_flush_and_shutdown_do_not_raise():
     tracer.on_trace_end(_trace())
     tracer.force_flush()
     tracer.shutdown()  # drains + stops the worker
+
+
+# ── Guardrails (policy.blocked) ──────────────────────────────────────────────
+
+
+def _guardrail_data(name="pii_filter", triggered=False):
+    return SimpleNamespace(type="guardrail", name=name, triggered=triggered)
+
+
+def test_triggered_guardrail_emits_policy_blocked_on_owning_agent():
+    guard = _span("g1", "a1-turn", _guardrail_data("pii_filter", triggered=True))
+    agent_steps, _ = _agent_with_steps(
+        "a1", "triage", [("on_span_start", guard), ("on_span_end", guard)]
+    )
+    rec, _ = _play([
+        ("on_trace_start", _trace(name="wf")),
+        *agent_steps,
+        ("on_trace_end", _trace(name="wf")),
+    ])
+    blocked = [e for e in rec.events if e["type"] == "policy.blocked"]
+    assert len(blocked) == 1
+    evt = blocked[0]
+    agent_created = next(
+        e for e in rec.events
+        if e["type"] == "task.created" and e["payload"].get("node") == "triage"
+    )
+    # The decision lands on the owning agent's session and chains off its
+    # task.created, joining the block to the run it gated.
+    assert evt["session_id"] == agent_created["session_id"]
+    assert evt["trace_id"] == agent_created["trace_id"]
+    assert evt["causation_id"] == agent_created["id"]
+    assert evt["source"] == "agent://triage"
+    assert evt["agent_role"] == "subagent"
+    assert evt["subject"] == "pii_filter"
+    assert evt["payload"]["policy"] == "pii_filter"
+    assert evt["payload"]["action_blocked"] == "agent/triage"
+    assert evt["payload"]["framework"] == "openai-agents"
+    assert "pii_filter" in evt["payload"]["reason"]
+    assert _no_dangling(rec.events) == []
+
+
+def test_untriggered_guardrail_emits_nothing():
+    guard = _span("g1", "a1-turn", _guardrail_data("pii_filter", triggered=False))
+    agent_steps, _ = _agent_with_steps(
+        "a1", "triage", [("on_span_start", guard), ("on_span_end", guard)]
+    )
+    rec, _ = _play([
+        ("on_trace_start", _trace()),
+        *agent_steps,
+        ("on_trace_end", _trace()),
+    ])
+    assert [e for e in rec.events if e["type"] == "policy.blocked"] == []
+
+
+def test_guardrail_data_without_triggered_attr_emits_nothing():
+    # Defensive: a guardrail span whose data lacks ``triggered`` entirely.
+    data = SimpleNamespace(type="guardrail", name="pii_filter")
+    guard = _span("g1", "a1-turn", data)
+    agent_steps, _ = _agent_with_steps(
+        "a1", "triage", [("on_span_start", guard), ("on_span_end", guard)]
+    )
+    rec, _ = _play([
+        ("on_trace_start", _trace()),
+        *agent_steps,
+        ("on_trace_end", _trace()),
+    ])
+    assert [e for e in rec.events if e["type"] == "policy.blocked"] == []
+
+
+def test_triggered_guardrail_without_agent_ancestor_lands_on_workflow_root():
+    # Input guardrails can run before any agent span opens; the decision then
+    # belongs to the workflow root session.
+    task = _span("task", None, _task_data())
+    guard = _span("g1", "task", _guardrail_data("input_check", triggered=True))
+    rec, _ = _play([
+        ("on_trace_start", _trace(name="wf")),
+        ("on_span_start", task),
+        ("on_span_start", guard),
+        ("on_span_end", guard),
+        ("on_span_end", task),
+        ("on_trace_end", _trace(name="wf")),
+    ])
+    blocked = [e for e in rec.events if e["type"] == "policy.blocked"]
+    assert len(blocked) == 1
+    root_created = rec.events[0]
+    assert root_created["type"] == "task.created"
+    assert blocked[0]["session_id"] == root_created["session_id"]
+    assert blocked[0]["agent_role"] == "orchestrator"
+    assert blocked[0]["causation_id"] == root_created["id"]
+    assert blocked[0]["payload"]["action_blocked"] == "workflow/wf"
+    assert _no_dangling(rec.events) == []
+
+
+def test_triggered_guardrail_without_name_falls_back():
+    data = SimpleNamespace(type="guardrail", name=None, triggered=True)
+    guard = _span("g1", "a1-turn", data)
+    agent_steps, _ = _agent_with_steps(
+        "a1", "triage", [("on_span_start", guard), ("on_span_end", guard)]
+    )
+    rec, _ = _play([
+        ("on_trace_start", _trace()),
+        *agent_steps,
+        ("on_trace_end", _trace()),
+    ])
+    blocked = [e for e in rec.events if e["type"] == "policy.blocked"]
+    assert len(blocked) == 1
+    assert blocked[0]["payload"]["policy"] == "guardrail"
+
+
+def test_triggered_guardrail_with_no_tracked_trace_drops_silently():
+    # The documented silent-drop path: a guardrail span for a trace that never
+    # got on_trace_start. The parent-walk falls to an untracked trace_id, the
+    # core resolves no run, and the decision is dropped — no event, no raise.
+    guard = _span(
+        "g1", None, _guardrail_data("input_check", triggered=True),
+        trace_id="trc_never_started",
+    )
+    rec, _ = _play([
+        ("on_span_start", guard),
+        ("on_span_end", guard),
+    ])
+    assert rec.events == []
+
+
+def test_triggered_guardrail_after_agent_closed_falls_back_to_root():
+    # A tripwire whose span ends after its owning agent already closed (a real
+    # ordering the exception path can produce): the agent is gone from
+    # _open_agents, so the walk falls to the still-open workflow root.
+    agent = _span("a1", "task", _agent_data("triage"))
+    guard = _span("g1", "a1", _guardrail_data("pii_filter", triggered=True))
+    rec, _ = _play([
+        ("on_trace_start", _trace(name="wf")),
+        ("on_span_start", agent),
+        ("on_span_start", guard),
+        ("on_span_end", agent),   # agent closes first
+        ("on_span_end", guard),   # tripwire lands afterwards
+        ("on_trace_end", _trace(name="wf")),
+    ])
+    blocked = [e for e in rec.events if e["type"] == "policy.blocked"]
+    assert len(blocked) == 1
+    root_created = rec.events[0]
+    assert root_created["type"] == "task.created"
+    assert blocked[0]["session_id"] == root_created["session_id"]
+    assert blocked[0]["agent_role"] == "orchestrator"
+    assert blocked[0]["payload"]["action_blocked"] == "workflow/wf"
+    assert _no_dangling(rec.events) == []
+
+
+def test_guardrail_span_stays_walkthrough_for_children():
+    # A (non-triggered) guardrail span between an agent and a tool must not
+    # break the parent-walk: the tool still lands on the agent's session.
+    guard = _span("g1", "a1-turn", _guardrail_data(triggered=False))
+    fn = _span("f1", "g1", _fn_data("search", input='{"q": "x"}', output="ok"))
+    agent_steps, _ = _agent_with_steps(
+        "a1", "triage",
+        [
+            ("on_span_start", guard),
+            ("on_span_start", fn),
+            ("on_span_end", fn),
+            ("on_span_end", guard),
+        ],
+    )
+    rec, _ = _play([
+        ("on_trace_start", _trace()),
+        *agent_steps,
+        ("on_trace_end", _trace()),
+    ])
+    agent_created = next(
+        e for e in rec.events
+        if e["type"] == "task.created" and e["payload"].get("node") == "triage"
+    )
+    tool_called = next(e for e in rec.events if e["type"] == "tool.called")
+    assert tool_called["session_id"] == agent_created["session_id"]
 
 
 # ── Real processor registration (only when openai-agents is installed) ───────

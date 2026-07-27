@@ -4,6 +4,25 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Python SDK (unreleased, 1/3 toward 0.6.0) — auto-capture OpenAI Agents guardrail tripwires — 2026-07-27
+
+`aep.instrument("openai-agents")` now emits a `policy.blocked` event when an
+OpenAI Agents SDK guardrail span ends with its tripwire triggered — no
+application code required. The event lands on the owning agent's session
+(workflow root when the guardrail runs before any agent span), chains off that
+run's opening event via `causation_id`, and carries the protocol's shipped
+payload shape: `policy` (guardrail name), `reason`, `action_blocked`
+(`agent/<name>` or `workflow/<name>`), plus `framework: "openai-agents"`.
+Untriggered guardrail spans emit nothing (the protocol has no
+"evaluated-and-passed" event type); their parent linkage is still recorded so
+tool/agent parenting is unaffected. First of three: CrewAI and Claude Agent SDK
+guardrail capture follow in the 0.6.0 release.
+
+- New framework-agnostic `_EmissionCore.emit_policy_blocked(...)` — CrewAI and
+  Claude Agent transports will drive the same operation.
+
+---
+
 ## Python SDK 0.5.0 — retry transient failures with full-jitter backoff — 2026-07-19
 
 `AEPClient` and `AsyncAEPClient` now retry transient failures automatically:
