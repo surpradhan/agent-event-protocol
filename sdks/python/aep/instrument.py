@@ -946,8 +946,10 @@ class AEPCrewListener:
             (ToolUsageErrorEvent, self._on_tool_error),
         ]
 
-        # Guardrail events shipped after the crewai>=1.0 floor — subscribe when
-        # present, so their absence on an older CrewAI never disables the rest.
+        # Guardrail events are present at the crewai>=1.0 floor, but imported
+        # separately and defensively: on an out-of-floor install where
+        # crewai.events exists without llm_guardrail_events, their absence
+        # never disables the rest of the instrumentation.
         try:
             from crewai.events.types.llm_guardrail_events import (
                 LLMGuardrailCompletedEvent,
@@ -1111,7 +1113,10 @@ class AEPCrewListener:
         validations emit nothing (blocked-only is AEP's semantic). The decision
         keys to the guarded task's run, falling back to the innermost open
         crew; with neither tracked it is dropped (never an exception into the
-        host — the core drops unknown keys).
+        host — the core drops unknown keys). In practice only agent-level /
+        lite-agent guardrails take the crew fallback: task guardrails always
+        carry a resolvable ``task_id`` (crewai passes ``from_task`` at every
+        task call site, and the event base derives ``task_id`` from it).
         """
         if getattr(event, "success", True):
             return
