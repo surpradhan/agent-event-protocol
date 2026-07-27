@@ -118,8 +118,11 @@ describe("CLI command integration tests (real subprocess)", () => {
     const childEnv = { ...baseEnv, AEP_SERVER: mockServerUrl, ...env };
     if (withKey) childEnv.AEP_API_KEY = mockApiKey;
     return new Promise((resolve) => {
-      execFile(process.execPath, [CLI_PATH, ...args], { cwd: REPO_ROOT, env: childEnv },
+      execFile(process.execPath, [CLI_PATH, ...args],
+        { cwd: REPO_ROOT, env: childEnv, timeout: 15000 },
         (error, stdout, stderr) => {
+          // A timeout kills the child (error.killed, code null); coercing to a
+          // non-zero exit makes a hung CLI fail fast instead of hanging the suite.
           resolve({ code: error ? (error.code ?? 1) : 0, stdout, stderr });
         });
     });
@@ -172,13 +175,33 @@ describe("CLI command integration tests (real subprocess)", () => {
     assert.match(stdout + stderr, /rejected by mock|Rejected/i);
   });
 
+  test("emit --json prints the raw body and still exits non-zero on rejection", async () => {
+    // Distinct exit path from the case above: with --json the CLI echoes the
+    // raw server response and then process.exit(1)s on a non-2xx status.
+    const sessionId = `reject_json_${Date.now()}`;
+    const { code, stdout } = await runCli([
+      "emit",
+      "--type", "task.created",
+      "--source", "agent://test",
+      "--session", sessionId,
+      "--trace", "trc_reject_json_001",
+      "--json",
+    ]);
+
+    assert.notEqual(code, 0, "--json must preserve the failure exit code on a non-2xx response");
+    const parsed = JSON.parse(stdout);
+    assert.equal(parsed.error, "rejected by mock");
+  });
+
   test("session drives a GET /sessions/:id/events with Bearer auth", async () => {
     const sessionId = `ses_query_${Date.now()}`;
     const { code, stdout } = await runCli(["session", sessionId, "--json"]);
 
     assert.equal(code, 0, `expected success exit, got ${code}`);
+    // The CLI interpolates the session id UNENCODED (src/cli.js) — assert the
+    // raw path to mirror real behaviour. (workflow, below, DOES encode.)
     const req = received.find(r => r.method === "GET"
-      && r.url === `/sessions/${encodeURIComponent(sessionId)}/events`);
+      && r.url === `/sessions/${sessionId}/events`);
     assert.ok(req, "mock server never received the session GET");
     assert.equal(req.headers.authorization, `Bearer ${mockApiKey}`);
 
@@ -192,11 +215,12 @@ describe("CLI command integration tests (real subprocess)", () => {
     const { code, stdout } = await runCli(["workflow", traceId]);
 
     assert.equal(code, 0, `expected success exit, got ${code}`);
+    // workflow encodes the trace id (src/cli.js), unlike session above.
     const req = received.find(r => r.method === "GET"
       && r.url === `/workflows/${encodeURIComponent(traceId)}`);
     assert.ok(req, "mock server never received the workflow GET");
     assert.equal(req.headers.authorization, `Bearer ${mockApiKey}`);
-    assert.match(stdout, new RegExp(traceId));
+    assert.ok(stdout.includes(traceId), "workflow output should echo the trace id");
   });
 
   test("commands with no API key exit non-zero and never contact the server", async () => {
