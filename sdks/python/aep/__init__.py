@@ -37,7 +37,7 @@ from aep.instrument import flush, instrument, uninstrument
 __version__ = "0.5.0"
 
 __all__ = [
-    "AgentRole",
+    "CORE_EVENT_TYPES",
     "AEPAuthError",
     "AEPClient",
     "AEPConnectionError",
@@ -46,8 +46,8 @@ __all__ = [
     "AEPRateLimitError",
     "AEPServerError",
     "AEPValidationError",
+    "AgentRole",
     "AsyncAEPClient",
-    "CORE_EVENT_TYPES",
     "EventType",
     "canonicalize_v2",
     "create_event",

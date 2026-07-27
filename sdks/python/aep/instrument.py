@@ -65,7 +65,7 @@ import threading
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from aep.client import AEPClient
@@ -160,11 +160,11 @@ def _claude_agent_version() -> str:
 
 
 # Module-level registry of framework instrumentors, populated at import time.
-_INSTRUMENTORS: dict[str, "FrameworkInstrumentor"] = {}
+_INSTRUMENTORS: dict[str, FrameworkInstrumentor] = {}
 
 # The client used by all active instrumentation. Set by instrument().
 _state_lock = threading.Lock()
-_active_client: Optional["AEPClient"] = None
+_active_client: AEPClient | None = None
 _owns_client = False
 
 
@@ -183,7 +183,7 @@ class _Emitter:
 
     def __init__(self, client: Any, max_queue: int = DEFAULT_QUEUE_SIZE) -> None:
         self._client = client
-        self._q: "queue.Queue[dict]" = queue.Queue(maxsize=max_queue)
+        self._q: queue.Queue[dict] = queue.Queue(maxsize=max_queue)
         self._dropped = 0
         self._stop = threading.Event()
         self._worker = threading.Thread(
@@ -307,14 +307,14 @@ class _RunInfo:
     # Event id of this run's opening event (task.created or tool.called); used as
     # the causation_id for the run's children and its own closing event.
     open_event_id: str
-    agent_role: Optional[str] = None
-    parent_session_id: Optional[str] = None
+    agent_role: str | None = None
+    parent_session_id: str | None = None
     # For sub-agent runs: the handoff.started event id on the parent session, so
     # the matching handoff.completed can chain off it.
-    handoff_event_id: Optional[str] = None
+    handoff_event_id: str | None = None
     # For sub-agent runs: the parent (orchestrator) role, so handoff.completed —
     # which is emitted on the parent session — reads the parent's role.
-    parent_agent_role: Optional[str] = None
+    parent_agent_role: str | None = None
 
 
 # ── Transport-neutral emission core ─────────────────────────────────────────
@@ -343,7 +343,7 @@ class _EmissionCore:
     def __init__(self, client: Any, max_runs: int = DEFAULT_MAX_RUNS) -> None:
         self._emitter = _Emitter(client)
         self._lock = threading.Lock()
-        self._runs: "OrderedDict[str, _RunInfo]" = OrderedDict()
+        self._runs: OrderedDict[str, _RunInfo] = OrderedDict()
         self._max_runs = max_runs
         self._evicted = 0
 
@@ -359,7 +359,7 @@ class _EmissionCore:
 
     # -- emission -------------------------------------------------------------
 
-    def _emit(self, **kwargs: Any) -> Optional[str]:
+    def _emit(self, **kwargs: Any) -> str | None:
         """Build an event and hand it to the background emitter.
 
         The id is generated synchronously so callers can chain ``causation_id``
@@ -379,7 +379,7 @@ class _EmissionCore:
 
     # -- run table ------------------------------------------------------------
 
-    def get(self, key: Any) -> Optional[_RunInfo]:
+    def get(self, key: Any) -> _RunInfo | None:
         with self._lock:
             return self._runs.get(str(key))
 
@@ -401,7 +401,7 @@ class _EmissionCore:
                         self._evicted,
                     )
 
-    def _pop(self, key: Any) -> Optional[_RunInfo]:
+    def _pop(self, key: Any) -> _RunInfo | None:
         with self._lock:
             return self._runs.pop(str(key), None)
 
@@ -415,8 +415,8 @@ class _EmissionCore:
         framework: str,
         kind: str,
         parent_key: Any = None,
-        extra_payload: Optional[dict] = None,
-    ) -> Optional[str]:
+        extra_payload: dict | None = None,
+    ) -> str | None:
         """Open an agent/task run, returning its ``task.created`` event id.
 
         With no tracked parent the run is the **orchestrator** root (new
@@ -565,7 +565,7 @@ class _EmissionCore:
         name: str,
         arguments: Any,
         parent_key: Any = None,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Open a tool run (``tool.called``), inheriting its parent's session.
 
         A tool invoked outside any tracked run becomes a standalone pair on a
@@ -680,7 +680,7 @@ def _build_callback_base():
         # We never raise out of a callback — partial telemetry beats a crashed app.
         raise_error = False
 
-        def __init__(self, client: "AEPClient", max_runs: int = DEFAULT_MAX_RUNS) -> None:
+        def __init__(self, client: AEPClient, max_runs: int = DEFAULT_MAX_RUNS) -> None:
             self._core = _EmissionCore(client, max_runs=max_runs)
 
         # -- lifecycle / introspection ---------------------------------------
@@ -705,13 +705,13 @@ def _build_callback_base():
 
         def on_chain_start(
             self,
-            serialized: Optional[dict],
+            serialized: dict | None,
             inputs: Any,
             *,
             run_id: Any,
             parent_run_id: Any = None,
-            tags: Optional[list] = None,
-            metadata: Optional[dict] = None,
+            tags: list | None = None,
+            metadata: dict | None = None,
             **kwargs: Any,
         ) -> None:
             meta = metadata or {}
@@ -750,14 +750,14 @@ def _build_callback_base():
 
         def on_tool_start(
             self,
-            serialized: Optional[dict],
+            serialized: dict | None,
             input_str: str,
             *,
             run_id: Any,
             parent_run_id: Any = None,
-            tags: Optional[list] = None,
-            metadata: Optional[dict] = None,
-            inputs: Optional[dict] = None,
+            tags: list | None = None,
+            metadata: dict | None = None,
+            inputs: dict | None = None,
             **kwargs: Any,
         ) -> None:
             parent_key = str(parent_run_id) if parent_run_id is not None else None
@@ -1062,7 +1062,7 @@ class AEPCrewListener:
                     )
         return run_key
 
-    def _pop_tool_run(self, event: Any) -> Optional[str]:
+    def _pop_tool_run(self, event: Any) -> str | None:
         """Return the run key the closing ``event`` should close, or None.
 
         Prefers the most-recent open tool whose scope matches the closing event.
@@ -1088,11 +1088,11 @@ class AEPCrewListener:
 
     # -- field extraction (defensive against CrewAI version drift) -----------
 
-    def _current_crew(self) -> Optional[str]:
+    def _current_crew(self) -> str | None:
         with self._lock:
             return self._crew_stack[-1] if self._crew_stack else None
 
-    def _tool_scope(self, event: Any) -> tuple[Any, Optional[str]]:
+    def _tool_scope(self, event: Any) -> tuple[Any, str | None]:
         """Resolve the session a tool event belongs to.
 
         Returns ``(scope_token, parent_key)``: the scope token keys the tool run
@@ -1121,7 +1121,7 @@ class AEPCrewListener:
         return "orphan", None
 
     @staticmethod
-    def _task_id(event: Any, task: Any) -> Optional[str]:
+    def _task_id(event: Any, task: Any) -> str | None:
         tid = getattr(event, "task_id", None)
         if tid:
             return str(tid)
@@ -1132,7 +1132,7 @@ class AEPCrewListener:
         return None
 
     @staticmethod
-    def _agent_role(agent: Any) -> Optional[str]:
+    def _agent_role(agent: Any) -> str | None:
         if agent is None:
             return None
         role = getattr(agent, "role", None)
@@ -1190,7 +1190,7 @@ class _AutoGenRunContext:
     mutable state or collide on the (global) run table.
     """
 
-    def __init__(self, core: _EmissionCore, token: str, team_name: Optional[str]) -> None:
+    def __init__(self, core: _EmissionCore, token: str, team_name: str | None) -> None:
         self._core = core
         self._token = token
         self._team_name = team_name or "team"
@@ -1452,13 +1452,13 @@ class AEPOpenAIAgentsTracer:
         self._core = _EmissionCore(client, max_runs=max_runs)
         self._lock = threading.Lock()
         # span_id -> parent_id, for every span (used to walk to the owning agent).
-        self._parent_of: "OrderedDict[str, Optional[str]]" = OrderedDict()
+        self._parent_of: OrderedDict[str, str | None] = OrderedDict()
         # span_id -> trace_id for agent runs currently open (the run key is the
         # span_id). Keyed this way so on_trace_end can close any stragglers that
         # never received their own on_span_end. Bounded (FIFO) like the other
         # indices: under pathological accumulation the oldest open agent is
         # dropped (its children then resolve to the workflow root).
-        self._open_agents: "OrderedDict[str, Any]" = OrderedDict()
+        self._open_agents: OrderedDict[str, Any] = OrderedDict()
         # trace_ids with a tracked (open) workflow root, so a span arriving without
         # a preceding on_trace_start can be detected rather than silently splitting
         # the run into orphan traces.
@@ -1466,7 +1466,7 @@ class AEPOpenAIAgentsTracer:
         self._warned_orphan = False
         # (trace_id, to_agent) -> from_agent, recorded when a handoff span ends and
         # consumed when the handed-to agent span opens (to enrich its payload).
-        self._pending_handoff: "OrderedDict[tuple, Optional[str]]" = OrderedDict()
+        self._pending_handoff: OrderedDict[tuple, str | None] = OrderedDict()
         self._max_spans = max_spans
         self._span_evicted = 0
         self._handoff_evicted = 0
@@ -1582,7 +1582,7 @@ class AEPOpenAIAgentsTracer:
                         self._span_evicted,
                     )
 
-    def _forget_span(self, sid: Optional[str]) -> None:
+    def _forget_span(self, sid: str | None) -> None:
         if not sid:
             return
         with self._lock:
@@ -1704,7 +1704,7 @@ class AEPOpenAIAgentsTracer:
                         "y" if self._handoff_evicted == 1 else "ies",
                     )
 
-    def _status(self, span: Any) -> tuple[str, Optional[str]]:
+    def _status(self, span: Any) -> tuple[str, str | None]:
         """Map a span's ``error`` onto an AEP terminal status.
 
         Returns ``("failed", message)`` when the SDK recorded a span error, else
@@ -1762,10 +1762,10 @@ class AEPClaudeAgentTracer:
         self._core = _EmissionCore(client, max_runs=max_runs)
         self._lock = threading.Lock()
         # session_id -> True for top-level runs currently open.
-        self._roots: "OrderedDict[str, bool]" = OrderedDict()
+        self._roots: OrderedDict[str, bool] = OrderedDict()
         # (session_id, agent_id) for sub-agent runs currently open — used to
         # resolve a tool's owning agent (sub-agent vs the root).
-        self._open_subagents: "OrderedDict[tuple, bool]" = OrderedDict()
+        self._open_subagents: OrderedDict[tuple, bool] = OrderedDict()
         self._max_runs = max_runs
 
     @property
@@ -2147,7 +2147,6 @@ class AutoGenInstrumentor(FrameworkInstrumentor):
         # degrades to a clean no-op.
         try:
             import autogen_agentchat  # noqa: F401
-
             from autogen_agentchat.teams._group_chat._base_group_chat import (  # noqa: F401
                 BaseGroupChat,
             )
@@ -2623,7 +2622,7 @@ def instrument(
     server_url: str | None = None,
     api_key: str | None = None,
     *,
-    client: "AEPClient | None" = None,
+    client: AEPClient | None = None,
     frameworks: list[str] | None = None,
 ) -> bool:
     """Enable AEP auto-instrumentation for supported agent frameworks.

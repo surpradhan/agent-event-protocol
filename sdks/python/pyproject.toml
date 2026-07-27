@@ -60,6 +60,8 @@ dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
     "respx>=0.21",
+    # Pin the linter so local `ruff check` matches CI exactly (see ci.yml).
+    "ruff==0.16.0",
 ]
 langgraph = [
     "langgraph>=0.1.0",
@@ -114,6 +116,20 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.ruff.lint]
-# AEP field names (type, id, format) intentionally match Python builtins to
-# mirror the JS SDK and JSON schema property names. Suppress A002 globally.
-ignore = ["A002"]
+ignore = [
+    # AEP field names (type, id, format) intentionally match Python builtins to
+    # mirror the JS SDK and JSON schema property names.
+    "A002",
+    # Instrumentation must never let a telemetry failure crash the host agent:
+    # the broad `except Exception` catches are deliberate and each logs an
+    # "AEP: …" warning. Narrowing them risks propagating errors into user code.
+    "BLE001",
+    # try/except/pass is the intended best-effort pattern for teardown/detection
+    # that must not raise (socket close, atexit/bus-handler unregister, optional
+    # capability probes). Failures there are non-actionable.
+    "S110",
+    # __enter__/__aenter__ already return the concrete client class. Switching to
+    # `Self` would require typing_extensions on the >=3.10 floor (typing.Self is
+    # 3.11+) — not worth a runtime dependency for two context-manager methods.
+    "PYI034",
+]

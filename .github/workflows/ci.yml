@@ -112,11 +112,12 @@ jobs:
 
       - name: Lint the SDK package
         # Pin ruff: an unpinned `pip install ruff` floats the linter version, so a
-        # new release can fail this gate against unchanged code. That happened on
-        # 2026-07-27 when ruff drifted 0.15.22 -> 0.16.0 (117 new findings). Bump
-        # this pin deliberately (and address any new findings) rather than floating.
+        # new release can fail this gate against unchanged code (happened 2026-07-27
+        # when ruff drifted 0.15.22 -> 0.16.0). Keep this in lockstep with the pin
+        # in sdks/python/pyproject.toml's [dev] extra, and bump both deliberately
+        # (addressing any new findings) rather than floating.
         run: |
-          pip install ruff==0.15.22
+          pip install ruff==0.16.0
           ruff check sdks/python/aep
 
       - name: Run Python SDK tests

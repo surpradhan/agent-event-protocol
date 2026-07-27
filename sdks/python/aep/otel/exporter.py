@@ -6,7 +6,8 @@ Implements the OTEL SpanExporter interface to emit AEP events from OTEL spans.
 from __future__ import annotations
 
 import logging
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from opentelemetry.sdk.trace.export import ReadableSpan, SpanExporter, SpanExportResult
 
@@ -98,8 +99,8 @@ class AEPSpanExporter(SpanExporter):
 
             return SpanExportResult.SUCCESS
 
-        except Exception as e:
-            logger.error("Unexpected error exporting spans: %s", e, exc_info=True)
+        except Exception:
+            logger.exception("Unexpected error exporting spans")
             return SpanExportResult.FAILURE
 
     def shutdown(self) -> None:
