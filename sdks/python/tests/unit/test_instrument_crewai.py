@@ -18,7 +18,6 @@ import pytest
 
 from aep.instrument import AEPCrewListener
 
-
 # ── Fakes ────────────────────────────────────────────────────────────────────
 
 
@@ -426,7 +425,169 @@ def test_untracked_task_end_is_ignored():
     assert rec.events == []
 
 
+# ── Guardrails (policy.blocked) ──────────────────────────────────────────────
+
+
+def _guardrail_completed(
+    *,
+    success,
+    error=None,
+    retry_count=None,
+    guardrail_name="pii_check",
+    guardrail_type=None,
+    from_task=None,
+    task_id=None,
+):
+    # Mirrors crewai's LLMGuardrailCompletedEvent field set (success, result,
+    # error, retry_count, guardrail_type/name, from_task; task_id via the base).
+    return SimpleNamespace(
+        success=success,
+        result=None,
+        error=error,
+        retry_count=retry_count,
+        guardrail_name=guardrail_name,
+        guardrail_type=guardrail_type,
+        from_task=from_task,
+        task_id=task_id,
+    )
+
+
+def _crew_with_task(lis, *, tid="t1", role="researcher"):
+    """Open a crew with one tracked task; return (crew, task)."""
+    crew = _crew()
+    lis._on_crew_start(crew, SimpleNamespace(crew=crew, crew_name="research-crew"))
+    task = _task(tid, role=role)
+    lis._on_task_start(task, SimpleNamespace(task=task, task_id=tid))
+    return crew, task
+
+
+def test_failed_guardrail_emits_policy_blocked_on_task_session():
+    lis, rec = _listener()
+    _, task = _crew_with_task(lis)
+    lis._on_guardrail_completed(
+        task,
+        _guardrail_completed(
+            success=False,
+            error="output leaks PII",
+            retry_count=1,
+            from_task=task,
+        ),
+    )
+    assert lis.flush(timeout=5.0)
+
+    blocked = [e for e in rec.events if e["type"] == "policy.blocked"]
+    assert len(blocked) == 1
+    evt = blocked[0]
+    task_created = next(
+        e for e in rec.events
+        if e["type"] == "task.created" and e["agent_role"] == "subagent"
+    )
+    # Decision lands on the guarded task's session, joined via causation.
+    assert evt["session_id"] == task_created["session_id"]
+    assert evt["causation_id"] == task_created["id"]
+    assert evt["subject"] == "pii_check"
+    assert evt["payload"]["policy"] == "pii_check"
+    assert evt["payload"]["reason"] == "output leaks PII"
+    assert evt["payload"]["action_blocked"] == "task/researcher"
+    assert evt["payload"]["framework"] == "crewai"
+    assert evt["payload"]["retry_count"] == 1
+    assert _no_dangling(rec.events) == []
+
+
+def test_successful_guardrail_emits_nothing():
+    lis, rec = _listener()
+    _, task = _crew_with_task(lis)
+    assert lis.flush(timeout=5.0)  # drain the open events before snapshotting
+    before = len(rec.events)
+    lis._on_guardrail_completed(
+        task, _guardrail_completed(success=True, from_task=task)
+    )
+    assert lis.flush(timeout=5.0)
+    assert len(rec.events) == before
+
+
+def test_failed_guardrail_without_task_falls_back_to_crew():
+    lis, rec = _listener()
+    crew = _crew()
+    lis._on_crew_start(crew, SimpleNamespace(crew=crew, crew_name="research-crew"))
+    lis._on_guardrail_completed(
+        crew, _guardrail_completed(success=False, error="bad output")
+    )
+    assert lis.flush(timeout=5.0)
+
+    blocked = [e for e in rec.events if e["type"] == "policy.blocked"]
+    assert len(blocked) == 1
+    root = rec.events[0]
+    assert blocked[0]["session_id"] == root["session_id"]
+    assert blocked[0]["agent_role"] == "orchestrator"
+    assert blocked[0]["payload"]["action_blocked"] == "crew/research-crew"
+
+
+def test_failed_guardrail_with_nothing_tracked_drops_silently():
+    lis, rec = _listener()
+    lis._on_guardrail_completed(
+        None, _guardrail_completed(success=False, error="bad output")
+    )
+    assert lis.flush(timeout=5.0)
+    assert rec.events == []
+
+
+def test_guardrail_policy_name_fallbacks():
+    lis, rec = _listener()
+    _, task = _crew_with_task(lis)
+    lis._on_guardrail_completed(
+        task,
+        _guardrail_completed(
+            success=False, guardrail_name=None, guardrail_type="hallucination",
+            from_task=task,
+        ),
+    )
+    lis._on_guardrail_completed(
+        task,
+        _guardrail_completed(
+            success=False, guardrail_name=None, guardrail_type=None, from_task=task,
+        ),
+    )
+    assert lis.flush(timeout=5.0)
+    blocked = [e for e in rec.events if e["type"] == "policy.blocked"]
+    assert [e["payload"]["policy"] for e in blocked] == ["hallucination", "guardrail"]
+    # Synthesized reason names the policy when the event carries no error text.
+    assert "hallucination" in blocked[0]["payload"]["reason"]
+
+
+def test_failed_guardrail_without_retry_count_omits_it():
+    lis, rec = _listener()
+    _, task = _crew_with_task(lis)
+    lis._on_guardrail_completed(
+        task,
+        _guardrail_completed(success=False, error="nope", from_task=task),
+    )
+    assert lis.flush(timeout=5.0)
+    blocked = [e for e in rec.events if e["type"] == "policy.blocked"]
+    assert len(blocked) == 1
+    assert "retry_count" not in blocked[0]["payload"]
+
+
 # ── Real event bus (only when CrewAI is installed) ──────────────────────────
+
+
+def test_guardrail_event_registered_on_real_bus():
+    pytest.importorskip("crewai", reason="crewai not installed")
+    from crewai.events.event_bus import crewai_event_bus
+    from crewai.events.types.llm_guardrail_events import LLMGuardrailCompletedEvent
+
+    rec = _Recorder()
+    lis = AEPCrewListener(rec)
+    try:
+        assert lis.subscribe() is True
+        handlers = crewai_event_bus._sync_handlers.get(
+            LLMGuardrailCompletedEvent, frozenset()
+        )
+        registered = {h for _, h in lis._registered}
+        assert registered & set(handlers)
+    finally:
+        lis.unsubscribe()
+        lis.close(timeout=1.0)
 
 
 def test_subscribe_and_unsubscribe_against_real_bus():

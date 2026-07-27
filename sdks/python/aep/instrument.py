@@ -662,6 +662,7 @@ class _EmissionCore:
         reason: str | None = None,
         action_blocked: str | None = None,
         framework: str | None = None,
+        extra_payload: dict | None = None,
     ) -> str | None:
         """Emit a ``policy.blocked`` decision on a tracked run's session.
 
@@ -670,7 +671,9 @@ class _EmissionCore:
         protocol's shipped shape (``policy`` / ``reason`` / ``action_blocked``)
         plus an optional ``framework`` marker. When ``action_blocked`` is None
         it defaults to the gated run's own identity (``<kind>/<name>``) — the
-        single lookup here keeps that derivation atomic with the emission. An
+        single lookup here keeps that derivation atomic with the emission.
+        ``extra_payload`` merges extra keys into the payload (e.g. the CrewAI
+        transport records ``retry_count``), mirroring ``open_agent_run``. An
         unknown ``key`` (e.g. an evicted run) is dropped with no event — a lost
         decision label, never an exception into the host. Returns the event id,
         or None.
@@ -685,6 +688,7 @@ class _EmissionCore:
             **({"reason": reason} if reason else {}),
             **({"action_blocked": action_blocked} if action_blocked else {}),
             **({"framework": framework} if framework else {}),
+            **(extra_payload or {}),
         }
         return self._emit(
             source=info.source,
@@ -833,7 +837,7 @@ class AEPCrewListener:
 
     CrewAI does not use LangChain callbacks — it publishes lifecycle events on
     ``crewai.events.crewai_event_bus``. This listener subscribes to the crew,
-    task, agent, and tool events and maps them onto AEP's vocabulary:
+    task, agent, tool, and guardrail events and maps them onto AEP's vocabulary:
 
     - ``CrewKickoffStarted``  → orchestrator ``task.created`` (root; new trace)
     - ``TaskStarted``         → sub-agent ``task.created`` (handoff off the crew),
@@ -841,6 +845,9 @@ class AEPCrewListener:
     - ``ToolUsageStarted``    → ``tool.called`` on the active task/agent session
     - ``TaskCompleted/Failed``→ ``task.completed`` / ``task.failed`` (+ handoff)
     - ``CrewKickoffCompleted/Failed`` → orchestrator close
+    - ``LLMGuardrailCompleted`` with ``success=False`` → ``policy.blocked`` on
+      the guarded task's session (passed validations emit nothing; subscribed
+      only when the installed CrewAI ships guardrail events)
 
     Nesting note: CrewAI fires ``TaskStarted`` *then* ``AgentExecutionStarted``
     inside it, so a Task wraps its Agent execution. We therefore make the **Task**
@@ -938,6 +945,20 @@ class AEPCrewListener:
             (ToolUsageFinishedEvent, self._on_tool_end),
             (ToolUsageErrorEvent, self._on_tool_error),
         ]
+
+        # Guardrail events shipped after the crewai>=1.0 floor — subscribe when
+        # present, so their absence on an older CrewAI never disables the rest.
+        try:
+            from crewai.events.types.llm_guardrail_events import (
+                LLMGuardrailCompletedEvent,
+            )
+        except Exception:
+            logger.debug(
+                "AEP: CrewAI LLM-guardrail events unavailable; guardrail "
+                "capture disabled."
+            )
+        else:
+            mapping.append((LLMGuardrailCompletedEvent, self._on_guardrail_completed))
         registered: list[tuple[Any, Any]] = []
         for event_cls, fn in mapping:
             handler = self._safe(fn)
@@ -1080,6 +1101,39 @@ class AEPCrewListener:
         if run_key is None:
             return
         self._core.fail_tool_run(run_key, error=getattr(event, "error", None))
+
+    def _on_guardrail_completed(self, source: Any, event: Any) -> None:
+        """Emit ``policy.blocked`` for a failed guardrail validation.
+
+        CrewAI guardrails validate a task's output and retry on failure — each
+        failed attempt is a real block-and-retry decision, so each emits one
+        event (``retry_count`` disambiguates the attempts). Successful
+        validations emit nothing (blocked-only is AEP's semantic). The decision
+        keys to the guarded task's run, falling back to the innermost open
+        crew; with neither tracked it is dropped (never an exception into the
+        host — the core drops unknown keys).
+        """
+        if getattr(event, "success", True):
+            return
+        policy = str(
+            getattr(event, "guardrail_name", None)
+            or getattr(event, "guardrail_type", None)
+            or "guardrail"
+        )
+        tid = self._task_id(event, getattr(event, "from_task", None))
+        key = f"task:{tid}" if tid is not None else self._current_crew()
+        if key is None:
+            return
+        error = getattr(event, "error", None)
+        reason = str(error) if error else f"Guardrail '{policy}' validation failed"
+        retry = getattr(event, "retry_count", None)
+        self._core.emit_policy_blocked(
+            key,
+            policy=policy,
+            reason=reason,
+            framework="crewai",
+            extra_payload={"retry_count": retry} if retry is not None else None,
+        )
 
     def _push_tool_run(self, scope: Any) -> str:
         """Register a new open tool invocation under ``scope`` and return its key.
