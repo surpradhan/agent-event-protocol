@@ -111,8 +111,12 @@ jobs:
         run: pip install -e "sdks/python[dev,langgraph,crewai,autogen,openai-agents,claude-agent,otel]"
 
       - name: Lint the SDK package
+        # Pin ruff: an unpinned `pip install ruff` floats the linter version, so a
+        # new release can fail this gate against unchanged code. That happened on
+        # 2026-07-27 when ruff drifted 0.15.22 -> 0.16.0 (117 new findings). Bump
+        # this pin deliberately (and address any new findings) rather than floating.
         run: |
-          pip install ruff
+          pip install ruff==0.15.22
           ruff check sdks/python/aep
 
       - name: Run Python SDK tests
