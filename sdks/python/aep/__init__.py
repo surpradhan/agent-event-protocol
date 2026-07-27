@@ -1,4 +1,4 @@
-"""Agent Event Protocol (AEP) Python SDK — v0.5.0.
+"""Agent Event Protocol (AEP) Python SDK — v0.6.0.
 
 Quick start::
 
@@ -34,7 +34,7 @@ from aep.exceptions import (
 )
 from aep.instrument import flush, instrument, uninstrument
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "CORE_EVENT_TYPES",
