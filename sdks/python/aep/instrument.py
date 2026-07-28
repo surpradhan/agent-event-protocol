@@ -1902,6 +1902,11 @@ class AEPClaudeAgentTracer:
         # (session_id, agent_id) for sub-agent runs currently open — used to
         # resolve a tool's owning agent (sub-agent vs the root).
         self._open_subagents: OrderedDict[tuple, bool] = OrderedDict()
+        # tool_use_id -> tool run key, so a can_use_tool denial (whose context
+        # carries no session identifier) can attribute to its tool run.
+        # Append-only, FIFO-bounded; stale entries resolve to popped keys the
+        # core drops.
+        self._tuid_index: OrderedDict[str, str] = OrderedDict()
         self._max_runs = max_runs
 
     @property
@@ -2030,9 +2035,53 @@ class AEPClaudeAgentTracer:
                 arguments=self._coerce(self._get(input, "tool_input")),
                 parent_key=parent_key,
             )
+            # Index tool_use_id -> run key so a can_use_tool denial (whose
+            # context carries only the tool_use_id, no session) can attribute
+            # to this run. Append-only + FIFO-bounded: a stale entry for a
+            # closed run resolves to a popped key and the core drops it.
+            with self._lock:
+                self._tuid_index[str(tuid)] = self._tool_key(sid, tuid)
+                while len(self._tuid_index) > self._max_runs:
+                    self._tuid_index.popitem(last=False)
         except Exception as e:  # pragma: no cover - defensive
             logger.warning("AEP: Claude Agent PreToolUse hook error: %s", e)
         return {}
+
+    # -- permission denials (via the wrapped can_use_tool callback) ------------
+
+    def record_permission_denial(
+        self, tool_name: Any, message: Any, tool_use_id: Any
+    ) -> None:
+        """Emit ``policy.blocked`` for a ``can_use_tool`` deny result.
+
+        Called by the observational wrapper around a user-supplied
+        ``can_use_tool`` (see :func:`_wrap_claude_can_use_tool`). Attribution:
+        the denial's ``ToolPermissionContext`` carries no session identifier
+        (its ``tool_use_id`` is the usable correlation key), so resolve the
+        tool run it opened (when ``PreToolUse`` fired first); otherwise fall
+        back to the root of the single open session. With two or more sessions
+        open and no tool correlation, attribution would be a guess — the
+        decision is dropped rather than mislabeled.
+        """
+        try:
+            key = None
+            with self._lock:
+                if tool_use_id is not None:
+                    key = self._tuid_index.get(str(tool_use_id))
+                if key is None and len(self._roots) == 1:
+                    key = self._root_key(next(iter(self._roots)))
+            if key is None:
+                return
+            name = str(tool_name) if tool_name else "tool"
+            self._core.emit_policy_blocked(
+                key,
+                policy="can_use_tool",
+                reason=str(message) if message else f"Permission denied for tool '{name}'",
+                action_blocked=f"tool.called/{name}",
+                framework="claude-agent",
+            )
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("AEP: Claude Agent permission-denial mapping error: %s", e)
 
     async def on_post_tool_use(self, input: Any, tool_use_id: Any, context: Any) -> dict:
         try:
@@ -2664,12 +2713,50 @@ class ClaudeAgentInstrumentor(FrameworkInstrumentor):
         super().uninstrument()
 
 
-def _inject_claude_hooks(options: Any, tracer: Any, hook_matcher: Any) -> Any:
-    """Return ``options`` with the tracer's hook callbacks merged into ``hooks``.
+def _wrap_claude_can_use_tool(original: Any, tracer: Any):
+    """Wrap a user-supplied ``can_use_tool`` to observe deny results.
 
+    Purely observational: the original callback runs unchanged and its result
+    (or exception) is returned/raised as-is. A deny-shaped result (``behavior
+    == "deny"``, duck-typed for both the SDK's ``PermissionResultDeny`` and
+    dict-shaped returns) additionally records a ``policy.blocked`` via
+    :meth:`AEPClaudeAgentTracer.record_permission_denial`. Errors in the
+    observation itself are logged, never raised into the host.
+    """
+
+    async def wrapped(tool_name: Any, tool_input: Any, context: Any) -> Any:
+        result = await original(tool_name, tool_input, context)
+        try:
+            behavior = getattr(result, "behavior", None)
+            if behavior is None and isinstance(result, dict):
+                # Dict-shaped results mirror the TS SDK's shape — forward
+                # compatibility only; the current Python SDK type-checks the
+                # return and would itself reject a plain dict downstream.
+                behavior = result.get("behavior")
+            if behavior == "deny":
+                message = getattr(result, "message", None)
+                if message is None and isinstance(result, dict):
+                    message = result.get("message")
+                tracer.record_permission_denial(
+                    tool_name, message, getattr(context, "tool_use_id", None)
+                )
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("AEP: Claude Agent can_use_tool observation error: %s", e)
+        return result
+
+    wrapped._aep_wrapped = True  # type: ignore[attr-defined]
+    return wrapped
+
+
+def _inject_claude_hooks(options: Any, tracer: Any, hook_matcher: Any) -> Any:
+    """Return ``options`` with AEP observation merged in.
+
+    Merges the tracer's hook callbacks into ``hooks`` and, when the app
+    supplied a ``can_use_tool`` permission handler, wraps it observationally
+    (deny results emit ``policy.blocked``; see :func:`_wrap_claude_can_use_tool`).
     Produces a copy (via ``dataclasses.replace``) so a user-supplied options
-    object is never mutated. Idempotent: if our callbacks are already registered
-    for an event (e.g. on reconnect), that event is left untouched.
+    object is never mutated. Idempotent: already-registered callbacks and an
+    already-wrapped ``can_use_tool`` are left untouched.
     """
     from dataclasses import replace
 
@@ -2686,9 +2773,16 @@ def _inject_claude_hooks(options: Any, tracer: Any, hook_matcher: Any) -> Any:
         current.append(hook_matcher(matcher=None, hooks=list(callbacks)))
         existing[event] = current
         changed = True
-    if not changed:
+
+    new_fields: dict = {}
+    if changed:
+        new_fields["hooks"] = existing
+    cut = getattr(options, "can_use_tool", None)
+    if callable(cut) and not getattr(cut, "_aep_wrapped", False):
+        new_fields["can_use_tool"] = _wrap_claude_can_use_tool(cut, tracer)
+    if not new_fields:
         return options
-    return replace(options, hooks=existing)
+    return replace(options, **new_fields)
 
 
 def _make_claude_process_query_wrapper(target_cls: Any, original: Any, hook_matcher: Any):

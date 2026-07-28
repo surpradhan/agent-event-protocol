@@ -20,7 +20,6 @@ import pytest
 
 from aep.instrument import AEPClaudeAgentTracer
 
-
 # ── Fakes ────────────────────────────────────────────────────────────────────
 
 
@@ -370,6 +369,224 @@ def test_run_table_is_bounded_when_many_subagents_open():
     assert tracer.flush(timeout=5.0)
     assert len(tracer._runs) <= 4
     assert tracer._core._evicted >= 16
+
+
+# ── Permission denials via can_use_tool (policy.blocked) ─────────────────────
+
+
+def _deny(message="not allowed"):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(behavior="deny", message=message, interrupt=False)
+
+
+def _allow():
+    from types import SimpleNamespace
+
+    return SimpleNamespace(behavior="allow", updated_input=None)
+
+
+def _ctx(tuid):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(signal=None, suggestions=[], tool_use_id=tuid)
+
+
+def _wrapped_deny_flow(tracer, *, result, tuid="t1", tool_name="Bash"):
+    """Run a wrapped can_use_tool returning ``result``; return what it returned."""
+    from aep.instrument import _wrap_claude_can_use_tool
+
+    async def original(name, tool_input, context):
+        return result
+
+    wrapped = _wrap_claude_can_use_tool(original, tracer)
+    return asyncio.run(wrapped(tool_name, {"command": "rm -rf /"}, _ctx(tuid)))
+
+
+def test_denied_can_use_tool_emits_policy_blocked_on_tool_session():
+    rec = _Recorder()
+    tracer = AEPClaudeAgentTracer(rec)
+
+    async def _run():
+        m, p = _prompt()
+        await getattr(tracer, m)(p, None, _CTX)
+        m, p = _pre_tool(tuid="t1", name="Bash")
+        await getattr(tracer, m)(p, "t1", _CTX)
+
+    asyncio.run(_run())
+    deny = _deny("rm is not allowed here")
+    returned = _wrapped_deny_flow(tracer, result=deny, tuid="t1", tool_name="Bash")
+    assert returned is deny  # observation never alters the app's result
+    assert tracer.flush(timeout=5.0)
+
+    blocked = [e for e in rec.events if e["type"] == "policy.blocked"]
+    assert len(blocked) == 1
+    evt = blocked[0]
+    tool_called = next(e for e in rec.events if e["type"] == "tool.called")
+    # Lands on the denied tool's session, chained off its tool.called.
+    assert evt["session_id"] == tool_called["session_id"]
+    assert evt["causation_id"] == tool_called["id"]
+    assert evt["payload"]["policy"] == "can_use_tool"
+    assert evt["payload"]["reason"] == "rm is not allowed here"
+    assert evt["payload"]["action_blocked"] == "tool.called/Bash"
+    assert evt["payload"]["framework"] == "claude-agent"
+    assert _no_dangling(rec.events) == []
+
+
+def test_allowed_can_use_tool_emits_nothing():
+    rec = _Recorder()
+    tracer = AEPClaudeAgentTracer(rec)
+    allow = _allow()
+    returned = _wrapped_deny_flow(tracer, result=allow, tuid="t9")
+    assert returned is allow
+    assert tracer.flush(timeout=5.0)
+    assert [e for e in rec.events if e["type"] == "policy.blocked"] == []
+
+
+def test_denied_dict_shaped_result_is_recognized():
+    rec = _Recorder()
+    tracer = AEPClaudeAgentTracer(rec)
+
+    async def _run():
+        m, p = _prompt()
+        await getattr(tracer, m)(p, None, _CTX)
+        m, p = _pre_tool(tuid="t1", name="Write")
+        await getattr(tracer, m)(p, "t1", _CTX)
+
+    asyncio.run(_run())
+    result = {"behavior": "deny", "message": "nope"}
+    returned = _wrapped_deny_flow(tracer, result=result, tuid="t1", tool_name="Write")
+    assert returned is result
+    assert tracer.flush(timeout=5.0)
+    blocked = [e for e in rec.events if e["type"] == "policy.blocked"]
+    assert len(blocked) == 1
+    assert blocked[0]["payload"]["reason"] == "nope"
+
+
+def test_denial_before_pre_tool_use_falls_back_to_single_root():
+    # Deny can precede PreToolUse (the tool never runs) — with one open
+    # session the decision lands on its root.
+    rec = _Recorder()
+    tracer = AEPClaudeAgentTracer(rec)
+
+    async def _run():
+        m, p = _prompt(sid="s1")
+        await getattr(tracer, m)(p, None, _CTX)
+
+    asyncio.run(_run())
+    _wrapped_deny_flow(tracer, result=_deny(), tuid="unknown", tool_name="Bash")
+    assert tracer.flush(timeout=5.0)
+    blocked = [e for e in rec.events if e["type"] == "policy.blocked"]
+    assert len(blocked) == 1
+    root_created = rec.events[0]
+    assert root_created["type"] == "task.created"
+    assert blocked[0]["session_id"] == root_created["session_id"]
+    assert blocked[0]["payload"]["action_blocked"] == "tool.called/Bash"
+    assert _no_dangling(rec.events) == []
+
+
+def test_denial_for_closed_tool_run_drops_silently():
+    # A stale _tuid_index entry (tool already completed) resolves to a popped
+    # run key, which the emission core drops — pins the append-only design's
+    # load-bearing claim. The session root stays OPEN here, so this also pins
+    # that the stale hit short-circuits: the denial is dropped, not
+    # re-attributed to the still-open root.
+    rec = _Recorder()
+    tracer = AEPClaudeAgentTracer(rec)
+
+    async def _run():
+        for step in (_prompt(), _pre_tool(tuid="t1"), _post_tool(tuid="t1")):
+            m, p = step
+            await getattr(tracer, m)(p, p.get("tool_use_id"), _CTX)
+
+    asyncio.run(_run())
+    _wrapped_deny_flow(tracer, result=_deny(), tuid="t1")
+    assert tracer.flush(timeout=5.0)
+    assert [e for e in rec.events if e["type"] == "policy.blocked"] == []
+
+
+def test_denial_with_unknown_tuid_and_multiple_roots_drops_silently():
+    # Two concurrent sessions and no tool correlation: attribution would be a
+    # guess, so the decision is dropped rather than mislabeled.
+    rec = _Recorder()
+    tracer = AEPClaudeAgentTracer(rec)
+
+    async def _run():
+        for sid in ("s1", "s2"):
+            m, p = _prompt(sid=sid)
+            await getattr(tracer, m)(p, None, _CTX)
+
+    asyncio.run(_run())
+    _wrapped_deny_flow(tracer, result=_deny(), tuid="unknown")
+    assert tracer.flush(timeout=5.0)
+    assert [e for e in rec.events if e["type"] == "policy.blocked"] == []
+
+
+def test_denial_without_message_synthesizes_reason():
+    rec = _Recorder()
+    tracer = AEPClaudeAgentTracer(rec)
+
+    async def _run():
+        m, p = _prompt()
+        await getattr(tracer, m)(p, None, _CTX)
+
+    asyncio.run(_run())
+    _wrapped_deny_flow(tracer, result=_deny(message=""), tuid="unknown", tool_name="Bash")
+    assert tracer.flush(timeout=5.0)
+    blocked = [e for e in rec.events if e["type"] == "policy.blocked"]
+    assert len(blocked) == 1
+    assert "Bash" in blocked[0]["payload"]["reason"]
+
+
+def test_wrapped_can_use_tool_propagates_original_exception():
+    from aep.instrument import _wrap_claude_can_use_tool
+
+    rec = _Recorder()
+    tracer = AEPClaudeAgentTracer(rec)
+
+    async def original(name, tool_input, context):
+        raise RuntimeError("app callback exploded")
+
+    wrapped = _wrap_claude_can_use_tool(original, tracer)
+    with pytest.raises(RuntimeError, match="app callback exploded"):
+        asyncio.run(wrapped("Bash", {}, _ctx("t1")))
+    assert tracer.flush(timeout=5.0)
+    assert rec.events == []  # observation adds nothing on the exception path
+
+
+def test_inject_wraps_can_use_tool_once_and_skips_absent():
+    from dataclasses import dataclass, field
+    from typing import Any as _Any
+
+    from aep.instrument import _inject_claude_hooks
+
+    class _Matcher:
+        def __init__(self, matcher=None, hooks=None):
+            self.matcher = matcher
+            self.hooks = hooks or []
+
+    @dataclass
+    class _Options:
+        hooks: dict = field(default_factory=dict)
+        can_use_tool: _Any = None
+
+    rec = _Recorder()
+    tracer = AEPClaudeAgentTracer(rec)
+
+    # Absent can_use_tool: hooks get injected, can_use_tool stays None.
+    injected = _inject_claude_hooks(_Options(), tracer, _Matcher)
+    assert injected.can_use_tool is None
+
+    # Present: gets wrapped exactly once (idempotent on re-injection).
+    async def cut(name, tool_input, context):
+        return _allow()
+
+    injected = _inject_claude_hooks(_Options(can_use_tool=cut), tracer, _Matcher)
+    assert injected.can_use_tool is not cut
+    assert getattr(injected.can_use_tool, "_aep_wrapped", False)
+    again = _inject_claude_hooks(injected, tracer, _Matcher)
+    assert again.can_use_tool is injected.can_use_tool
+    tracer.close(timeout=1.0)
 
 
 # ── Real method patch (only when claude-agent-sdk is installed) ───────────────

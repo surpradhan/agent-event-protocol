@@ -4,7 +4,38 @@ All notable changes to AEP are documented here.
 
 ---
 
-## Python SDK (unreleased, 2/3 toward 0.6.0) — auto-capture CrewAI guardrail failures — 2026-07-27
+## Python SDK 0.6.0 — guardrail auto-instrumentation (OpenAI Agents, CrewAI, Claude Agent SDK) — 2026-07-27
+
+`policy.blocked` — previously caller-emitted only — is now captured
+automatically from three frameworks' native runtime signals, with zero
+application code changes. All three transports drive the same new
+framework-agnostic core operation (`_EmissionCore.emit_policy_blocked`),
+so every decision event chains off the run it gated via `causation_id`
+and lands on that run's session. Blocked-only semantics throughout:
+passed/untriggered evaluations emit nothing (the protocol has no
+"evaluated-and-passed" event type).
+
+**Claude Agent SDK (this entry):** when the application supplies a
+`can_use_tool` permission handler, `aep.instrument("claude-agent")` wraps
+it observationally — the callback's result is returned unchanged, and a
+deny result additionally emits `policy.blocked` with `policy:
+"can_use_tool"`, `reason` (the deny message), `action_blocked:
+"tool.called/<tool_name>"`, and `framework: "claude-agent"`. Attribution:
+the denial's context carries no session identifier (its `tool_use_id` is
+the usable correlation key), so the event lands on the denied tool's run
+when `PreToolUse` fired first, else on the single open session's root;
+with multiple sessions and no correlation it is dropped rather than
+mislabeled. Runs without a `can_use_tool` handler
+have no in-process denial surface (interactive prompts and
+permission-rule denials happen inside the CLI) — documented, not
+captured.
+
+Details of the two earlier parts below (OpenAI Agents tripwires, CrewAI
+validation failures) — shipped in the same 0.6.0 release.
+
+---
+
+## Python SDK 0.6.0 (part 2/3) — auto-capture CrewAI guardrail failures — 2026-07-27
 
 `aep.instrument("crewai")` now emits a `policy.blocked` event when a CrewAI
 guardrail validation fails (`LLMGuardrailCompletedEvent` with
@@ -24,7 +55,7 @@ minus guardrail capture.
 
 ---
 
-## Python SDK (unreleased, 1/3 toward 0.6.0) — auto-capture OpenAI Agents guardrail tripwires — 2026-07-27
+## Python SDK 0.6.0 (part 1/3) — auto-capture OpenAI Agents guardrail tripwires — 2026-07-27
 
 `aep.instrument("openai-agents")` now emits a `policy.blocked` event when an
 OpenAI Agents SDK guardrail span ends with its tripwire triggered — no

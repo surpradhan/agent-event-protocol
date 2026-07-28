@@ -2,7 +2,7 @@
 
 Python client library for the [Agent Event Protocol](https://github.com/surpradhan/agent-event-protocol#readme) — an observability framework for agent workflows.
 
-**Version:** 0.5.0 · **Python:** ≥ 3.10 · **Schema:** AEP v0.2.0
+**Version:** 0.6.0 · **Python:** ≥ 3.10 · **Schema:** AEP v0.2.0
 
 > **📍 Project direction (2026-06):** AEP is converging on OpenTelemetry rather than continuing as a standalone protocol. This SDK remains published and usable, and is the **carry-forward / reference** SDK — its framework auto-instrumentation, OTEL bridge, and signing feed contributions to the OTel GenAI semantic conventions.
 
@@ -210,6 +210,7 @@ aep.flush()
 | crew → agent dispatch            | `handoff.started` → `handoff.completed`   | orchestrator  |
 | tool usage                       | `tool.called` → `tool.result`             | (agent)       |
 | tool failure                     | `error.raised`                            | (agent)       |
+| failed guardrail validation      | `policy.blocked`                          | (task)        |
 
 Notes:
 - **Tested against `crewai>=1.0`.** Implemented by subscribing to CrewAI's own
@@ -222,6 +223,12 @@ Notes:
 - Tool-call attribution is exact for sequential crews; with **concurrent agents
   running tools at once**, pairing a `tool.result` to its `tool.called` is
   best-effort (the events don't always carry a per-call id).
+- **Guardrail failures map to `policy.blocked`** (v0.6.0): a guardrail
+  validation that fails (`LLMGuardrailCompletedEvent` with `success=False`)
+  emits `policy.blocked` on the guarded task's session with the guardrail's
+  name and error text plus `retry_count` (CrewAI retries failed validations —
+  each failed attempt is one event). Passed validations emit nothing. On a
+  CrewAI without guardrail events, everything else still instruments.
 - See `demos/crewai_multiagent.py` for a runnable 3-agent example that works
   offline with no LLM API key.
 
@@ -320,7 +327,12 @@ Notes:
   a run is recorded `completed` here. The exception itself remains your source of
   truth; AEP deliberately doesn't add a separate failure path that would race the
   SDK's own span/trace close.
-- **Guardrail tripwires are not yet mapped** to `policy.blocked` (future work).
+- **Guardrail tripwires map to `policy.blocked`** (v0.6.0): a `guardrail` span
+  that ends with its tripwire triggered emits `policy.blocked` on the owning
+  agent's session (`policy` = the guardrail's name, `action_blocked` =
+  `agent/<agent name>` or `workflow/<workflow name>` — the gated run's
+  identity), chained to that run via `causation_id`.
+  Untriggered guardrails emit nothing (blocked-only semantics).
 - See `demos/openai_agents_multiagent.py` for a runnable handoff + tool example
   that works offline with no LLM API key (via a scripted `Model`).
 
@@ -349,8 +361,20 @@ aep.flush()
 | top-level → sub-agent (Task)             | `handoff.started` → `handoff.completed`   | orchestrator  |
 | `PreToolUse` → `PostToolUse`             | `tool.called` → `tool.result`             | (agent)       |
 | `PostToolUseFailure`                     | `error.raised`                            | (agent)       |
+| `can_use_tool` deny (wrapped)            | `policy.blocked`                          | (agent)       |
 
 Notes:
+- **Permission denials map to `policy.blocked`** (v0.6.0): when your app
+  supplies a `can_use_tool` handler, AEP wraps it observationally — the
+  handler's result passes through unchanged, and a deny additionally emits
+  `policy.blocked` (`policy: "can_use_tool"`, the deny message as `reason`,
+  `action_blocked: "tool.called/<tool_name>"`). Attribution: the denial's
+  context carries no session identifier, so the event lands on the denied
+  tool's run (when `PreToolUse` fired first), else the single open session's
+  root; with several sessions open and no correlation it is dropped rather
+  than mislabeled. Runs **without** a `can_use_tool` handler have no
+  in-process denial surface — interactive prompts and permission-rule
+  denials happen inside the CLI and are not observable here.
 - **Tested against `claude-agent-sdk>=0.2`** (developed on 0.2.x). Implemented by
   injecting observer hooks into `ClaudeAgentOptions.hooks` — the SDK's supported
   observation surface — at the two methods both entry points consume
@@ -591,7 +615,7 @@ Before the first release, configure the publisher side (cannot be done from code
 # 1. Bump sdks/python/pyproject.toml `version` AND aep/__init__.py `__version__`
 #    (keep them in sync) on a PR; squash-merge to main.
 # 2. From main, tag the release commit and push the tag:
-git tag python-sdk-v0.5.0
-git push origin python-sdk-v0.5.0
+git tag python-sdk-v0.6.0
+git push origin python-sdk-v0.6.0
 # 3. Approve the `pypi-publish` deployment in the Actions UI once `verify` is green.
 ```
