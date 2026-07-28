@@ -1902,9 +1902,10 @@ class AEPClaudeAgentTracer:
         # (session_id, agent_id) for sub-agent runs currently open — used to
         # resolve a tool's owning agent (sub-agent vs the root).
         self._open_subagents: OrderedDict[tuple, bool] = OrderedDict()
-        # tool_use_id -> tool run key, so a can_use_tool denial (which carries
-        # only the tool_use_id) can attribute to its tool run. Append-only,
-        # FIFO-bounded; stale entries resolve to popped keys the core drops.
+        # tool_use_id -> tool run key, so a can_use_tool denial (whose context
+        # carries no session identifier) can attribute to its tool run.
+        # Append-only, FIFO-bounded; stale entries resolve to popped keys the
+        # core drops.
         self._tuid_index: OrderedDict[str, str] = OrderedDict()
         self._max_runs = max_runs
 
@@ -2055,11 +2056,12 @@ class AEPClaudeAgentTracer:
 
         Called by the observational wrapper around a user-supplied
         ``can_use_tool`` (see :func:`_wrap_claude_can_use_tool`). Attribution:
-        the denial's ``ToolPermissionContext`` carries only a ``tool_use_id``,
-        so resolve the tool run it opened (when ``PreToolUse`` fired first);
-        otherwise fall back to the root of the single open session. With two
-        or more sessions open and no tool correlation, attribution would be a
-        guess — the decision is dropped rather than mislabeled.
+        the denial's ``ToolPermissionContext`` carries no session identifier
+        (its ``tool_use_id`` is the usable correlation key), so resolve the
+        tool run it opened (when ``PreToolUse`` fired first); otherwise fall
+        back to the root of the single open session. With two or more sessions
+        open and no tool correlation, attribution would be a guess — the
+        decision is dropped rather than mislabeled.
         """
         try:
             key = None
@@ -2727,6 +2729,9 @@ def _wrap_claude_can_use_tool(original: Any, tracer: Any):
         try:
             behavior = getattr(result, "behavior", None)
             if behavior is None and isinstance(result, dict):
+                # Dict-shaped results mirror the TS SDK's shape — forward
+                # compatibility only; the current Python SDK type-checks the
+                # return and would itself reject a plain dict downstream.
                 behavior = result.get("behavior")
             if behavior == "deny":
                 message = getattr(result, "message", None)

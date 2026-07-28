@@ -485,6 +485,25 @@ def test_denial_before_pre_tool_use_falls_back_to_single_root():
     assert _no_dangling(rec.events) == []
 
 
+def test_denial_for_closed_tool_run_drops_silently():
+    # A stale _tuid_index entry (tool already completed) resolves to a popped
+    # run key, which the emission core drops — pins the append-only design's
+    # load-bearing claim.
+    rec = _Recorder()
+    tracer = AEPClaudeAgentTracer(rec)
+
+    async def _run():
+        for step in (_prompt(), _pre_tool(tuid="t1"), _post_tool(tuid="t1"),
+                     _stop()):
+            m, p = step
+            await getattr(tracer, m)(p, p.get("tool_use_id"), _CTX)
+
+    asyncio.run(_run())
+    _wrapped_deny_flow(tracer, result=_deny(), tuid="t1")
+    assert tracer.flush(timeout=5.0)
+    assert [e for e in rec.events if e["type"] == "policy.blocked"] == []
+
+
 def test_denial_with_unknown_tuid_and_multiple_roots_drops_silently():
     # Two concurrent sessions and no tool correlation: attribution would be a
     # guess, so the decision is dropped rather than mislabeled.

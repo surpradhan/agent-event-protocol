@@ -21,10 +21,11 @@ it observationally — the callback's result is returned unchanged, and a
 deny result additionally emits `policy.blocked` with `policy:
 "can_use_tool"`, `reason` (the deny message), `action_blocked:
 "tool.called/<tool_name>"`, and `framework: "claude-agent"`. Attribution:
-the denial's context carries only a `tool_use_id`, so the event lands on
-the denied tool's run when `PreToolUse` fired first, else on the single
-open session's root; with multiple sessions and no correlation it is
-dropped rather than mislabeled. Runs without a `can_use_tool` handler
+the denial's context carries no session identifier (its `tool_use_id` is
+the usable correlation key), so the event lands on the denied tool's run
+when `PreToolUse` fired first, else on the single open session's root;
+with multiple sessions and no correlation it is dropped rather than
+mislabeled. Runs without a `can_use_tool` handler
 have no in-process denial surface (interactive prompts and
 permission-rule denials happen inside the CLI) — documented, not
 captured.
