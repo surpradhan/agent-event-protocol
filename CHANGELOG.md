@@ -4,6 +4,26 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Python SDK (unreleased, 2/3 toward 0.6.0) — auto-capture CrewAI guardrail failures — 2026-07-27
+
+`aep.instrument("crewai")` now emits a `policy.blocked` event when a CrewAI
+guardrail validation fails (`LLMGuardrailCompletedEvent` with
+`success=False`) — no application code required. The event lands on the
+guarded task's session (innermost open crew as fallback), chains off that
+run's opening event via `causation_id`, and carries `policy` (guardrail
+name, falling back to type), `reason` (the guardrail's own error text),
+`action_blocked` (`task/<name>` or `crew/<name>`), `framework: "crewai"`,
+and `retry_count` — CrewAI retries failed validations, so each failed
+attempt emits one event and `retry_count` disambiguates them. Passed
+validations emit nothing. Guardrail events are subscribed only when the
+installed CrewAI ships them, so older versions keep full instrumentation
+minus guardrail capture.
+
+- `_EmissionCore.emit_policy_blocked(...)` gains `extra_payload` (mirrors
+  `open_agent_run`).
+
+---
+
 ## Python SDK (unreleased, 1/3 toward 0.6.0) — auto-capture OpenAI Agents guardrail tripwires — 2026-07-27
 
 `aep.instrument("openai-agents")` now emits a `policy.blocked` event when an
