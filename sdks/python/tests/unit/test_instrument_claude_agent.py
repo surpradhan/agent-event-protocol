@@ -488,13 +488,14 @@ def test_denial_before_pre_tool_use_falls_back_to_single_root():
 def test_denial_for_closed_tool_run_drops_silently():
     # A stale _tuid_index entry (tool already completed) resolves to a popped
     # run key, which the emission core drops — pins the append-only design's
-    # load-bearing claim.
+    # load-bearing claim. The session root stays OPEN here, so this also pins
+    # that the stale hit short-circuits: the denial is dropped, not
+    # re-attributed to the still-open root.
     rec = _Recorder()
     tracer = AEPClaudeAgentTracer(rec)
 
     async def _run():
-        for step in (_prompt(), _pre_tool(tuid="t1"), _post_tool(tuid="t1"),
-                     _stop()):
+        for step in (_prompt(), _pre_tool(tuid="t1"), _post_tool(tuid="t1")):
             m, p = step
             await getattr(tracer, m)(p, p.get("tool_use_id"), _CTX)
 

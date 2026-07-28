@@ -330,7 +330,8 @@ Notes:
 - **Guardrail tripwires map to `policy.blocked`** (v0.6.0): a `guardrail` span
   that ends with its tripwire triggered emits `policy.blocked` on the owning
   agent's session (`policy` = the guardrail's name, `action_blocked` =
-  `agent/<name>` or `workflow/<name>`), chained to that run via `causation_id`.
+  `agent/<agent name>` or `workflow/<workflow name>` — the gated run's
+  identity), chained to that run via `causation_id`.
   Untriggered guardrails emit nothing (blocked-only semantics).
 - See `demos/openai_agents_multiagent.py` for a runnable handoff + tool example
   that works offline with no LLM API key (via a scripted `Model`).
