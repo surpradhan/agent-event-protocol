@@ -20,9 +20,9 @@
  *   aep validate   — Validate a local event JSON file (existing)
  *
  * Configuration (in priority order):
- *   1. CLI flags:  --server <url>  --key <api-key>  --admin-token <token>
- *   2. Env vars:   AEP_SERVER      AEP_API_KEY        ADMIN_TOKEN / AEP_ADMIN_TOKEN
- *   3. Defaults:   http://localhost:8787  (no key)
+ *   1. CLI flags:  --server <url>  --key <api-key>  --admin-token <token>  --timeout <secs>
+ *   2. Env vars:   AEP_SERVER      AEP_API_KEY        ADMIN_TOKEN / AEP_ADMIN_TOKEN   AEP_TIMEOUT
+ *   3. Defaults:   http://localhost:8787  (no key)  30s timeout
  */
 
 const https = require("https");
@@ -63,6 +63,66 @@ function parseArgs(argv) {
 // HTTP helper — wraps Node's http/https with Promise
 // ---------------------------------------------------------------------------
 
+/** Default socket-inactivity timeout for an outbound request, in milliseconds. */
+const DEFAULT_TIMEOUT_MS = 30000;
+
+/** Inactivity timeout applied to every outbound request, in milliseconds.
+ *
+ *  Module state rather than a parameter: request() is called from ~30 sites
+ *  that have no business knowing about it, and the value is process-wide —
+ *  main() resolves it once from --timeout / AEP_TIMEOUT before dispatching.
+ *  0 disables the timeout entirely. */
+let requestTimeoutMs = DEFAULT_TIMEOUT_MS;
+
+/** Resolve --timeout / AEP_TIMEOUT into milliseconds.
+ *
+ *  Seconds on the way in, like curl's --max-time — nobody wants to type a
+ *  millisecond count. 0 disables the timer for a legitimately slow transfer.
+ *  Note the timer measures *inactivity*, not total duration (see armTimeout),
+ *  so a large export that keeps streaming never trips it. */
+function resolveTimeoutMs(flags, env = process.env) {
+  const raw = flags.timeout !== undefined ? requireFlagValue(flags, "timeout") : env.AEP_TIMEOUT;
+  if (raw === undefined || String(raw).trim() === "") return DEFAULT_TIMEOUT_MS;
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    die(`--timeout must be a non-negative number of seconds (0 disables), got '${raw}'`);
+  }
+  // A tiny-but-positive value must not round down to 0, which would read as
+  // "disabled" and reintroduce the hang the flag exists to prevent.
+  return seconds === 0 ? 0 : Math.max(1, Math.round(seconds * 1000));
+}
+
+/** Arm the inactivity timeout on a request.
+ *
+ *  Node's setTimeout only *notifies* — it does not abort — so the socket has to
+ *  be destroyed here, or the CLI goes back to waiting on a server that has
+ *  stopped talking. The timer is idle-based: it resets on every byte, which is
+ *  what lets a slow-but-progressing export run past it. */
+function armTimeout(req, fail) {
+  if (requestTimeoutMs <= 0) return;
+  req.setTimeout(requestTimeoutMs, () => {
+    // Report first, destroy second: destroying emits further events, and the
+    // timeout is the cause worth printing, not the cleanup it triggers.
+    fail(Object.assign(
+      new Error(`no data for ${requestTimeoutMs / 1000}s (raise --timeout, or set it to 0 to disable)`),
+      { code: "ETIMEDOUT" }
+    ));
+    req.destroy();
+  });
+}
+
+/** The error a truncated response reports.
+ *
+ *  'aborted' carries no error object of its own, so synthesise one shaped like
+ *  a socket error — code first — so describeError renders it in the same
+ *  "could not reach <target> (…)" line as a refused connection. */
+function truncatedResponseError() {
+  return Object.assign(
+    new Error("the server closed the connection before the response was complete"),
+    { code: "ECONNRESET" }
+  );
+}
+
 function request(method, urlStr, body, headers = {}) {
   return new Promise((resolve, reject) => {
     const url = new URL(urlStr);
@@ -82,18 +142,39 @@ function request(method, urlStr, body, headers = {}) {
       },
     };
 
+    // A dying connection is chatty: a truncated response emits 'aborted' and
+    // then 'error', and a tripped timeout destroys the socket, which emits more
+    // still. Only the first of those is the cause; the rest describe the
+    // cleanup. Settling once keeps the reported reason the real one.
+    let settled = false;
+    // Name the server we failed to reach; the raw error doesn't (see describeError).
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(describeError(err, targetOf(url)), { cause: err }));
+    };
+    const succeed = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
     const req = lib.request(opts, (res) => {
       let data = "";
       res.on("data", chunk => (data += chunk));
       res.on("end", () => {
         let parsed;
         try { parsed = JSON.parse(data); } catch (_) { parsed = data; }
-        resolve({ status: res.statusCode, body: parsed, rawBody: data, headers: res.headers });
+        succeed({ status: res.statusCode, body: parsed, rawBody: data, headers: res.headers });
       });
+      // A response can die after its headers arrived. Neither event had a
+      // listener, so the promise simply never settled and the CLI hung.
+      res.on("aborted", () => fail(truncatedResponseError()));
+      res.on("error", fail);
     });
 
-    // Name the server we failed to reach; the raw error doesn't (see describeError).
-    req.on("error", (err) => reject(new Error(describeError(err, targetOf(url)), { cause: err })));
+    req.on("error", fail);
+    armTimeout(req, fail);
     if (bodyStr) req.write(bodyStr);
     req.end();
   });
@@ -292,6 +373,8 @@ Global flags:
   --server      <url>    AEP server URL  (env: AEP_SERVER, default: http://localhost:8787)
   --key         <token>  API key         (env: AEP_API_KEY)
   --admin-token <token>  Admin token     (env: ADMIN_TOKEN or AEP_ADMIN_TOKEN)
+  --timeout     <secs>   Give up after <secs> with no data from the server
+                         (env: AEP_TIMEOUT, default: 30, 0 disables)
   --help                 Show this help
 
 Run \x1b[1maep <command> --help\x1b[0m for command-specific help.
@@ -491,30 +574,76 @@ async function cmdExport(positional, flags, serverUrl, apiKey) {
       headers: { Authorization: `Bearer ${apiKey}`, Accept: "*/*" },
     };
 
+    let settled = false;
+    let sink = null;      // write stream for --out, once bytes may have reached it
+    let streaming = false; // response body started flowing (to stdout or a file)
+
+    // This command streams the response, so it builds its own request rather
+    // than going through request() — it needs the same settle-once handling and
+    // error context, plus a word about the half-written export, which a bare
+    // connection error would leave the caller to find in a truncated file.
+    const rejectOnce = (message, err) => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(message, { cause: err }));
+    };
+    const fail = (err) => {
+      if (settled) return;
+      // Say what happened to the half-written export on its own line: the
+      // error line is capped to terminal width (see oneLine), and a long
+      // --out path is exactly what would be clipped off the end of it.
+      if (sink) {
+        // pipe() only calls end() on the response's 'end', so 'finish' can
+        // never fire here — close it explicitly rather than leaking the fd.
+        sink.destroy();
+        console.error(`\x1b[33m!\x1b[0m Incomplete export left in ${flags.out}`);
+      } else if (streaming) {
+        console.error("\x1b[33m!\x1b[0m The export above is incomplete");
+      }
+      rejectOnce(describeError(err, targetOf(url)), err);
+    };
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+
     const req = lib.request(opts, (res) => {
       if (res.statusCode !== 200) {
         let data = "";
         res.on("data", c => (data += c));
         res.on("end", () => { die(`Server returned HTTP ${res.statusCode}: ${data}`); });
+        res.on("aborted", () => fail(truncatedResponseError()));
+        res.on("error", fail);
         return;
       }
+      // Same hang as request(): with nothing listening for a dead response, a
+      // server that quit mid-body left this promise pending forever.
+      res.on("aborted", () => fail(truncatedResponseError()));
+      res.on("error", fail);
+      streaming = true;
       if (flags.out) {
         const fs = require("fs");
         const ws = fs.createWriteStream(flags.out);
+        sink = ws;
         res.pipe(ws);
         ws.on("finish", () => {
           console.log(`\x1b[32m✓\x1b[0m Exported to ${flags.out}`);
-          resolve();
+          succeed();
         });
-        ws.on("error", reject);
+        // A write failure is local — an unwritable path, a full disk. Blaming
+        // the server ("could not reach …") would send the reader the wrong way.
+        ws.on("error", (err) => {
+          sink = null; // errored streams self-destruct; nothing left to close
+          rejectOnce(`could not write ${flags.out}: ${describeError(err)}`, err);
+        });
       } else {
         res.pipe(process.stdout);
-        res.on("end", resolve);
+        res.on("end", succeed);
       }
     });
-    // This command streams the response, so it builds its own request rather
-    // than going through request() — it needs the same error context.
-    req.on("error", (err) => reject(new Error(describeError(err, targetOf(url)), { cause: err })));
+    req.on("error", fail);
+    armTimeout(req, fail);
     req.end();
   });
 }
@@ -1881,6 +2010,7 @@ async function main() {
   const serverUrl = (flags.server || process.env.AEP_SERVER || "http://localhost:8787").replace(/\/$/, "");
   const apiKey    = flags.key || process.env.AEP_API_KEY || null;
   // admin token — resolved lazily per-command (not required for non-admin commands)
+  requestTimeoutMs = resolveTimeoutMs(flags);
 
   const command = positional[0];
 
@@ -1929,7 +2059,7 @@ async function main() {
 // Exports (for testing)
 // ---------------------------------------------------------------------------
 
-module.exports = { parseArgs, describeError, targetOf };
+module.exports = { parseArgs, describeError, targetOf, resolveTimeoutMs, DEFAULT_TIMEOUT_MS };
 
 // `aep` runs this file directly (package.json bin). The guard keeps a plain
 // require() — as the unit tests do — from executing a command and printing the

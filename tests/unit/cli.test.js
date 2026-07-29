@@ -5,7 +5,9 @@ const assert = require("node:assert/strict");
 const { URL } = require("url");
 const path = require("path");
 const { execFileSync } = require("child_process");
-const { parseArgs, describeError, targetOf } = require("../../src/cli");
+const {
+  parseArgs, describeError, targetOf, resolveTimeoutMs, DEFAULT_TIMEOUT_MS,
+} = require("../../src/cli");
 
 // ---------------------------------------------------------------------------
 // Tests for parseArgs function
@@ -428,6 +430,52 @@ describe("describeError", () => {
     const msg = describeError(many, "http://localhost:8787");
     assert.match(msg, /…/, "should elide the tail rather than list every cause");
     assert.ok(msg.length < 300, `message should stay terminal-sized, got ${msg.length} chars`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests for resolveTimeoutMs (issue #178)
+//
+// Only the accepted values are unit-tested here: a rejected one calls die(),
+// which exits the process, so those cases are covered end-to-end in the
+// integration suite instead.
+// ---------------------------------------------------------------------------
+
+describe("resolveTimeoutMs", () => {
+  test("defaults to 30s when neither the flag nor the env var is set", () => {
+    assert.equal(resolveTimeoutMs({}, {}), DEFAULT_TIMEOUT_MS);
+    assert.equal(DEFAULT_TIMEOUT_MS, 30000);
+  });
+
+  test("reads seconds, not milliseconds", () => {
+    // The flag is curl's --max-time, not a millisecond count; 5 must mean 5s.
+    assert.equal(resolveTimeoutMs({ timeout: "5" }, {}), 5000);
+  });
+
+  test("accepts a fractional value", () => {
+    assert.equal(resolveTimeoutMs({ timeout: "0.25" }, {}), 250);
+  });
+
+  test("never rounds a positive value down to 0, which would read as disabled", () => {
+    // 0 is the documented way to disable the timeout, so a sub-millisecond
+    // value must not silently become one — that reintroduces the hang.
+    assert.equal(resolveTimeoutMs({ timeout: "0.0001" }, {}), 1);
+  });
+
+  test("0 disables the timeout", () => {
+    assert.equal(resolveTimeoutMs({ timeout: "0" }, {}), 0);
+  });
+
+  test("falls back to AEP_TIMEOUT, and the flag wins over it", () => {
+    assert.equal(resolveTimeoutMs({}, { AEP_TIMEOUT: "12" }), 12000);
+    assert.equal(resolveTimeoutMs({ timeout: "3" }, { AEP_TIMEOUT: "12" }), 3000);
+  });
+
+  test("treats an empty AEP_TIMEOUT as unset", () => {
+    // `export AEP_TIMEOUT=` is a common way to clear a var; Number("") is 0,
+    // which would disable the timeout rather than restore the default.
+    assert.equal(resolveTimeoutMs({}, { AEP_TIMEOUT: "" }), DEFAULT_TIMEOUT_MS);
+    assert.equal(resolveTimeoutMs({}, { AEP_TIMEOUT: "  " }), DEFAULT_TIMEOUT_MS);
   });
 });
 

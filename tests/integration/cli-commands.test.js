@@ -3,6 +3,8 @@
 const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const http = require("http");
+const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { execFile } = require("node:child_process");
 
@@ -445,5 +447,151 @@ describe("CLI command integration tests (real subprocess)", () => {
     const contacted = received.slice(before).some(r => r.method === "POST" && r.url === "/events"
       && r.body && r.body.session_id === sessionId);
     assert.equal(contacted, false, "CLI must not POST when required flags are missing");
+  });
+});
+
+/**
+ * Issue #178 — a request that starts fine and then stalls.
+ *
+ * Every case here would have hung the CLI indefinitely before the fix: nothing
+ * listened for a dead response and no timeout was armed, so the promise behind
+ * the command simply never settled. Each test therefore asserts on the message
+ * AND on the CLI having exited on its own — a subprocess killed by execFile's
+ * own timeout would otherwise look like a pass.
+ */
+describe("CLI stalled-connection handling (issue #178)", () => {
+  let hostileUrl;
+  let hostileServer;
+  /** Sockets parked by the never-responds route, closed in after(). */
+  const parked = [];
+
+  before(async () => {
+    hostileServer = http.createServer((req, res) => {
+      // Never respond: accept the request and hold the socket open. This is the
+      // "server is up but wedged" case — no error ever arrives to unstick us.
+      if (req.url.startsWith("/sessions/hang/")) {
+        parked.push(res.socket);
+        return;
+      }
+      // Truncate: promise more body than we send, then kill the socket. The
+      // response emits 'aborted' — the event nobody used to listen for.
+      res.writeHead(200, { "Content-Type": "application/json", "Content-Length": "4096" });
+      res.write('{"events":[{"id":"evt_1"');
+      setTimeout(() => res.socket.destroy(), 20);
+    });
+    await new Promise((resolve) => {
+      hostileServer.listen(0, "127.0.0.1", () => {
+        hostileUrl = `http://127.0.0.1:${hostileServer.address().port}`;
+        resolve();
+      });
+    });
+  });
+
+  after(async () => {
+    for (const socket of parked) socket.destroy();
+    await new Promise((resolve) => hostileServer.close(resolve));
+  });
+
+  /** Like the suite's runCli, but pointed at the hostile server and reporting
+   *  whether the CLI exited by itself or had to be killed. */
+  function runCli(args, { env = {} } = {}) {
+    const childEnv = { ...baseEnv, AEP_SERVER: hostileUrl, AEP_API_KEY: mockApiKey, ...env };
+    return new Promise((resolve) => {
+      execFile(process.execPath, [CLI_PATH, ...args],
+        { cwd: REPO_ROOT, env: childEnv, timeout: 20000 },
+        (error, stdout, stderr) => {
+          resolve({
+            code: error ? (error.code ?? 1) : 0,
+            killed: Boolean(error && error.killed),
+            stdout,
+            stderr,
+          });
+        });
+    });
+  }
+
+  test("a server that accepts and never responds trips the timeout", async () => {
+    const { code, killed, stderr } = await runCli(["session", "hang", "--timeout", "1"]);
+
+    assert.equal(killed, false, "the CLI must give up on its own, not be killed by the test");
+    assert.notEqual(code, 0, "a timed-out request should exit non-zero");
+    assert.match(stderr, new RegExp(`could not reach ${hostileUrl.replace(/\./g, "\\.")}`));
+    assert.match(stderr, /ETIMEDOUT/);
+    assert.match(stderr, /--timeout/, "the message should say which knob to turn");
+  });
+
+  test("the timeout covers the streaming export path too", async () => {
+    // export builds its own request rather than going through request(), so it
+    // is the path a fix applied only to the shared helper would miss.
+    const { code, killed, stderr } = await runCli(["export", "hang", "--timeout", "1"]);
+
+    assert.equal(killed, false, "the CLI must give up on its own");
+    assert.notEqual(code, 0);
+    assert.match(stderr, /ETIMEDOUT/);
+  });
+
+  test("a response truncated mid-body is reported, not waited on", async () => {
+    const { code, killed, stderr } = await runCli(["session", "ses_1"]);
+
+    assert.equal(killed, false, "a truncated response must settle the command");
+    assert.notEqual(code, 0, "a truncated response is a failure, not a partial success");
+    assert.match(stderr, /ECONNRESET/);
+    assert.match(stderr, /before the response was complete/);
+  });
+
+  test("a truncated export to a file fails instead of reporting success", async () => {
+    const out = path.join(os.tmpdir(), `aep-export-${process.pid}-${Date.now()}.json`);
+    try {
+      const { code, killed, stdout, stderr } = await runCli(["export", "ses_1", "--out", out]);
+
+      assert.equal(killed, false);
+      assert.notEqual(code, 0, "a half-written export must not exit 0");
+      assert.doesNotMatch(stdout, /Exported to/, "success must not be claimed for a partial file");
+      assert.match(stderr, /Incomplete export left in/);
+      assert.match(stderr, new RegExp(out.replace(/[.\\/]/g, "\\$&")),
+        "the message should name the partial file so it isn't mistaken for a good export");
+    } finally {
+      fs.rmSync(out, { force: true });
+    }
+  });
+
+  test("a truncated export to stdout says the output is incomplete", async () => {
+    const { code, killed, stderr } = await runCli(["export", "ses_1"]);
+
+    assert.equal(killed, false);
+    assert.notEqual(code, 0);
+    assert.match(stderr, /The export above is incomplete/);
+  });
+
+  test("an unparseable --timeout is rejected locally, without contacting the server", async () => {
+    const { code, killed, stderr } = await runCli(["session", "hang", "--timeout", "soon"]);
+
+    assert.equal(killed, false, "a bad flag must fail immediately, not hang on the server");
+    assert.notEqual(code, 0);
+    assert.match(stderr, /--timeout must be a non-negative number of seconds/);
+  });
+
+  test("a negative --timeout is rejected", async () => {
+    const { code, killed, stderr } = await runCli(["session", "hang", "--timeout", "-5"]);
+
+    assert.equal(killed, false);
+    assert.notEqual(code, 0);
+    assert.match(stderr, /--timeout must be a non-negative number of seconds/);
+  });
+
+  test("a value-less --timeout is rejected rather than read as 'true'", async () => {
+    const { code, killed, stderr } = await runCli(["session", "hang", "--timeout"]);
+
+    assert.equal(killed, false);
+    assert.notEqual(code, 0);
+    assert.match(stderr, /--timeout requires a value/);
+  });
+
+  test("AEP_TIMEOUT applies when no flag is given", async () => {
+    const { code, killed, stderr } = await runCli(["session", "hang"], { env: { AEP_TIMEOUT: "1" } });
+
+    assert.equal(killed, false, "the env var must arm the timeout on its own");
+    assert.notEqual(code, 0);
+    assert.match(stderr, /ETIMEDOUT/);
   });
 });

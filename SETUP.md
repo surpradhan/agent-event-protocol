@@ -517,6 +517,8 @@ aep <command> --help   # per-command help
 
 Global flags on all commands: `--server <url>` (default `http://localhost:8787`), `--key <api-key>`. Both can be set via `AEP_SERVER` and `AEP_API_KEY` environment variables.
 
+`--timeout <seconds>` (env `AEP_TIMEOUT`, default `30`) bounds how long a command waits on a silent server before giving up — the timer measures *inactivity*, so a large export that keeps streaming never trips it. Use `--timeout 0` to disable it for a transfer that legitimately stalls.
+
 | Command | What it does | Example |
 |---|---|---|
 | `aep emit` | Emit a single event to the ingest server | `aep emit --type task.created --source agent://x --session ses_abc --trace trc_xyz --key $AEP_API_KEY --payload '{"task":"test"}'` |
