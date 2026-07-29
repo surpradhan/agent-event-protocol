@@ -92,7 +92,8 @@ function request(method, urlStr, body, headers = {}) {
       });
     });
 
-    req.on("error", reject);
+    // Name the server we failed to reach; the raw error doesn't (see describeError).
+    req.on("error", (err) => reject(new Error(describeError(err, url.origin), { cause: err })));
     if (bodyStr) req.write(bodyStr);
     req.end();
   });
@@ -105,6 +106,41 @@ function request(method, urlStr, body, headers = {}) {
 function die(msg) {
   console.error(`\x1b[31mError:\x1b[0m ${msg}`);
   process.exit(1);
+}
+
+/** Render a thrown/rejected error as one line of terminal detail.
+ *
+ *  Node dials every address a host resolves to (happy eyeballs) and, when they
+ *  all fail, rejects with an AggregateError whose own `.message` is empty — so
+ *  the obvious `err.message || String(err)` prints a bare "AggregateError" and
+ *  throws away every useful cause. The causes live in `.errors[]`, one per
+ *  address tried, so unwrap them (recursively — an AggregateError may nest).
+ *
+ *  Pass `target` at a call site that knows what it was talking to. That form
+ *  leads with the error code, which both reads well next to a URL and collapses
+ *  the IPv6/IPv4 attempts into a single ECONNREFUSED instead of repeating it
+ *  per address. Without a target the message is more informative than the code
+ *  (compare "ENOENT" with "ENOENT: no such file or directory, open 'x.json'"),
+ *  so the preference flips. */
+function describeError(err, target = null) {
+  const label = target
+    ? (e) => e.code || e.message
+    : (e) => e.message || e.code;
+
+  const causes = [];
+  const collect = (e) => {
+    if (!e || typeof e !== "object") return;
+    if (Array.isArray(e.errors) && e.errors.length > 0) {
+      e.errors.forEach(collect);
+      return;
+    }
+    const text = label(e);
+    if (text && !causes.includes(text)) causes.push(text);
+  };
+  collect(err);
+
+  const detail = causes.join(", ") || String(err);
+  return target ? `could not reach ${target} (${detail})` : detail;
 }
 
 function ok(label, data) {
@@ -390,7 +426,9 @@ async function cmdExport(positional, flags, serverUrl, apiKey) {
         res.on("end", resolve);
       }
     });
-    req.on("error", reject);
+    // This command streams the response, so it builds its own request rather
+    // than going through request() — it needs the same error context.
+    req.on("error", (err) => reject(new Error(describeError(err, url.origin), { cause: err })));
     req.end();
   });
 }
@@ -1795,7 +1833,9 @@ async function main() {
         process.exit(1);
     }
   } catch (err) {
-    die(err.message || String(err));
+    // Both request paths already name their target; describeError still unwraps
+    // anything else that reaches here with an empty message.
+    die(describeError(err));
   }
 }
 
@@ -1803,6 +1843,6 @@ async function main() {
 // Exports (for testing)
 // ---------------------------------------------------------------------------
 
-module.exports = { parseArgs };
+module.exports = { parseArgs, describeError };
 
 main();

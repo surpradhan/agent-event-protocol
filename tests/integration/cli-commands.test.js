@@ -360,6 +360,62 @@ describe("CLI command integration tests (real subprocess)", () => {
     assert.equal(contacted, false, "CLI must not contact the server when the key is missing");
   });
 
+  /**
+   * Reserve a port by listening on :0, then close it — the port is free, so a
+   * connect there fails with ECONNREFUSED. (Binding first, rather than picking
+   * a number, is what makes the port reliably unused.)
+   */
+  async function closedPort() {
+    const probe = http.createServer();
+    const port = await new Promise((resolve) => {
+      probe.listen(0, "127.0.0.1", () => resolve(probe.address().port));
+    });
+    await new Promise((resolve) => probe.close(resolve));
+    return port;
+  }
+
+  test("an unreachable server names the target and the cause (issue #173)", async () => {
+    // Regression test: this printed a bare "Error: AggregateError" — Node dials
+    // every resolved address and, when all fail, rejects with an AggregateError
+    // whose own .message is empty.
+    const port = await closedPort();
+    const { code, stderr } = await runCli(["session", "ses_1"], {
+      env: { AEP_SERVER: `http://localhost:${port}` },
+    });
+
+    assert.notEqual(code, 0, "CLI should exit non-zero when the server is unreachable");
+    assert.match(stderr, new RegExp(`could not reach http://localhost:${port}`));
+    assert.match(stderr, /ECONNREFUSED/);
+    assert.doesNotMatch(stderr, /AggregateError/, "the raw AggregateError must not surface");
+  });
+
+  test("the unreachable-server message covers the streaming export path too", async () => {
+    // `export` builds its own request instead of going through request(), so it
+    // is the one path a fix applied only to request() would miss.
+    const port = await closedPort();
+    const { code, stderr } = await runCli(["export", "ses_1"], {
+      env: { AEP_SERVER: `http://localhost:${port}` },
+    });
+
+    assert.notEqual(code, 0, "export should exit non-zero when the server is unreachable");
+    assert.match(stderr, new RegExp(`could not reach http://localhost:${port}`));
+    assert.match(stderr, /ECONNREFUSED/);
+    assert.doesNotMatch(stderr, /AggregateError/);
+  });
+
+  test("a hostname that does not resolve reports ENOTFOUND, not AggregateError", async () => {
+    // .invalid is reserved by RFC 2606 and must never resolve, so this exercises
+    // the single-error (non-aggregate) path without depending on the network.
+    const { code, stderr } = await runCli(["session", "ses_1"], {
+      env: { AEP_SERVER: "http://aep-nonexistent.invalid" },
+    });
+
+    assert.notEqual(code, 0, "CLI should exit non-zero when the host does not resolve");
+    assert.match(stderr, /could not reach http:\/\/aep-nonexistent\.invalid/);
+    assert.match(stderr, /ENOTFOUND|EAI_AGAIN/);
+    assert.doesNotMatch(stderr, /AggregateError/);
+  });
+
   test("emit with a missing required flag exits non-zero without contacting the server", async () => {
     const sessionId = `ses_missing_${Date.now()}`;
     const before = received.length;

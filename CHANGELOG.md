@@ -4,6 +4,21 @@ All notable changes to AEP are documented here.
 
 ---
 
+## CLI — connection errors name the target and the cause — 2026-07-29
+
+- **Fixed:** every CLI command reported an unreachable server as a bare
+  `Error: AggregateError` — no host, no port, no `ECONNREFUSED`. Node dials each
+  address a host resolves to and, when they all fail, rejects with an
+  `AggregateError` whose own `.message` is empty, so the shared
+  `err.message || String(err)` in `main()` printed just the class name. Errors
+  now read `could not reach http://localhost:8787 (ECONNREFUSED)`, unwrapping
+  the per-address causes (deduped, so happy eyeballs' IPv4/IPv6 attempts don't
+  repeat the same code) and naming the server. Covers the streaming `aep export`
+  path, which builds its own request, as well as everything going through the
+  shared `request()` helper. Closes #173.
+
+---
+
 ## CLI — `aep metrics` — 2026-07-29
 
 - **`aep metrics [--since iso] [--until iso]`** — prints the JSON body of

@@ -2,7 +2,7 @@
 
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
-const { parseArgs } = require("../../src/cli");
+const { parseArgs, describeError } = require("../../src/cli");
 
 // ---------------------------------------------------------------------------
 // Tests for parseArgs function
@@ -178,5 +178,96 @@ describe("parseArgs routing for new commands", () => {
     const result = parseArgs(["node", "cli.js", "export", "bulk", "--all-tenants"]);
     assert.equal(result.positional[1], "bulk");
     assert.equal(result.flags["all-tenants"], true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests for describeError (issue #173)
+//
+// The bug: Node's happy-eyeballs dialer rejects with an AggregateError whose
+// own .message is empty, so `err.message || String(err)` printed a bare
+// "AggregateError" with no host, port, or cause.
+// ---------------------------------------------------------------------------
+
+describe("describeError", () => {
+  /** Build the AggregateError shape Node produces when every address fails. */
+  function connectFailure(code = "ECONNREFUSED") {
+    const perAddress = [
+      Object.assign(new Error(`connect ${code} 127.0.0.1:8787`), { code, address: "127.0.0.1" }),
+      Object.assign(new Error(`connect ${code} ::1:8787`), { code, address: "::1" }),
+    ];
+    return new AggregateError(perAddress);
+  }
+
+  test("names the target and the cause instead of printing 'AggregateError'", () => {
+    const msg = describeError(connectFailure(), "http://localhost:8787");
+    assert.equal(msg, "could not reach http://localhost:8787 (ECONNREFUSED)");
+    assert.doesNotMatch(msg, /AggregateError/);
+  });
+
+  test("collapses the per-address attempts into one cause", () => {
+    // Happy eyeballs tries IPv4 and IPv6; both fail with the same code, and
+    // repeating it once per address would be noise.
+    const msg = describeError(connectFailure(), "http://localhost:8787");
+    assert.equal(msg.match(/ECONNREFUSED/g).length, 1);
+  });
+
+  test("lists distinct causes when the addresses fail differently", () => {
+    const mixed = new AggregateError([
+      Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:8787"), { code: "ECONNREFUSED" }),
+      Object.assign(new Error("connect EHOSTUNREACH ::1:8787"), { code: "EHOSTUNREACH" }),
+    ]);
+    assert.equal(
+      describeError(mixed, "http://localhost:8787"),
+      "could not reach http://localhost:8787 (ECONNREFUSED, EHOSTUNREACH)"
+    );
+  });
+
+  test("handles a plain (non-aggregate) connection error", () => {
+    // A DNS failure or an IP literal reaches us as a single error, not an
+    // AggregateError — the target form must cover both.
+    const dns = Object.assign(new Error("getaddrinfo ENOTFOUND nope.invalid"), { code: "ENOTFOUND" });
+    assert.equal(
+      describeError(dns, "http://nope.invalid"),
+      "could not reach http://nope.invalid (ENOTFOUND)"
+    );
+  });
+
+  test("unwraps a nested AggregateError", () => {
+    const nested = new AggregateError([connectFailure("ETIMEDOUT")]);
+    assert.equal(
+      describeError(nested, "https://aep.example"),
+      "could not reach https://aep.example (ETIMEDOUT)"
+    );
+  });
+
+  test("falls back to the message when a cause carries no code", () => {
+    const noCode = new AggregateError([new Error("socket hang up")]);
+    assert.equal(
+      describeError(noCode, "http://localhost:8787"),
+      "could not reach http://localhost:8787 (socket hang up)"
+    );
+  });
+
+  test("without a target, prefers the message over the code", () => {
+    // An fs error's message carries the path; its code alone would lose that.
+    const enoent = Object.assign(new Error("ENOENT: no such file or directory, open 'x.json'"), {
+      code: "ENOENT",
+    });
+    assert.equal(describeError(enoent), "ENOENT: no such file or directory, open 'x.json'");
+  });
+
+  test("without a target, an ordinary Error is unchanged", () => {
+    // The pre-existing behaviour of `err.message || String(err)` for the common
+    // case must not regress.
+    assert.equal(describeError(new Error("boom")), "boom");
+  });
+
+  test("degrades gracefully on an empty AggregateError and on a thrown non-error", () => {
+    assert.equal(
+      describeError(new AggregateError([]), "http://localhost:8787"),
+      "could not reach http://localhost:8787 (AggregateError)"
+    );
+    assert.equal(describeError("just a string"), "just a string");
   });
 });
