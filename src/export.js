@@ -45,6 +45,10 @@ const DEFAULT_OUT_DIR = "./exports";
  * that env-var fallbacks are applied later in main() — parseArgs stays a pure,
  * env-free function for unit testing.
  *
+ * Throws if a value-taking flag is bare — at the end of argv, or immediately
+ * followed by another `--flag` — rather than silently defaulting or letting it
+ * swallow the next flag's own token as its value (issue #181).
+ *
  * @param {string[]} argv  full process.argv
  * @returns {{ tenantId: string|null, since: string|null, until: string|null,
  *             out: string, prefix: string, format: string, compression: string,
@@ -72,11 +76,19 @@ function parseArgs(argv) {
     help: args.includes("--help") || args.includes("-h")
   };
 
-  const valueOf = (i) => {
+  // A bare flag — at the end of argv, or immediately followed by another
+  // `--flag` — has no value to give. Erroring here (issue #181) beats silently
+  // keeping the default (the old `if (value) …` guards) or, worse, consuming
+  // the *next* flag's own token as this flag's value.
+  const valueOf = (i, flagName) => {
     const a = args[i];
     const eq = a.indexOf("=");
     if (eq !== -1) return { value: a.slice(eq + 1), consumedNext: false };
-    return { value: args[i + 1], consumedNext: true };
+    const next = args[i + 1];
+    if (next === undefined || next.startsWith("--")) {
+      throw new Error(`${flagName} requires a value`);
+    }
+    return { value: next, consumedNext: true };
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -84,67 +96,67 @@ function parseArgs(argv) {
     const name = a.startsWith("--") ? a.split("=")[0] : a;
     switch (name) {
       case "--tenant": {
-        const { value, consumedNext } = valueOf(i);
+        const { value, consumedNext } = valueOf(i, name);
         opts.tenantId = value ?? null;
         if (consumedNext) i++;
         break;
       }
       case "--since": {
-        const { value, consumedNext } = valueOf(i);
+        const { value, consumedNext } = valueOf(i, name);
         opts.since = value ?? null;
         if (consumedNext) i++;
         break;
       }
       case "--until": {
-        const { value, consumedNext } = valueOf(i);
+        const { value, consumedNext } = valueOf(i, name);
         opts.until = value ?? null;
         if (consumedNext) i++;
         break;
       }
       case "--out": {
-        const { value, consumedNext } = valueOf(i);
+        const { value, consumedNext } = valueOf(i, name);
         if (value) opts.out = value;
         if (consumedNext) i++;
         break;
       }
       case "--prefix": {
-        const { value, consumedNext } = valueOf(i);
+        const { value, consumedNext } = valueOf(i, name);
         opts.prefix = value ?? "";
         if (consumedNext) i++;
         break;
       }
       case "--format": {
-        const { value, consumedNext } = valueOf(i);
+        const { value, consumedNext } = valueOf(i, name);
         if (value) opts.format = value;
         if (consumedNext) i++;
         break;
       }
       case "--compression": {
-        const { value, consumedNext } = valueOf(i);
+        const { value, consumedNext } = valueOf(i, name);
         if (value) opts.compression = value;
         if (consumedNext) i++;
         break;
       }
       case "--sink": {
-        const { value, consumedNext } = valueOf(i);
+        const { value, consumedNext } = valueOf(i, name);
         if (value) opts.sink = value;
         if (consumedNext) i++;
         break;
       }
       case "--bucket": {
-        const { value, consumedNext } = valueOf(i);
+        const { value, consumedNext } = valueOf(i, name);
         if (value) opts.bucket = value;
         if (consumedNext) i++;
         break;
       }
       case "--region": {
-        const { value, consumedNext } = valueOf(i);
+        const { value, consumedNext } = valueOf(i, name);
         if (value) opts.region = value;
         if (consumedNext) i++;
         break;
       }
       case "--endpoint": {
-        const { value, consumedNext } = valueOf(i);
+        const { value, consumedNext } = valueOf(i, name);
         if (value) opts.endpoint = value;
         if (consumedNext) i++;
         break;

@@ -373,8 +373,10 @@ function ok(label, data) {
  *  when the flag is absent, so callers can distinguish "not given" from "empty".
  *
  *  Used by `--timeout` (all commands), `metrics`, `analytics
- *  policy-blocked`/`performance`/`anomalies`, and `webhooks deliveries` for
- *  their since/until/limit/threshold filters. */
+ *  policy-blocked`/`performance`/`anomalies`, `webhooks deliveries`,
+ *  `compliance report`, `session`, `export`, `audit export`, and
+ *  `export bulk` for their since/until/limit/threshold/session/trace/type/q
+ *  and export-option filters. */
 function requireFlagValue(flags, name) {
   const raw = flags[name];
   if (raw === undefined) return undefined;
@@ -544,9 +546,12 @@ async function cmdSession(positional, flags, serverUrl, apiKey) {
   if (!sessionId) die("Usage: aep session <session_id> [--type filter] [--q search]");
   if (!apiKey)    die("API key required. Set --key or AEP_API_KEY env var.");
 
+  const type = requireFlagValue(flags, "type");
+  const q    = requireFlagValue(flags, "q");
+
   const qs = new URLSearchParams();
-  if (flags.type) qs.set("type", flags.type);
-  if (flags.q)    qs.set("q", flags.q);
+  if (type !== undefined) qs.set("type", type);
+  if (q    !== undefined) qs.set("q", q);
   const query = qs.toString() ? `?${qs}` : "";
 
   const res = await request("GET", `${serverUrl}/sessions/${sessionId}/events${query}`, null, {
@@ -603,9 +608,12 @@ async function cmdExport(positional, flags, serverUrl, apiKey) {
   const format = flags.format || "json";
   if (!["json", "csv"].includes(format)) die("--format must be 'json' or 'csv'");
 
+  const type = requireFlagValue(flags, "type");
+  const q    = requireFlagValue(flags, "q");
+
   const qs = new URLSearchParams({ format });
-  if (flags.type) qs.set("type", flags.type);
-  if (flags.q)    qs.set("q", flags.q);
+  if (type !== undefined) qs.set("type", type);
+  if (q    !== undefined) qs.set("q", q);
 
   // For CSV we need the raw text, not parsed JSON
   return new Promise((resolve, reject) => {
@@ -783,12 +791,17 @@ async function cmdAuditExport(positional, flags, serverUrl, apiKey) {
   if (!sessionId) die("Usage: aep audit export <session_id> [--out bundle.json]");
   if (!apiKey)    die("API key required. Set --key or AEP_API_KEY env var.");
 
+  // Cheap local checks before the AUDIT_SIGNING_SECRET requirement, so a typo'd
+  // flag is reported on its own terms rather than behind an unrelated env-var error.
+  const type = requireFlagValue(flags, "type");
+  const q    = requireFlagValue(flags, "q");
+
   const secret = readAuditSecret();
   const { buildAuditBundle } = require("./audit");
 
   const qs = new URLSearchParams({ format: "json" });
-  if (flags.type) qs.set("type", flags.type);
-  if (flags.q)    qs.set("q", flags.q);
+  if (type !== undefined) qs.set("type", type);
+  if (q    !== undefined) qs.set("q", q);
 
   const res = await request("GET", `${serverUrl}/sessions/${sessionId}/export?${qs}`, null, {
     Authorization: `Bearer ${apiKey}`,
@@ -1567,11 +1580,16 @@ async function cmdComplianceReport(flags, serverUrl, apiKey) {
     die("Usage: aep compliance report --framework <soc2|hipaa|gdpr|eu_ai_act> [--session id | --trace id] [--pdf out.pdf | --out file.json]");
   }
 
+  const session = requireFlagValue(flags, "session");
+  const trace   = requireFlagValue(flags, "trace");
+  const since   = requireFlagValue(flags, "since");
+  const until   = requireFlagValue(flags, "until");
+
   const qs = new URLSearchParams({ framework });
-  if (flags.session) qs.set("session", flags.session);
-  if (flags.trace)   qs.set("trace", flags.trace);
-  if (flags.since)   qs.set("since", flags.since);
-  if (flags.until)   qs.set("until", flags.until);
+  if (session !== undefined) qs.set("session", session);
+  if (trace   !== undefined) qs.set("trace", trace);
+  if (since   !== undefined) qs.set("since", since);
+  if (until   !== undefined) qs.set("until", until);
 
   const res = await request("GET", `${serverUrl}/compliance/report?${qs}`, null, {
     Authorization: `Bearer ${apiKey}`,
@@ -1933,28 +1951,43 @@ async function cmdExportBulk(positional, flags) {
   // (Both CLIs use --flag value style so this is mostly pass-through.)
   const fwdArgv = ["node", "export.js"];
 
+  // Every value passed in here already went through requireFlagValue() below,
+  // so it's always a string or undefined — never the bare-flag `true` a raw
+  // `flags.x` read would give.
   const add = (name, val) => {
-    if (val !== undefined && val !== false && val !== null) {
-      if (val === true) {
-        fwdArgv.push(`--${name}`);
-      } else {
-        fwdArgv.push(`--${name}`, String(val));
-      }
-    }
+    if (val !== undefined) fwdArgv.push(`--${name}`, val);
   };
 
-  add("tenant", flags.tenant);
-  add("sink", flags.sink);
+  // Validate every value-taking flag up front so a bare `--since` (etc.) dies
+  // here with a clear error instead of being forwarded as a value-less token
+  // that export.js's own parser would then misinterpret (see issue #181).
+  const tenant      = requireFlagValue(flags, "tenant");
+  // Named sinkKind, not sink — a `const sink` (the constructed Sink object)
+  // is already declared later in this same function.
+  const sinkKind    = requireFlagValue(flags, "sink");
+  const dir         = requireFlagValue(flags, "dir");
+  const out         = requireFlagValue(flags, "out");
+  const bucket      = requireFlagValue(flags, "bucket");
+  const region      = requireFlagValue(flags, "region");
+  const endpoint    = requireFlagValue(flags, "endpoint");
+  const prefix      = requireFlagValue(flags, "prefix");
+  const since       = requireFlagValue(flags, "since");
+  const until       = requireFlagValue(flags, "until");
+  const format      = requireFlagValue(flags, "format");
+  const compression = requireFlagValue(flags, "compression");
+
+  add("tenant", tenant);
+  add("sink", sinkKind);
   // export.js uses --out for the local dir; we expose it as --dir in aep export bulk
-  add("out", flags.dir || flags.out);
-  add("bucket", flags.bucket);
-  add("region", flags.region);
-  add("endpoint", flags.endpoint);
-  add("prefix", flags.prefix);
-  add("since", flags.since);
-  add("until", flags.until);
-  add("format", flags.format);
-  add("compression", flags.compression);
+  add("out", dir || out);
+  add("bucket", bucket);
+  add("region", region);
+  add("endpoint", endpoint);
+  add("prefix", prefix);
+  add("since", since);
+  add("until", until);
+  add("format", format);
+  add("compression", compression);
   if (flags["all-tenants"]) fwdArgv.push("--all-tenants");
   if (flags["dry-run"])     fwdArgv.push("--dry-run");
   if (flags.json)           fwdArgv.push("--json");

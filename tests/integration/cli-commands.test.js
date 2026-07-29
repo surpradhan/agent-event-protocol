@@ -35,6 +35,7 @@ delete baseEnv.AEP_SERVER;
 delete baseEnv.AEP_API_KEY;
 delete baseEnv.ADMIN_TOKEN;
 delete baseEnv.AEP_ADMIN_TOKEN;
+delete baseEnv.AUDIT_SIGNING_SECRET;
 
 describe("CLI command integration tests (real subprocess)", () => {
   /** @type {Array<{method:string,url:string,headers:object,body:any}>} */
@@ -365,13 +366,23 @@ describe("CLI command integration tests (real subprocess)", () => {
     { args: ["analytics", "performance"], urlPrefix: "/analytics/performance", flags: ["since", "until", "limit"] },
     { args: ["analytics", "anomalies"], urlPrefix: "/analytics/anomalies", flags: ["since", "until", "limit", "threshold"] },
     { args: ["webhooks", "deliveries", "wh_001"], urlPrefix: "/webhooks/wh_001/deliveries", flags: ["since", "until", "limit"] },
+    // Issue #181: the same bare-flag-forwarding bug in four more commands.
+    { args: ["compliance", "report", "--framework", "soc2"], urlPrefix: "/compliance/report", flags: ["session", "trace", "since", "until"] },
+    { args: ["session", "ses_bare_001"], urlPrefix: "/sessions/ses_bare_001/events", flags: ["type", "q"] },
+    { args: ["export", "ses_bare_002"], urlPrefix: "/sessions/ses_bare_002/export", flags: ["type", "q"] },
+    {
+      args: ["audit", "export", "ses_bare_003"], urlPrefix: "/sessions/ses_bare_003/export", flags: ["type", "q"],
+      // cmdAuditExport validates flags before requiring AUDIT_SIGNING_SECRET,
+      // but a real secret is supplied here so THIS test isolates the flag check.
+      env: { AUDIT_SIGNING_SECRET: "test-secret" },
+    },
   ];
 
-  for (const { args, urlPrefix, flags } of bareFlagCoverage) {
+  for (const { args, urlPrefix, flags, env } of bareFlagCoverage) {
     for (const flag of flags) {
       test(`${args.join(" ")} rejects a bare --${flag} before contacting the server`, async () => {
         const before = received.length;
-        const { code, stderr } = await runCli([...args, `--${flag}`]);
+        const { code, stderr } = await runCli([...args, `--${flag}`], env ? { env } : {});
 
         assert.notEqual(code, 0, `a value-less --${flag} should not reach the wire as 'true'`);
         assert.match(stderr, new RegExp(`--${flag} requires a value`, "i"));
@@ -379,6 +390,37 @@ describe("CLI command integration tests (real subprocess)", () => {
         assert.equal(contacted, false, "CLI must not request when a flag value is missing");
       });
     }
+  }
+
+  test("audit export reports a bad flag ahead of the unrelated AUDIT_SIGNING_SECRET check", async () => {
+    // AUDIT_SIGNING_SECRET is deliberately left unset (baseEnv strips it) so this
+    // proves cmdAuditExport validates --type/--q before it ever calls
+    // readAuditSecret() — a typo'd flag shouldn't be masked by an environment error.
+    const { code, stderr } = await runCli(["audit", "export", "ses_bare_004", "--type"]);
+
+    assert.notEqual(code, 0);
+    assert.match(stderr, /--type requires a value/i);
+    assert.doesNotMatch(stderr, /AUDIT_SIGNING_SECRET/);
+  });
+
+  // Issue #181: `export bulk` is worse than the sites above — it runs entirely
+  // locally (no server request at all) and used to forward a bare flag as a
+  // value-less token into export.js's own parseArgs, which would then read the
+  // *next* forwarded flag as this one's value. Each value-taking flag must die
+  // here, before src/export.js is ever invoked.
+  const exportBulkFlags = [
+    "tenant", "sink", "dir", "out", "bucket", "region", "endpoint",
+    "prefix", "since", "until", "format", "compression",
+  ];
+  for (const flag of exportBulkFlags) {
+    test(`export bulk rejects a bare --${flag} before running`, async () => {
+      const before = received.length;
+      const { code, stderr } = await runCli(["export", "bulk", `--${flag}`]);
+
+      assert.notEqual(code, 0, `a value-less --${flag} should not be forwarded to export.js`);
+      assert.match(stderr, new RegExp(`--${flag} requires a value`, "i"));
+      assert.equal(received.length, before, "export bulk must never contact the ingest server");
+    });
   }
 
   test("commands with no API key exit non-zero and never contact the server", async () => {
