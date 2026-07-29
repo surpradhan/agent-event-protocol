@@ -96,6 +96,20 @@ describe("CLI command integration tests (real subprocess)", () => {
           return;
         }
 
+        // Metrics (JSON endpoint — not /metrics/prometheus)
+        if (req.method === "GET" && req.url.match(/^\/metrics(\?|$)/)) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            accepted: 42,
+            rejected: 3,
+            byType: { "task.created": 40, "policy.blocked": 2 },
+            sessions: 7,
+            workflows: 4,
+            signatures: { v2: 42 },
+          }));
+          return;
+        }
+
         res.writeHead(404, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Not found" }));
       });
@@ -221,6 +235,43 @@ describe("CLI command integration tests (real subprocess)", () => {
     assert.ok(req, "mock server never received the workflow GET");
     assert.equal(req.headers.authorization, `Bearer ${mockApiKey}`);
     assert.ok(stdout.includes(traceId), "workflow output should echo the trace id");
+  });
+
+  test("metrics drives a GET /metrics with Bearer auth and prints the JSON body", async () => {
+    const { code, stdout } = await runCli(["metrics"]);
+
+    assert.equal(code, 0, `expected success exit, got ${code}`);
+    // (a) what the CLI put on the wire
+    const req = received.find(r => r.method === "GET" && r.url === "/metrics");
+    assert.ok(req, "mock server never received the metrics GET");
+    assert.equal(req.headers.authorization, `Bearer ${mockApiKey}`);
+
+    // (b) stdout is the JSON body of the response
+    const parsed = JSON.parse(stdout);
+    assert.equal(parsed.accepted, 42);
+    assert.equal(parsed.sessions, 7);
+    assert.equal(parsed.byType["policy.blocked"], 2);
+  });
+
+  test("metrics forwards --since/--until as query params", async () => {
+    const since = "2026-07-01T00:00:00Z";
+    const until = "2026-07-02T00:00:00Z";
+    const { code } = await runCli(["metrics", "--since", since, "--until", until]);
+
+    assert.equal(code, 0, `expected success exit, got ${code}`);
+    const qs = new URLSearchParams({ since, until }).toString();
+    const req = received.find(r => r.method === "GET" && r.url === `/metrics?${qs}`);
+    assert.ok(req, "mock server never received the windowed metrics GET");
+  });
+
+  test("metrics with no API key exits non-zero and never contacts the server", async () => {
+    const before = received.length;
+    const { code, stderr } = await runCli(["metrics"], { withKey: false });
+
+    assert.notEqual(code, 0, "CLI should refuse to run without an API key");
+    assert.match(stderr, /API key required/i);
+    const contacted = received.slice(before).some(r => r.url.startsWith("/metrics"));
+    assert.equal(contacted, false, "CLI must not contact the server when the key is missing");
   });
 
   test("commands with no API key exit non-zero and never contact the server", async () => {

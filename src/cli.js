@@ -141,6 +141,7 @@ Commands:
   audit       Build / verify / render a tamper-evident audit bundle
   workflow    Query a full workflow tree by trace_id
   analytics   Policy-enforcement, performance, custom & anomaly analytics
+  metrics     Print server metrics (counters, sessions, workflows) as JSON
   webhooks    Register & manage outbound webhooks
   compliance  Compliance report templates (SOC2/HIPAA/GDPR/EU AI Act)
   admin       Manage API keys (create / list / delete)
@@ -983,6 +984,46 @@ async function cmdAnalytics(positional, flags, serverUrl, apiKey) {
 }
 
 // ---------------------------------------------------------------------------
+// Command: metrics (issue #112)
+// ---------------------------------------------------------------------------
+
+function metricsHelp() {
+  console.log(`
+\x1b[1maep metrics\x1b[0m — Print server metrics (counters, sessions, workflows) as JSON
+
+Usage:
+  aep metrics [--since iso] [--until iso]
+
+Flags:
+  --since <iso>   Only count events at/after this ISO-8601 timestamp
+  --until <iso>   Only count events before this ISO-8601 timestamp
+
+Fetches GET /metrics (the JSON endpoint, not /metrics/prometheus) and prints
+the response body. Requires a read-scoped API key.
+`);
+}
+
+async function cmdMetrics(flags, serverUrl, apiKey) {
+  if (flags.help) { metricsHelp(); return; }
+  if (!apiKey) die("API key required. Set --key or AEP_API_KEY env var.");
+
+  const qs = new URLSearchParams();
+  if (flags.since) qs.set("since", flags.since);
+  if (flags.until) qs.set("until", flags.until);
+  const query = qs.toString() ? `?${qs}` : "";
+
+  const res = await request("GET", `${serverUrl}/metrics${query}`, null, {
+    Authorization: `Bearer ${apiKey}`,
+  });
+
+  if (res.status !== 200) {
+    die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+  }
+
+  console.log(JSON.stringify(res.body, null, 2));
+}
+
+// ---------------------------------------------------------------------------
 // Command: webhooks (Phase 16-A)
 // ---------------------------------------------------------------------------
 
@@ -1701,6 +1742,7 @@ async function main() {
       case "audit":    await cmdAudit(positional, flags, serverUrl, apiKey); break;
       case "workflow": await cmdWorkflow(positional, flags, serverUrl, apiKey); break;
       case "analytics": await cmdAnalytics(positional, flags, serverUrl, apiKey); break;
+      case "metrics":  await cmdMetrics(flags, serverUrl, apiKey); break;
       case "webhooks": await cmdWebhooks(positional, flags, serverUrl, apiKey); break;
       case "compliance": await cmdCompliance(positional, flags, serverUrl, apiKey); break;
       case "admin":    await cmdAdmin(positional, flags, serverUrl); break;
