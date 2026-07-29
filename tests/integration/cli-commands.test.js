@@ -3,6 +3,8 @@
 const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const http = require("http");
+const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { execFile } = require("node:child_process");
 
@@ -446,4 +448,424 @@ describe("CLI command integration tests (real subprocess)", () => {
       && r.body && r.body.session_id === sessionId);
     assert.equal(contacted, false, "CLI must not POST when required flags are missing");
   });
+
+  test("a local write failure is attributed to the file, not to the server (issue #178)", async () => {
+    // A dedicated, well-behaved server: the response completes normally and
+    // in full, so the only possible failure is the local one under test —
+    // nothing here should race against a truncation or timeout.
+    const healthy = http.createServer((req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end('{"events":[]}');
+    });
+    await new Promise((resolve) => healthy.listen(0, "127.0.0.1", resolve));
+    try {
+      const healthyUrl = `http://127.0.0.1:${healthy.address().port}`;
+      // A directory is never a writable regular file — fails locally (EISDIR),
+      // not a server problem.
+      const dirAsOut = os.tmpdir();
+      const { code, stdout, stderr } = await runCli(["export", "ses_1", "--out", dirAsOut],
+        { env: { AEP_SERVER: healthyUrl } });
+
+      assert.notEqual(code, 0);
+      assert.doesNotMatch(stdout, /Exported to/);
+      assert.match(stderr, /could not write/);
+      assert.doesNotMatch(stderr, /could not reach/,
+        "a local fs error must not be blamed on the server");
+    } finally {
+      await new Promise((resolve) => healthy.close(resolve));
+    }
+  });
+});
+
+/**
+ * Issue #178 — --timeout resolution must not block a command that never
+ * makes a request. `audit verify`/`audit render` check a bundle file offline
+ * and `validate` checks a local event file; none of the three ever calls
+ * request(), so a stray bad --timeout alongside one must not stop it from
+ * running its own (unrelated) validation and reporting *that* failure.
+ */
+describe("--timeout resolution skips local-only commands (issue #178)", () => {
+  function runLocal(args) {
+    return new Promise((resolve) => {
+      execFile(process.execPath, [CLI_PATH, ...args],
+        { cwd: REPO_ROOT, env: { ...baseEnv, AUDIT_SIGNING_SECRET: "test-secret" }, timeout: 10000 },
+        (error, stdout, stderr) => {
+          resolve({ code: error ? (error.code ?? 1) : 0, stdout, stderr });
+        });
+    });
+  }
+
+  test("audit verify with a bad --timeout still runs, and fails on its own usage", async () => {
+    const { code, stderr } = await runLocal(["audit", "verify", "--timeout", "junk"]);
+
+    assert.notEqual(code, 0);
+    assert.doesNotMatch(stderr, /--timeout must be/,
+      "a command that never contacts a server must not be blocked by --timeout validation");
+    assert.match(stderr, /Usage: aep audit verify/);
+  });
+
+  test("audit render with a bad --timeout still runs, and fails on its own usage", async () => {
+    const { code, stderr } = await runLocal(["audit", "render", "--timeout", "junk"]);
+
+    assert.notEqual(code, 0);
+    assert.doesNotMatch(stderr, /--timeout must be/);
+  });
+
+  test("validate with a bad --timeout still runs, and fails on its own usage", async () => {
+    const { code, stderr } = await runLocal(["validate", "--timeout", "junk"]);
+
+    assert.notEqual(code, 0);
+    assert.doesNotMatch(stderr, /--timeout must be/);
+    assert.match(stderr, /Usage: aep validate/);
+  });
+
+  test("export bulk with a bad --timeout still runs its own logic to completion", async () => {
+    // A fresh scratch DB (via DATABASE_PATH), auto-migrated by db.init() —
+    // cmdExportBulk runs all the way through a dry-run against it. The point
+    // isn't success or failure; it's that a bad --timeout, which never gets
+    // used since this command never calls request(), didn't stop it from
+    // getting there at all.
+    const scratchDb = path.join(os.tmpdir(), `aep-bulk-${process.pid}-${Date.now()}.db`);
+    try {
+      const { code, stdout, stderr } = await new Promise((resolve) => {
+        execFile(process.execPath, [CLI_PATH, "export", "bulk", "--timeout", "junk", "--dry-run"],
+          {
+            cwd: REPO_ROOT,
+            env: { ...baseEnv, DATABASE_PATH: scratchDb },
+            timeout: 10000,
+          },
+          (error, stdout, stderr) => {
+            resolve({ code: error ? (error.code ?? 1) : 0, stdout, stderr });
+          });
+      });
+
+      assert.doesNotMatch(stderr, /--timeout must be/,
+        "export bulk never calls request(); --timeout validation must not block it");
+      assert.equal(code, 0, `expected the dry-run against a fresh DB to succeed, got stderr: ${stderr}`);
+      assert.match(stdout, /Scanned \d+ tenant/, "should reach export bulk's own summary output");
+    } finally {
+      fs.rmSync(scratchDb, { force: true });
+    }
+  });
+
+  test("a network command still rejects a bad --timeout before contacting the server", async () => {
+    // Control case: session DOES call request(), so it must keep validating.
+    const { code, stderr } = await runLocal(["session", "ses_1", "--timeout", "junk",
+      "--server", "http://127.0.0.1:1", "--key", "x"]);
+
+    assert.notEqual(code, 0);
+    assert.match(stderr, /--timeout must be/);
+  });
+
+  test("no command at all still prints usage instead of dying on --timeout", async () => {
+    const { code, stdout, stderr } = await runLocal(["--timeout", "junk"]);
+
+    assert.equal(code, 0, "bare `aep --timeout junk` should print usage, not fail");
+    assert.doesNotMatch(stderr, /--timeout must be/);
+    assert.match(stdout, /AEP CLI/);
+  });
+});
+
+/**
+ * Issue #178 — armTimeout()'s socket-level listener must be removed once its
+ * own request settles, or a later request that reuses the same kept-alive
+ * socket (http(s).globalAgent, and any agent with keepAlive: true) inherits
+ * it: Node's socket.setTimeout(ms, cb) *adds* cb as a 'timeout' listener
+ * rather than replacing the previous request's, so an unremoved one fires
+ * alongside the new one on the next idle period — and would keep stacking
+ * with every further request that reuses the socket without disarming.
+ *
+ * Exercised directly against the exported armTimeout(), rather than through
+ * a full CLI command: aep init (the one command that makes several sequential
+ * requests to the same host) swallows the underlying error's detail in its
+ * own reporting, which would make a subprocess-level test blind to a second,
+ * leaked listener firing — it settles the *promise* exactly once regardless,
+ * by design (see the `settled` guard both call sites use). Listener count is
+ * the thing that actually catches a leak.
+ */
+describe("armTimeout does not leak listeners across a reused keep-alive socket (issue #178)", () => {
+  test("a settled request's timeout listener is gone before the next request on the same socket arms its own", async () => {
+    const { armTimeout } = require("../../src/cli");
+    const server = http.createServer((req, res) => {
+      if (req.url === "/first") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end("{}");
+        return;
+      }
+      // /second: accept, never respond — the socket goes idle while reused.
+    });
+
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const port = server.address().port;
+      const agent = new http.Agent({ keepAlive: true });
+
+      // Request 1: succeeds, then disarms. If disarm doesn't actually remove
+      // the socket-level listener, it's still sitting on the (reused) socket
+      // for request 2 to inherit.
+      let sharedSocket;
+      await new Promise((resolve, reject) => {
+        const req = http.request({ host: "127.0.0.1", port, path: "/first", agent }, (res) => {
+          res.resume();
+          res.on("end", () => { disarm(); resolve(); });
+        });
+        req.on("socket", (s) => { sharedSocket = s; });
+        const disarm = armTimeout(req, reject, 500);
+        req.end();
+      });
+
+      // Not listenerCount('timeout') === 0: Node's own http.Agent adds its own
+      // 'timeout' listener (named onTimeout) when it parks a kept-alive socket
+      // back in the free pool — that one is Node's, not ours, and armTimeout
+      // has no business removing it. What must be gone is specifically our
+      // onIdle (named via `const onIdle = () => {}`'s inferred function name).
+      assert.ok(
+        !sharedSocket.listeners("timeout").some((fn) => fn.name === "onIdle"),
+        "request 1's onIdle listener must be removed once it settles, before request 2 ever arms its own"
+      );
+
+      // Request 2: same agent + host + port → same socket. Never answered, so
+      // its own timer trips. Exactly one call to fail() proves only ONE
+      // listener fired — a leaked one from request 1 would fire a second time
+      // on the very same event, since both are bound to 'timeout' on the same
+      // socket object.
+      let fireCount = 0;
+      await new Promise((resolve) => {
+        const req2 = http.request({ host: "127.0.0.1", port, path: "/second", agent }, () => {});
+        // destroy() emits 'error' (socket hang up) asynchronously; the real
+        // armTimeout() callers handle it via their own req.on("error", fail),
+        // which this test doesn't need — just needs it not to be uncaught.
+        req2.on("error", () => {});
+        armTimeout(req2, () => { fireCount++; req2.destroy(); resolve(); }, 300);
+        req2.end();
+      });
+
+      assert.equal(fireCount, 1, `expected exactly one timeout fire, got ${fireCount}`);
+      agent.destroy();
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
+/**
+ * Issue #178 — a request that starts fine and then stalls.
+ *
+ * Two different failures before the fix, both covered here. A server that
+ * accepts and never answers hung the CLI indefinitely — no timeout was armed
+ * anywhere. A response truncated mid-body did NOT hang: nothing listened for
+ * 'aborted', so the promise settled via neither resolve nor reject, the
+ * process had nothing left keeping it alive, and node exited 0 with whatever
+ * partial output had already been written — a silent false success, arguably
+ * worse than a hang since a caller's `&&` sees it as passing. Each test
+ * therefore asserts on the message AND on the CLI having exited on its own —
+ * for the hang cases that rules out a pass by way of execFile's own kill
+ * timeout; for the truncation cases it rules out a regression back to a quiet
+ * exit 0.
+ */
+describe("CLI stalled-connection handling (issue #178)", () => {
+  let hostileUrl;
+  let hostileServer;
+  /** Sockets parked by the never-responds route, closed in after(). */
+  const parked = [];
+
+  before(async () => {
+    hostileServer = http.createServer((req, res) => {
+      // Never respond: accept the request and hold the socket open. This is the
+      // "server is up but wedged" case — no error ever arrives to unstick us.
+      if (req.url.startsWith("/sessions/hang/")) {
+        parked.push(res.socket);
+        return;
+      }
+      // Dribble: a slow-but-progressing transfer. Each gap between chunks is
+      // well under the timeouts used below, but the whole response takes
+      // longer than they do — proving the timer is idle-based, not a cap on
+      // total duration.
+      if (req.url.startsWith("/sessions/dribble/")) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        const chunks = [
+          '{"events":[{"id"', ':"evt_1","type"',
+          `:"task.created","time":"${new Date().toISOString()}"}]}`,
+        ];
+        let i = 0;
+        const sendNext = () => {
+          if (i >= chunks.length) { res.end(); return; }
+          res.write(chunks[i++]);
+          setTimeout(sendNext, 300);
+        };
+        sendNext();
+        return;
+      }
+      // Slow: answers correctly, but only after a delay — long enough for a
+      // short --timeout to have already given up, short enough for a disabled
+      // one (or a generous one) to still be waiting.
+      if (req.url.startsWith("/sessions/slow/")) {
+        setTimeout(() => {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end('{"events":[]}');
+        }, 1500);
+        return;
+      }
+      // Truncate: promise more body than we send, then kill the socket. The
+      // response emits 'aborted' — the event nobody used to listen for.
+      res.writeHead(200, { "Content-Type": "application/json", "Content-Length": "4096" });
+      res.write('{"events":[{"id":"evt_1"');
+      // Optional chaining: if the client has already gone away in this 20ms
+      // window, res.socket is null and a bare .destroy() would throw inside a
+      // timer callback, taking the whole test run down instead of one test.
+      setTimeout(() => res.socket?.destroy(), 20);
+    });
+    await new Promise((resolve) => {
+      hostileServer.listen(0, "127.0.0.1", () => {
+        hostileUrl = `http://127.0.0.1:${hostileServer.address().port}`;
+        resolve();
+      });
+    });
+  });
+
+  after(async () => {
+    for (const socket of parked) socket.destroy();
+    await new Promise((resolve) => hostileServer.close(resolve));
+  });
+
+  /** Like the suite's runCli, but pointed at the hostile server and reporting
+   *  whether the CLI exited by itself or had to be killed. */
+  function runCli(args, { env = {} } = {}) {
+    const childEnv = { ...baseEnv, AEP_SERVER: hostileUrl, AEP_API_KEY: mockApiKey, ...env };
+    return new Promise((resolve) => {
+      execFile(process.execPath, [CLI_PATH, ...args],
+        { cwd: REPO_ROOT, env: childEnv, timeout: 20000 },
+        (error, stdout, stderr) => {
+          resolve({
+            code: error ? (error.code ?? 1) : 0,
+            killed: Boolean(error && error.killed),
+            stdout,
+            stderr,
+          });
+        });
+    });
+  }
+
+  test("a server that accepts and never responds trips the timeout", async () => {
+    const { code, killed, stderr } = await runCli(["session", "hang", "--timeout", "1"]);
+
+    assert.equal(killed, false, "the CLI must give up on its own, not be killed by the test");
+    assert.notEqual(code, 0, "a timed-out request should exit non-zero");
+    assert.match(stderr, new RegExp(`could not reach ${hostileUrl.replace(/\./g, "\\.")}`));
+    assert.match(stderr, /ETIMEDOUT/);
+    assert.match(stderr, /--timeout/, "the message should say which knob to turn");
+  });
+
+  test("the timeout covers the streaming export path too", async () => {
+    // export builds its own request rather than going through request(), so it
+    // is the path a fix applied only to the shared helper would miss.
+    const { code, killed, stderr } = await runCli(["export", "hang", "--timeout", "1"]);
+
+    assert.equal(killed, false, "the CLI must give up on its own");
+    assert.notEqual(code, 0);
+    assert.match(stderr, /ETIMEDOUT/);
+  });
+
+  test("a response truncated mid-body is reported, not waited on", async () => {
+    const { code, killed, stderr } = await runCli(["session", "ses_1"]);
+
+    assert.equal(killed, false, "a truncated response must settle the command");
+    assert.notEqual(code, 0, "a truncated response is a failure, not a partial success");
+    assert.match(stderr, /ECONNRESET/);
+    assert.match(stderr, /before the response was complete/);
+  });
+
+  test("a truncated export to a file fails instead of reporting success", async () => {
+    const out = path.join(os.tmpdir(), `aep-export-${process.pid}-${Date.now()}.json`);
+    try {
+      const { code, killed, stdout, stderr } = await runCli(["export", "ses_1", "--out", out]);
+
+      assert.equal(killed, false);
+      assert.notEqual(code, 0, "a half-written export must not exit 0");
+      assert.doesNotMatch(stdout, /Exported to/, "success must not be claimed for a partial file");
+      assert.match(stderr, /Incomplete export left in/);
+      assert.match(stderr, new RegExp(out.replace(/[.\\/]/g, "\\$&")),
+        "the message should name the partial file so it isn't mistaken for a good export");
+    } finally {
+      fs.rmSync(out, { force: true });
+    }
+  });
+
+  test("a truncated export to stdout says the output is incomplete", async () => {
+    const { code, killed, stderr } = await runCli(["export", "ses_1"]);
+
+    assert.equal(killed, false);
+    assert.notEqual(code, 0);
+    assert.match(stderr, /The export above is incomplete/);
+  });
+
+  test("an unparseable --timeout is rejected locally, without contacting the server", async () => {
+    const { code, killed, stderr } = await runCli(["session", "hang", "--timeout", "soon"]);
+
+    assert.equal(killed, false, "a bad flag must fail immediately, not hang on the server");
+    assert.notEqual(code, 0);
+    assert.match(stderr, /--timeout must be a non-negative number of seconds/);
+  });
+
+  test("a negative --timeout is rejected", async () => {
+    const { code, killed, stderr } = await runCli(["session", "hang", "--timeout", "-5"]);
+
+    assert.equal(killed, false);
+    assert.notEqual(code, 0);
+    assert.match(stderr, /--timeout must be a non-negative number of seconds/);
+  });
+
+  test("a value-less --timeout is rejected rather than read as 'true'", async () => {
+    const { code, killed, stderr } = await runCli(["session", "hang", "--timeout"]);
+
+    assert.equal(killed, false);
+    assert.notEqual(code, 0);
+    assert.match(stderr, /--timeout requires a value/);
+  });
+
+  test("AEP_TIMEOUT applies when no flag is given", async () => {
+    const { code, killed, stderr } = await runCli(["session", "hang"], { env: { AEP_TIMEOUT: "1" } });
+
+    assert.equal(killed, false, "the env var must arm the timeout on its own");
+    assert.notEqual(code, 0);
+    assert.match(stderr, /ETIMEDOUT/);
+  });
+
+  test("an invalid AEP_TIMEOUT is blamed on itself, not on --timeout", async () => {
+    const { code, killed, stderr } = await runCli(["session", "hang"], { env: { AEP_TIMEOUT: "soon" } });
+
+    assert.equal(killed, false);
+    assert.notEqual(code, 0);
+    assert.match(stderr, /AEP_TIMEOUT must be a non-negative number of seconds/,
+      "no --timeout was passed, so the message must name the env var that actually was");
+  });
+
+  test("the timeout is idle-based: a slow-but-progressing transfer outlives it", async () => {
+    // Each chunk of the dribble route arrives ~300ms after the last; a 1s
+    // timeout would trip on total duration (the transfer takes ~900ms end to
+    // end) but must not trip on inactivity, since no single gap reaches 1s.
+    const { code, killed, stdout, stderr } = await runCli(["session", "dribble", "--timeout", "1"]);
+
+    assert.equal(killed, false);
+    assert.equal(code, 0, `expected the dribbled response to complete, got stderr: ${stderr}`);
+    assert.match(stdout, /evt_1/);
+  });
+
+  test("a short --timeout trips before a slow-but-eventually-answering server responds", async () => {
+    const { code, killed, stderr } = await runCli(["session", "slow", "--timeout", "0.5"]);
+
+    assert.equal(killed, false);
+    assert.notEqual(code, 0);
+    assert.match(stderr, /ETIMEDOUT/);
+  });
+
+  test("--timeout 0 disables the timeout and waits out a slow response", async () => {
+    const { code, killed, stdout, stderr } = await runCli(["session", "slow", "--timeout", "0"]);
+
+    assert.equal(killed, false);
+    assert.equal(code, 0, `expected the slow response to be waited out, got stderr: ${stderr}`);
+    assert.doesNotMatch(stderr, /ETIMEDOUT/);
+    assert.match(stdout, /events/);
+  });
+
 });
