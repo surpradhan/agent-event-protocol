@@ -448,16 +448,49 @@ describe("CLI command integration tests (real subprocess)", () => {
       && r.body && r.body.session_id === sessionId);
     assert.equal(contacted, false, "CLI must not POST when required flags are missing");
   });
+
+  test("a local write failure is attributed to the file, not to the server (issue #178)", async () => {
+    // A dedicated, well-behaved server: the response completes normally and
+    // in full, so the only possible failure is the local one under test —
+    // nothing here should race against a truncation or timeout.
+    const healthy = http.createServer((req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end('{"events":[]}');
+    });
+    await new Promise((resolve) => healthy.listen(0, "127.0.0.1", resolve));
+    try {
+      const healthyUrl = `http://127.0.0.1:${healthy.address().port}`;
+      // A directory is never a writable regular file — fails locally (EISDIR),
+      // not a server problem.
+      const dirAsOut = os.tmpdir();
+      const { code, stdout, stderr } = await runCli(["export", "ses_1", "--out", dirAsOut],
+        { env: { AEP_SERVER: healthyUrl } });
+
+      assert.notEqual(code, 0);
+      assert.doesNotMatch(stdout, /Exported to/);
+      assert.match(stderr, /could not write/);
+      assert.doesNotMatch(stderr, /could not reach/,
+        "a local fs error must not be blamed on the server");
+    } finally {
+      await new Promise((resolve) => healthy.close(resolve));
+    }
+  });
 });
 
 /**
  * Issue #178 — a request that starts fine and then stalls.
  *
- * Every case here would have hung the CLI indefinitely before the fix: nothing
- * listened for a dead response and no timeout was armed, so the promise behind
- * the command simply never settled. Each test therefore asserts on the message
- * AND on the CLI having exited on its own — a subprocess killed by execFile's
- * own timeout would otherwise look like a pass.
+ * Two different failures before the fix, both covered here. A server that
+ * accepts and never answers hung the CLI indefinitely — no timeout was armed
+ * anywhere. A response truncated mid-body did NOT hang: nothing listened for
+ * 'aborted', so the promise settled via neither resolve nor reject, the
+ * process had nothing left keeping it alive, and node exited 0 with whatever
+ * partial output had already been written — a silent false success, arguably
+ * worse than a hang since a caller's `&&` sees it as passing. Each test
+ * therefore asserts on the message AND on the CLI having exited on its own —
+ * for the hang cases that rules out a pass by way of execFile's own kill
+ * timeout; for the truncation cases it rules out a regression back to a quiet
+ * exit 0.
  */
 describe("CLI stalled-connection handling (issue #178)", () => {
   let hostileUrl;
@@ -473,11 +506,43 @@ describe("CLI stalled-connection handling (issue #178)", () => {
         parked.push(res.socket);
         return;
       }
+      // Dribble: a slow-but-progressing transfer. Each gap between chunks is
+      // well under the timeouts used below, but the whole response takes
+      // longer than they do — proving the timer is idle-based, not a cap on
+      // total duration.
+      if (req.url.startsWith("/sessions/dribble/")) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        const chunks = [
+          '{"events":[{"id"', ':"evt_1","type"',
+          `:"task.created","time":"${new Date().toISOString()}"}]}`,
+        ];
+        let i = 0;
+        const sendNext = () => {
+          if (i >= chunks.length) { res.end(); return; }
+          res.write(chunks[i++]);
+          setTimeout(sendNext, 300);
+        };
+        sendNext();
+        return;
+      }
+      // Slow: answers correctly, but only after a delay — long enough for a
+      // short --timeout to have already given up, short enough for a disabled
+      // one (or a generous one) to still be waiting.
+      if (req.url.startsWith("/sessions/slow/")) {
+        setTimeout(() => {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end('{"events":[]}');
+        }, 1500);
+        return;
+      }
       // Truncate: promise more body than we send, then kill the socket. The
       // response emits 'aborted' — the event nobody used to listen for.
       res.writeHead(200, { "Content-Type": "application/json", "Content-Length": "4096" });
       res.write('{"events":[{"id":"evt_1"');
-      setTimeout(() => res.socket.destroy(), 20);
+      // Optional chaining: if the client has already gone away in this 20ms
+      // window, res.socket is null and a bare .destroy() would throw inside a
+      // timer callback, taking the whole test run down instead of one test.
+      setTimeout(() => res.socket?.destroy(), 20);
     });
     await new Promise((resolve) => {
       hostileServer.listen(0, "127.0.0.1", () => {
@@ -594,4 +659,42 @@ describe("CLI stalled-connection handling (issue #178)", () => {
     assert.notEqual(code, 0);
     assert.match(stderr, /ETIMEDOUT/);
   });
+
+  test("an invalid AEP_TIMEOUT is blamed on itself, not on --timeout", async () => {
+    const { code, killed, stderr } = await runCli(["session", "hang"], { env: { AEP_TIMEOUT: "soon" } });
+
+    assert.equal(killed, false);
+    assert.notEqual(code, 0);
+    assert.match(stderr, /AEP_TIMEOUT must be a non-negative number of seconds/,
+      "no --timeout was passed, so the message must name the env var that actually was");
+  });
+
+  test("the timeout is idle-based: a slow-but-progressing transfer outlives it", async () => {
+    // Each chunk of the dribble route arrives ~300ms after the last; a 1s
+    // timeout would trip on total duration (the transfer takes ~900ms end to
+    // end) but must not trip on inactivity, since no single gap reaches 1s.
+    const { code, killed, stdout, stderr } = await runCli(["session", "dribble", "--timeout", "1"]);
+
+    assert.equal(killed, false);
+    assert.equal(code, 0, `expected the dribbled response to complete, got stderr: ${stderr}`);
+    assert.match(stdout, /evt_1/);
+  });
+
+  test("a short --timeout trips before a slow-but-eventually-answering server responds", async () => {
+    const { code, killed, stderr } = await runCli(["session", "slow", "--timeout", "0.5"]);
+
+    assert.equal(killed, false);
+    assert.notEqual(code, 0);
+    assert.match(stderr, /ETIMEDOUT/);
+  });
+
+  test("--timeout 0 disables the timeout and waits out a slow response", async () => {
+    const { code, killed, stdout, stderr } = await runCli(["session", "slow", "--timeout", "0"]);
+
+    assert.equal(killed, false);
+    assert.equal(code, 0, `expected the slow response to be waited out, got stderr: ${stderr}`);
+    assert.doesNotMatch(stderr, /ETIMEDOUT/);
+    assert.match(stdout, /events/);
+  });
+
 });

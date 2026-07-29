@@ -81,15 +81,24 @@ let requestTimeoutMs = DEFAULT_TIMEOUT_MS;
  *  Note the timer measures *inactivity*, not total duration (see armTimeout),
  *  so a large export that keeps streaming never trips it. */
 function resolveTimeoutMs(flags, env = process.env) {
-  const raw = flags.timeout !== undefined ? requireFlagValue(flags, "timeout") : env.AEP_TIMEOUT;
+  const fromFlag = flags.timeout !== undefined;
+  const raw = fromFlag ? requireFlagValue(flags, "timeout") : env.AEP_TIMEOUT;
   if (raw === undefined || String(raw).trim() === "") return DEFAULT_TIMEOUT_MS;
   const seconds = Number(raw);
   if (!Number.isFinite(seconds) || seconds < 0) {
-    die(`--timeout must be a non-negative number of seconds (0 disables), got '${raw}'`);
+    // Name whichever of the two actually supplied the bad value — a bare
+    // "--timeout must be…" would send an AEP_TIMEOUT typo hunting the wrong
+    // place, since no --timeout was ever passed.
+    const source = fromFlag ? "--timeout" : "AEP_TIMEOUT";
+    die(`${source} must be a non-negative number of seconds (0 disables), got '${raw}'`);
   }
+  if (seconds === 0) return 0;
   // A tiny-but-positive value must not round down to 0, which would read as
-  // "disabled" and reintroduce the hang the flag exists to prevent.
-  return seconds === 0 ? 0 : Math.max(1, Math.round(seconds * 1000));
+  // "disabled" and reintroduce the hang the flag exists to prevent. At the
+  // other end, setTimeout's delay is a 32-bit signed int; anything above that
+  // overflows and fires a TimeoutOverflowWarning instead of ever timing out —
+  // cap it, since a value this large means "effectively never" either way.
+  return Math.min(Math.max(1, Math.round(seconds * 1000)), 2 ** 31 - 1);
 }
 
 /** Arm the inactivity timeout on a request.
@@ -100,7 +109,7 @@ function resolveTimeoutMs(flags, env = process.env) {
  *  what lets a slow-but-progressing export run past it. */
 function armTimeout(req, fail) {
   if (requestTimeoutMs <= 0) return;
-  req.setTimeout(requestTimeoutMs, () => {
+  const onIdle = () => {
     // Report first, destroy second: destroying emits further events, and the
     // timeout is the cause worth printing, not the cleanup it triggers.
     fail(Object.assign(
@@ -108,7 +117,15 @@ function armTimeout(req, fail) {
       { code: "ETIMEDOUT" }
     ));
     req.destroy();
-  });
+  };
+  req.setTimeout(requestTimeoutMs, onIdle);
+  // req.setTimeout() only takes effect once a socket is attached, which for a
+  // fresh connection happens on 'connect' — so a black-holed address (nothing
+  // answers, nothing refuses) instead rides Node's own connect timeout (~5s,
+  // even for a --timeout of 1 or 60). Arming the socket's own timer as soon as
+  // it exists covers that gap; whichever fires first wins, the other is inert
+  // once the request is destroyed.
+  req.on("socket", (socket) => socket.setTimeout(requestTimeoutMs, onIdle));
 }
 
 /** The error a truncated response reports.
@@ -621,7 +638,6 @@ async function cmdExport(positional, flags, serverUrl, apiKey) {
       // server that quit mid-body left this promise pending forever.
       res.on("aborted", () => fail(truncatedResponseError()));
       res.on("error", fail);
-      streaming = true;
       if (flags.out) {
         const fs = require("fs");
         const ws = fs.createWriteStream(flags.out);
@@ -635,9 +651,20 @@ async function cmdExport(positional, flags, serverUrl, apiKey) {
         // the server ("could not reach …") would send the reader the wrong way.
         ws.on("error", (err) => {
           sink = null; // errored streams self-destruct; nothing left to close
-          rejectOnce(`could not write ${flags.out}: ${describeError(err)}`, err);
+          // An fs error's message already repeats the path (e.g. "ENOENT: no
+          // such file or directory, open '<path>'"), so pairing it with
+          // describeError(err) here would print the path twice — and on a long
+          // one, oneLine's 160-char cap would clip the copy that still carried
+          // the reason. err.code alone says enough next to the path we already
+          // printed; fall back to describeError only when there's no code.
+          rejectOnce(`could not write ${flags.out}: ${err.code || describeError(err)}`, err);
         });
       } else {
+        // Only claim something printed once a byte actually reached stdout —
+        // a die-before-first-chunk failure (e.g. the response aborts right
+        // after headers) must not print "the export above is incomplete"
+        // above nothing.
+        res.once("data", () => { streaming = true; });
         res.pipe(process.stdout);
         res.on("end", succeed);
       }
@@ -2010,7 +2037,12 @@ async function main() {
   const serverUrl = (flags.server || process.env.AEP_SERVER || "http://localhost:8787").replace(/\/$/, "");
   const apiKey    = flags.key || process.env.AEP_API_KEY || null;
   // admin token — resolved lazily per-command (not required for non-admin commands)
-  requestTimeoutMs = resolveTimeoutMs(flags);
+  // Skip resolution (and its die() on a bad value) for --help and `validate`:
+  // neither ever calls request(), so a stray `--timeout junk` alongside
+  // `--help` shouldn't stop the help text from printing.
+  requestTimeoutMs = (flags.help || positional[0] === "validate")
+    ? DEFAULT_TIMEOUT_MS
+    : resolveTimeoutMs(flags);
 
   const command = positional[0];
 
