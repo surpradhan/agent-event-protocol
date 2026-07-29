@@ -374,9 +374,9 @@ function ok(label, data) {
  *
  *  Used by `--timeout` (all commands), `metrics`, `analytics
  *  policy-blocked`/`performance`/`anomalies`, `webhooks deliveries`,
- *  `compliance report`, `session`, `export`, `audit export`, and
- *  `export bulk` for their since/until/limit/threshold/session/trace/type/q
- *  and export-option filters. */
+ *  `compliance report`, `session`, `export`, `audit export`, `audit render`,
+ *  `export bulk`, and `emit` for their since/until/limit/threshold/session/
+ *  trace/type/q/out and export-option filters. */
 function requireFlagValue(flags, name) {
   const raw = flags[name];
   if (raw === undefined) return undefined;
@@ -462,11 +462,15 @@ Optional flags:
 async function cmdEmit(flags, serverUrl, apiKey) {
   if (flags.help) { emitHelp(); return; }
 
-  if (!flags.type)    die("--type is required");
-  if (!flags.source)  die("--source is required");
-  if (!flags.session) die("--session is required");
-  if (!flags.trace)   die("--trace is required");
-  if (!apiKey)        die("API key required. Set --key or AEP_API_KEY env var.");
+  const type    = requireFlagValue(flags, "type");
+  const source  = requireFlagValue(flags, "source");
+  const session = requireFlagValue(flags, "session");
+  const trace   = requireFlagValue(flags, "trace");
+  if (!type)    die("--type is required");
+  if (!source)  die("--source is required");
+  if (!session) die("--session is required");
+  if (!trace)   die("--trace is required");
+  if (!apiKey)  die("API key required. Set --key or AEP_API_KEY env var.");
 
   let payload = {};
   if (flags.payload) {
@@ -484,10 +488,10 @@ async function cmdEmit(flags, serverUrl, apiKey) {
     specversion: "0.2.0",
     id: flags.id || `evt_${crypto.randomUUID().replace(/-/g, "")}`,
     time: flags.time || new Date().toISOString(),
-    source: flags.source,
-    type: flags.type,
-    session_id: flags.session,
-    trace_id: flags.trace,
+    source,
+    type,
+    session_id: session,
+    trace_id: trace,
     payload,
     ...(flags.role     ? { agent_role: flags.role }             : {}),
     ...(flags.parent   ? { parent_session_id: flags.parent }    : {}),
@@ -610,6 +614,7 @@ async function cmdExport(positional, flags, serverUrl, apiKey) {
 
   const type = requireFlagValue(flags, "type");
   const q    = requireFlagValue(flags, "q");
+  const out  = requireFlagValue(flags, "out");
 
   const qs = new URLSearchParams({ format });
   if (type !== undefined) qs.set("type", type);
@@ -653,7 +658,7 @@ async function cmdExport(positional, flags, serverUrl, apiKey) {
         // pipe() only calls end() on the response's 'end', so 'finish' can
         // never fire here — close it explicitly rather than leaking the fd.
         sink.destroy();
-        console.error(`\x1b[33m!\x1b[0m Incomplete export left in ${flags.out}`);
+        console.error(`\x1b[33m!\x1b[0m Incomplete export left in ${out}`);
       } else if (streaming) {
         console.error("\x1b[33m!\x1b[0m The export above is incomplete");
       }
@@ -679,13 +684,13 @@ async function cmdExport(positional, flags, serverUrl, apiKey) {
       // server that quit mid-body left this promise pending forever.
       res.on("aborted", () => fail(truncatedResponseError()));
       res.on("error", fail);
-      if (flags.out) {
+      if (out !== undefined) {
         const fs = require("fs");
-        const ws = fs.createWriteStream(flags.out);
+        const ws = fs.createWriteStream(out);
         sink = ws;
         res.pipe(ws);
         ws.on("finish", () => {
-          console.log(`\x1b[32m✓\x1b[0m Exported to ${flags.out}`);
+          console.log(`\x1b[32m✓\x1b[0m Exported to ${out}`);
           succeed();
         });
         // A write failure is local — an unwritable path, a full disk. Blaming
@@ -706,7 +711,7 @@ async function cmdExport(positional, flags, serverUrl, apiKey) {
           // guard applied uniformly to every error this CLI prints (it exists
           // to keep terminal output readable), and special-casing this one
           // call site around it would fight the guard rather than respect it.
-          rejectOnce(`could not write ${flags.out}: ${err.code || describeError(err)}`, err);
+          rejectOnce(`could not write ${out}: ${err.code || describeError(err)}`, err);
         });
       } else {
         // Only claim something printed once a byte actually reached stdout —
@@ -793,8 +798,9 @@ async function cmdAuditExport(positional, flags, serverUrl, apiKey) {
 
   // Cheap local checks before the AUDIT_SIGNING_SECRET requirement, so a typo'd
   // flag is reported on its own terms rather than behind an unrelated env-var error.
-  const type = requireFlagValue(flags, "type");
-  const q    = requireFlagValue(flags, "q");
+  const type    = requireFlagValue(flags, "type");
+  const q       = requireFlagValue(flags, "q");
+  const outPath = requireFlagValue(flags, "out");
 
   const secret = readAuditSecret();
   const { buildAuditBundle } = require("./audit");
@@ -841,9 +847,9 @@ async function cmdAuditExport(positional, flags, serverUrl, apiKey) {
   const bundle = buildAuditBundle({ events, meta, secret, now: new Date() });
 
   const out = JSON.stringify(bundle, null, 2);
-  if (flags.out) {
-    require("fs").writeFileSync(flags.out, out + "\n");
-    console.log(`\x1b[32m✓\x1b[0m Audit bundle written to ${flags.out}`);
+  if (outPath !== undefined) {
+    require("fs").writeFileSync(outPath, out + "\n");
+    console.log(`\x1b[32m✓\x1b[0m Audit bundle written to ${outPath}`);
     console.log(
       `  ${bundle.manifest.event_count} event(s), content_digest=${bundle.manifest.content_digest.slice(0, 16)}…`
     );
@@ -857,7 +863,7 @@ async function cmdAuditExport(positional, flags, serverUrl, apiKey) {
   if (flags.pdf !== undefined) {
     const pdfPath =
       typeof flags.pdf === "string" ? flags.pdf
-        : typeof flags.out === "string" ? derivePdfPath(flags.out)
+        : outPath !== undefined ? derivePdfPath(outPath)
           : null;
     if (!pdfPath) {
       die(
@@ -867,8 +873,8 @@ async function cmdAuditExport(positional, flags, serverUrl, apiKey) {
     }
     const fs = require("fs");
     const path = require("path");
-    if (typeof flags.out === "string" && path.resolve(pdfPath) === path.resolve(flags.out)) {
-      die(`--pdf would overwrite the JSON bundle at '${flags.out}' — give the PDF a different name.`);
+    if (outPath !== undefined && path.resolve(pdfPath) === path.resolve(outPath)) {
+      die(`--pdf would overwrite the JSON bundle at '${outPath}' — give the PDF a different name.`);
     }
     const { verifyAuditBundle } = require("./audit");
     const { renderAuditBundlePdf } = require("./audit-pdf");
@@ -880,7 +886,7 @@ async function cmdAuditExport(positional, flags, serverUrl, apiKey) {
     fs.writeFileSync(pdfPath, pdf);
     // When the JSON bundle went to stdout, this message MUST go to stderr —
     // appending it to stdout would corrupt the piped artifact (`> bundle.json`).
-    const note = flags.out ? console.log : console.error;
+    const note = outPath !== undefined ? console.log : console.error;
     note(`\x1b[32m✓\x1b[0m PDF report written to ${pdfPath}`);
   }
 }
@@ -896,6 +902,10 @@ async function cmdAuditRender(positional, flags) {
   // positional: ["audit", "render", "<bundle.json>"]
   const filePath = positional[2];
   if (!filePath) die("Usage: aep audit render <bundle.json> [--out report.pdf] [--force]");
+
+  // Cheap local check before the AUDIT_SIGNING_SECRET requirement, same reasoning
+  // as cmdAuditExport: a typo'd flag shouldn't be masked by an unrelated env error.
+  const outFlag = requireFlagValue(flags, "out");
 
   const secret = readAuditSecret();
   const { verifyAuditBundle } = require("./audit");
@@ -927,7 +937,7 @@ async function cmdAuditRender(positional, flags) {
     );
   }
 
-  const outPath = typeof flags.out === "string" ? flags.out : derivePdfPath(fullPath);
+  const outPath = outFlag !== undefined ? outFlag : derivePdfPath(fullPath);
   if (path.resolve(outPath) === fullPath) {
     die(`Output '${outPath}' would overwrite the bundle itself — give the PDF a different name.`);
   }
@@ -1584,6 +1594,7 @@ async function cmdComplianceReport(flags, serverUrl, apiKey) {
   const trace   = requireFlagValue(flags, "trace");
   const since   = requireFlagValue(flags, "since");
   const until   = requireFlagValue(flags, "until");
+  const outFile = requireFlagValue(flags, "out");
 
   const qs = new URLSearchParams({ framework });
   if (session !== undefined) qs.set("session", session);
@@ -1611,9 +1622,9 @@ async function cmdComplianceReport(flags, serverUrl, apiKey) {
     return;
   }
 
-  if (flags.out) {
-    require("fs").writeFileSync(flags.out, JSON.stringify(report, null, 2) + "\n");
-    console.log(`\x1b[32m✓\x1b[0m Compliance report written to ${flags.out}`);
+  if (outFile !== undefined) {
+    require("fs").writeFileSync(outFile, JSON.stringify(report, null, 2) + "\n");
+    console.log(`\x1b[32m✓\x1b[0m Compliance report written to ${outFile}`);
     return;
   }
 
