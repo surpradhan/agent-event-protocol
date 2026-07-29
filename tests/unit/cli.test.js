@@ -3,6 +3,8 @@
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
 const { URL } = require("url");
+const path = require("path");
+const { execFileSync } = require("child_process");
 const { parseArgs, describeError, targetOf } = require("../../src/cli");
 
 // ---------------------------------------------------------------------------
@@ -243,10 +245,29 @@ describe("describeError", () => {
   });
 
   test("falls back to the message when a cause carries no code", () => {
-    const noCode = new AggregateError([new Error("socket hang up")]);
+    const noCode = new AggregateError([new Error("stream closed")]);
     assert.equal(
       describeError(noCode, "http://localhost:8787"),
-      "could not reach http://localhost:8787 (socket hang up)"
+      "could not reach http://localhost:8787 (stream closed)"
+    );
+  });
+
+  test("keeps 'socket hang up', whose message does not restate its code", () => {
+    // Node's real ECONNRESET. The code is in the terse list, but this message
+    // explains something the code doesn't, so membership alone must not drop it.
+    const hangUp = Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
+    assert.equal(
+      describeError(hangUp, "http://localhost:8787"),
+      "could not reach http://localhost:8787 (ECONNRESET: socket hang up)"
+    );
+  });
+
+  test("still collapses a restating message for the same code", () => {
+    // The other real ECONNRESET shape: here the message adds nothing.
+    const reset = Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
+    assert.equal(
+      describeError(reset, "http://localhost:8787"),
+      "could not reach http://localhost:8787 (ECONNRESET)"
     );
   });
 
@@ -294,13 +315,26 @@ describe("describeError", () => {
   });
 
   test("does not descend into a non-error .errors array", () => {
-    // Validation libraries (ajv, Joi) hang plain objects off .errors. Those
-    // describe nothing on their own, so the parent's message must survive —
-    // this is what `err.message` gave before the unwrap existed.
+    // `.errors` is not exclusive to AggregateError. When the entries describe
+    // nothing on their own — no message, no code — the parent's message must
+    // survive, which is what `err.message` gave before the unwrap existed.
     const validation = Object.assign(new Error("2 validation failures"), {
       errors: [{ path: "a", keyword: "type" }, { path: "b", keyword: "required" }],
     });
     assert.equal(describeError(validation), "2 validation failures");
+  });
+
+  test("descends when only one child describes something, without leaking the parent", () => {
+    // Guards the "did a child describe this?" signal: counting Set growth would
+    // misfire here, because the second child's label duplicates the first's.
+    const parent = new AggregateError([
+      Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:8787"), { code: "ECONNREFUSED" }),
+      Object.assign(new Error("connect ECONNREFUSED ::1:8787"), { code: "ECONNREFUSED" }),
+    ]);
+    assert.equal(
+      describeError(parent, "http://localhost:8787"),
+      "could not reach http://localhost:8787 (ECONNREFUSED)"
+    );
   });
 
   test("without a target, prefers the message over the code", () => {
@@ -329,10 +363,19 @@ describe("describeError", () => {
 
   // This runs on the failure path — inside a socket 'error' handler — so a
   // hostile error object must degrade the message, never crash the CLI.
-  test("survives a cyclic .errors chain", () => {
-    const outer = new AggregateError([]);
-    outer.errors = [outer];
-    assert.doesNotThrow(() => describeError(outer, "http://localhost:8787"));
+  test("visits a cyclic .errors chain a bounded number of times", () => {
+    // Counting reads, not just asserting "doesn't throw": on a cycle the
+    // recursion only ends by blowing the stack, and the surrounding try/catch
+    // swallows the RangeError — so the output can look right while thousands of
+    // frames were burned getting there. The seen-set is what actually stops it.
+    let reads = 0;
+    const a = Object.assign(new Error("a"), { code: "EA" });
+    const b = Object.assign(new Error("b"), { code: "EB" });
+    Object.defineProperty(a, "errors", { get() { reads++; return [b]; } });
+    Object.defineProperty(b, "errors", { get() { reads++; return [a]; } });
+
+    assert.doesNotThrow(() => describeError(a, "http://localhost:8787"));
+    assert.ok(reads < 20, `expected each node visited once, saw ${reads} .errors reads`);
   });
 
   test("survives a getter that throws", () => {
@@ -353,6 +396,20 @@ describe("describeError", () => {
     const msg = describeError(many, "http://localhost:8787");
     assert.match(msg, /…/, "should elide the tail rather than list every cause");
     assert.ok(msg.length < 300, `message should stay terminal-sized, got ${msg.length} chars`);
+  });
+});
+
+describe("cli module side effects", () => {
+  test("requiring the module does not run a command", () => {
+    // main() is guarded by `require.main === module`. Without the guard a plain
+    // require() dispatches on the test runner's argv and prints the usage
+    // banner into the test output.
+    const out = execFileSync(
+      process.execPath,
+      ["-e", "require('./src/cli')"],
+      { cwd: path.resolve(__dirname, "..", ".."), encoding: "utf8" }
+    );
+    assert.equal(out, "", `requiring src/cli.js should print nothing, got: ${out}`);
   });
 });
 

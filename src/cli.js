@@ -130,18 +130,26 @@ function oneLine(text, max = 160) {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
-/** Codes whose message adds nothing we don't already print.
+/** Connection codes whose message is typically just "<syscall> <code> <address>".
  *
- *  These carry a message of the form "connect ECONNREFUSED 127.0.0.1:8787" —
- *  the syscall, the code, and an address — while the error line already names
- *  the target. Printing the code alone also collapses the addresses happy
- *  eyeballs tried into one cause instead of repeating it per address. Anything
- *  NOT listed here keeps its message, which is what leaves a TLS failure's
- *  actual reason ("wrong version number", "self-signed certificate") readable. */
+ *  Membership alone isn't enough to drop the message — the same code can arrive
+ *  with a message that explains something (ECONNRESET's is "socket hang up",
+ *  which restates neither the syscall nor the code). See restatesCode. */
 const TERSE_ERROR_CODES = new Set([
   "ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENETUNREACH",
   "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT", "EPIPE",
 ]);
+
+/** Does this message merely restate the code, i.e. "connect ECONNREFUSED <addr>"?
+ *
+ *  Node puts the syscall first and the code second. Checking the position (not
+ *  just "contains") matters: an EPROTO message embeds "EPROTO" mid-string and
+ *  then explains the actual TLS problem, which must survive. Anything after the
+ *  code is an address — sometimes with a local-address suffix on Windows — and
+ *  the error line already names the target. */
+function restatesCode(message, code) {
+  return String(message).split(" ")[1] === code;
+}
 
 /** Render a thrown/rejected error as one line of terminal detail.
  *
@@ -167,7 +175,11 @@ function describeError(err, target = null) {
   const label = target
     ? (e) => {
       if (!e.code) return e.message;
-      if (!e.message || TERSE_ERROR_CODES.has(e.code)) return e.code;
+      if (!e.message) return e.code;
+      // Drop the message only when it says nothing the code and the target
+      // don't. That collapses happy eyeballs' per-address attempts into one
+      // cause, while keeping "socket hang up" and every TLS reason.
+      if (TERSE_ERROR_CODES.has(e.code) && restatesCode(e.message, e.code)) return e.code;
       return `${e.code}: ${e.message}`;
     }
     : (e) => e.message || e.code;
@@ -175,29 +187,39 @@ function describeError(err, target = null) {
   const causes = new Set();
   const seen = new Set();
 
+  /** Collect this node's cause, or its children's. Returns whether anything
+   *  described it — which is the signal to stop, not the size of `causes`, since
+   *  a child whose label duplicates a sibling's adds nothing to the Set. */
   const collect = (e) => {
-    if (!e || typeof e !== "object" || seen.has(e) || causes.size >= MAX_CAUSES) return;
+    if (!e || typeof e !== "object" || seen.has(e)) return false;
     seen.add(e); // cyclic .errors would otherwise recurse until the stack blows
     try {
-      // Descend only when the children actually describe something. A
-      // validation error (ajv, Joi, …) also carries `.errors`, but its entries
-      // are plain objects with neither message nor code — losing the parent's
-      // own message to them would be a regression on what `err.message` gave.
+      // Descend only when the children actually describe something. `.errors`
+      // is not exclusive to AggregateError — a validation error may hang plain
+      // objects there that carry neither message nor code, and losing the
+      // parent's own message to them would regress what `err.message` gave.
       if (Array.isArray(e.errors) && e.errors.length > 0) {
-        const before = causes.size;
-        e.errors.forEach(collect);
-        if (causes.size > before) return;
+        let described = false;
+        for (const child of e.errors) {
+          if (collect(child)) described = true;
+        }
+        if (described) return true;
       }
       const text = label(e);
-      if (text) causes.add(oneLine(text));
+      if (!text) return false;
+      // Keep one past the cap so the caller can tell "exactly MAX" from "more".
+      if (causes.size <= MAX_CAUSES) causes.add(oneLine(text));
+      return true;
     } catch (_) {
       // A getter threw. Skip this node rather than lose the whole report.
+      return false;
     }
   };
   collect(err);
 
-  let detail = [...causes].join(", ");
-  if (causes.size >= MAX_CAUSES) detail += ", …";
+  const listed = [...causes];
+  let detail = listed.slice(0, MAX_CAUSES).join(", ");
+  if (listed.length > MAX_CAUSES) detail += ", …";
   if (!detail) {
     try { detail = String(err); } catch (_) { detail = "unknown error"; }
   }
