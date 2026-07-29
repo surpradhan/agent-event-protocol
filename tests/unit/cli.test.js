@@ -271,6 +271,21 @@ describe("describeError", () => {
     );
   });
 
+  test("collapses restating messages that Node doesn't emit but a custom agent might", () => {
+    // Not shapes node core produces — a proxy or custom agent could. Neither
+    // should render the code twice.
+    const padded = Object.assign(new Error("  connect  ECONNREFUSED  127.0.0.1:8787"), {
+      code: "ECONNREFUSED",
+    });
+    const codeOnly = Object.assign(new Error("ECONNREFUSED"), { code: "ECONNREFUSED" });
+    for (const e of [padded, codeOnly]) {
+      assert.equal(
+        describeError(e, "http://localhost:8787"),
+        "could not reach http://localhost:8787 (ECONNREFUSED)"
+      );
+    }
+  });
+
   test("keeps the message when it explains more than the code (TLS)", () => {
     // Connect/DNS messages just restate the code and address, so the code alone
     // is enough. TLS errors are the opposite: the explanation is in the message
@@ -324,15 +339,19 @@ describe("describeError", () => {
     assert.equal(describeError(validation), "2 validation failures");
   });
 
-  test("descends when only one child describes something, without leaking the parent", () => {
-    // Guards the "did a child describe this?" signal: counting Set growth would
-    // misfire here, because the second child's label duplicates the first's.
-    const parent = new AggregateError([
-      Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:8787"), { code: "ECONNREFUSED" }),
-      Object.assign(new Error("connect ECONNREFUSED ::1:8787"), { code: "ECONNREFUSED" }),
-    ]);
+  test("a wrapper whose child duplicates an earlier cause does not leak its own label", () => {
+    // Guards the "did a child describe this?" signal. Measuring Set growth
+    // instead would misfire here: the nested wrapper's only child produces a
+    // label that is already in the set, so the set doesn't grow, and the
+    // wrapper's own "EAGGR: …" would be reported alongside the real cause.
+    const refused = () =>
+      Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:8787"), { code: "ECONNREFUSED" });
+    const wrapper = Object.assign(new AggregateError([refused()], "all attempts failed"), {
+      code: "EAGGR",
+    });
+
     assert.equal(
-      describeError(parent, "http://localhost:8787"),
+      describeError(new AggregateError([refused(), wrapper]), "http://localhost:8787"),
       "could not reach http://localhost:8787 (ECONNREFUSED)"
     );
   });
@@ -386,6 +405,19 @@ describe("describeError", () => {
 
   test("survives a null-prototype throwable", () => {
     assert.doesNotThrow(() => describeError(Object.create(null)));
+  });
+
+  test("marks elision only when causes were actually elided", () => {
+    // Pins the cap boundary: exactly MAX_CAUSES (5) is a complete list, so an
+    // "…" there would claim a truncation that didn't happen.
+    const causes = (n) => new AggregateError(
+      Array.from({ length: n }, (_, i) => Object.assign(new Error(`fail ${i}`), { code: `E${i}` }))
+    );
+    const exactlyFive = describeError(causes(5), "http://localhost:8787");
+    assert.doesNotMatch(exactlyFive, /…/, "5 causes fit — nothing was elided");
+    assert.match(exactlyFive, /E4/, "the fifth cause should still be listed");
+
+    assert.match(describeError(causes(6), "http://localhost:8787"), /…/, "6 causes must elide");
   });
 
   test("summarises rather than printing an unbounded list of causes", () => {

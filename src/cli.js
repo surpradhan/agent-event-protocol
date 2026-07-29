@@ -148,7 +148,10 @@ const TERSE_ERROR_CODES = new Set([
  *  code is an address — sometimes with a local-address suffix on Windows — and
  *  the error line already names the target. */
 function restatesCode(message, code) {
-  return String(message).split(" ")[1] === code;
+  // Normalise first: the raw message may carry leading or doubled whitespace,
+  // and oneLine() only flattens it later, after this decision has been made.
+  const words = String(message).trim().split(/\s+/);
+  return words[1] === code || (words.length === 1 && words[0] === code);
 }
 
 /** Render a thrown/rejected error as one line of terminal detail.
