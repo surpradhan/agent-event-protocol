@@ -4,6 +4,20 @@ All notable changes to AEP are documented here.
 
 ---
 
+## CLI — `aep metrics` — 2026-07-29
+
+- **`aep metrics [--since iso] [--until iso]`** — prints the JSON body of
+  `GET /metrics` (counters, `session_count`, `workflow_count`,
+  `subagent_session_count`, `max_tree_depth`, signature telemetry) for the
+  key's tenant. Targets the JSON endpoint, **not** the `/metrics/prometheus`
+  scrape endpoint, which has its own `METRICS_TOKEN` auth; `aep metrics
+  prometheus` is rejected with a pointer to it rather than silently returning
+  JSON. `--since`/`--until` forward the endpoint's ISO-8601 window and must
+  carry a value (a bare `--since` fails locally instead of sending
+  `?since=true`). Closes #112.
+
+---
+
 ## Python SDK 0.6.0 — guardrail auto-instrumentation (OpenAI Agents, CrewAI, Claude Agent SDK) — 2026-07-27
 
 `policy.blocked` — previously caller-emitted only — is now captured

@@ -96,6 +96,37 @@ describe("CLI command integration tests (real subprocess)", () => {
           return;
         }
 
+        // Metrics (JSON endpoint — not /metrics/prometheus). The body mirrors the
+        // real shape from db.getMetrics() + getSignatureMetrics() (src/server.js),
+        // so a test asserting on a field name would fail if the CLI ever reshaped
+        // the response instead of passing it through. A since/until that isn't
+        // ISO-8601 drives the 400 branch, like the real endpoint.
+        if (req.method === "GET" && /^\/metrics(\?|$)/.test(req.url)) {
+          const params = new URLSearchParams(req.url.split("?")[1] || "");
+          const bad = ["since", "until"].some(
+            k => params.has(k) && Number.isNaN(Date.parse(params.get(k)))
+          );
+          if (bad) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "invalid since/until — must be ISO-8601" }));
+            return;
+          }
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            received: 0,
+            accepted: 42,
+            rejected: 0,
+            duplicates: 0,
+            byType: { "task.created": 40, "policy.blocked": 2 },
+            session_count: 7,
+            workflow_count: 4,
+            subagent_session_count: 2,
+            max_tree_depth: 3,
+            signatures: { verifications: [], rejections: [] },
+          }));
+          return;
+        }
+
         res.writeHead(404, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Not found" }));
       });
@@ -221,6 +252,100 @@ describe("CLI command integration tests (real subprocess)", () => {
     assert.ok(req, "mock server never received the workflow GET");
     assert.equal(req.headers.authorization, `Bearer ${mockApiKey}`);
     assert.ok(stdout.includes(traceId), "workflow output should echo the trace id");
+  });
+
+  test("metrics drives a GET /metrics with Bearer auth and prints the JSON body", async () => {
+    const { code, stdout } = await runCli(["metrics"]);
+
+    assert.equal(code, 0, `expected success exit, got ${code}`);
+    // (a) what the CLI put on the wire — the JSON endpoint, not /metrics/prometheus
+    const req = received.find(r => r.method === "GET" && r.url === "/metrics");
+    assert.ok(req, "mock server never received the metrics GET");
+    assert.equal(req.headers.authorization, `Bearer ${mockApiKey}`);
+
+    // (b) stdout is the server's body, passed through unchanged and parseable
+    const parsed = JSON.parse(stdout);
+    assert.equal(parsed.accepted, 42);
+    assert.equal(parsed.session_count, 7);
+    assert.equal(parsed.workflow_count, 4);
+    assert.equal(parsed.byType["policy.blocked"], 2);
+    assert.deepEqual(parsed.signatures, { verifications: [], rejections: [] });
+  });
+
+  test("metrics forwards --since/--until as query params", async () => {
+    // Literal expected path, not rebuilt with URLSearchParams (which would just
+    // mirror the implementation). The '+' in the UTC offset must survive as %2B,
+    // since a raw '+' would decode server-side as a space.
+    const { code, stdout } = await runCli([
+      "metrics", "--since", "2026-07-01T00:00:00Z", "--until", "2026-07-02T05:30:00+05:30",
+    ]);
+
+    assert.equal(code, 0, `expected success exit, got ${code}`);
+    const req = received.find(r => r.method === "GET" && r.url ===
+      "/metrics?since=2026-07-01T00%3A00%3A00Z&until=2026-07-02T05%3A30%3A00%2B05%3A30");
+    assert.ok(req, "mock server never received the windowed metrics GET");
+    // The windowed path must still print the body, not just issue the request.
+    assert.equal(JSON.parse(stdout).accepted, 42);
+  });
+
+  test("metrics exits non-zero and reports the body when the server returns non-2xx", async () => {
+    const { code, stderr } = await runCli(["metrics", "--since", "not-a-timestamp"]);
+
+    assert.notEqual(code, 0, "CLI should exit non-zero on a non-2xx metrics response");
+    assert.match(stderr, /HTTP 400/);
+    assert.match(stderr, /must be ISO-8601/);
+  });
+
+  test("metrics rejects a bare --since before contacting the server", async () => {
+    const before = received.length;
+    const { code, stderr } = await runCli(["metrics", "--since"]);
+
+    assert.notEqual(code, 0, "a value-less --since should not reach the wire as 'true'");
+    assert.match(stderr, /--since requires a value/i);
+    const contacted = received.slice(before).some(r => r.url.startsWith("/metrics"));
+    assert.equal(contacted, false, "CLI must not request when a flag value is missing");
+  });
+
+  test("metrics rejects a subcommand instead of silently printing JSON", async () => {
+    // `aep metrics prometheus` is the likeliest wrong guess for this command;
+    // it must fail loudly rather than return the JSON endpoint's body.
+    const before = received.length;
+    const { code, stderr } = await runCli(["metrics", "prometheus"]);
+
+    assert.notEqual(code, 0, "CLI should reject an unexpected metrics subcommand");
+    assert.match(stderr, /takes no subcommand/i);
+    assert.match(stderr, /metrics\/prometheus/, "error should point at the scrape endpoint");
+    const contacted = received.slice(before).some(r => r.url.startsWith("/metrics"));
+    assert.equal(contacted, false, "CLI must not request when the invocation is invalid");
+
+    // An empty-string argument is still an argument — a truthiness check would
+    // let it through and print metrics as if it were a bare `aep metrics`.
+    const empty = await runCli(["metrics", ""]);
+    assert.notEqual(empty.code, 0, "an empty subcommand should be rejected too");
+    assert.match(empty.stderr, /takes no subcommand/i);
+  });
+
+  test("metrics --help documents the command without a key or a request", async () => {
+    const before = received.length;
+    const { code, stdout } = await runCli(["metrics", "--help"], { withKey: false });
+
+    assert.equal(code, 0, "--help should exit 0 even with no API key");
+    assert.match(stdout, /aep metrics/);
+    assert.match(stdout, /--since/);
+    assert.match(stdout, /--until/);
+    assert.match(stdout, /NOT the Prometheus scrape endpoint/);
+    const contacted = received.slice(before).some(r => r.url.startsWith("/metrics"));
+    assert.equal(contacted, false, "--help must not contact the server");
+  });
+
+  test("metrics with no API key exits non-zero and never contacts the server", async () => {
+    const before = received.length;
+    const { code, stderr } = await runCli(["metrics"], { withKey: false });
+
+    assert.notEqual(code, 0, "CLI should refuse to run without an API key");
+    assert.match(stderr, /API key required/i);
+    const contacted = received.slice(before).some(r => r.url.startsWith("/metrics"));
+    assert.equal(contacted, false, "CLI must not contact the server when the key is missing");
   });
 
   test("commands with no API key exit non-zero and never contact the server", async () => {
