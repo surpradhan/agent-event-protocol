@@ -365,13 +365,22 @@ describe("CLI command integration tests (real subprocess)", () => {
     { args: ["analytics", "performance"], urlPrefix: "/analytics/performance", flags: ["since", "until", "limit"] },
     { args: ["analytics", "anomalies"], urlPrefix: "/analytics/anomalies", flags: ["since", "until", "limit", "threshold"] },
     { args: ["webhooks", "deliveries", "wh_001"], urlPrefix: "/webhooks/wh_001/deliveries", flags: ["since", "until", "limit"] },
+    // Issue #181: the same bare-flag-forwarding bug in four more commands.
+    { args: ["compliance", "report", "--framework", "soc2"], urlPrefix: "/compliance/report", flags: ["session", "trace", "since", "until"] },
+    { args: ["session", "ses_bare_001"], urlPrefix: "/sessions/ses_bare_001/events", flags: ["type", "q"] },
+    { args: ["export", "ses_bare_002"], urlPrefix: "/sessions/ses_bare_002/export", flags: ["type", "q"] },
+    {
+      args: ["audit", "export", "ses_bare_003"], urlPrefix: "/sessions/ses_bare_003/export", flags: ["type", "q"],
+      // cmdAuditExport reads AUDIT_SIGNING_SECRET before validating flags.
+      env: { AUDIT_SIGNING_SECRET: "test-secret" },
+    },
   ];
 
-  for (const { args, urlPrefix, flags } of bareFlagCoverage) {
+  for (const { args, urlPrefix, flags, env } of bareFlagCoverage) {
     for (const flag of flags) {
       test(`${args.join(" ")} rejects a bare --${flag} before contacting the server`, async () => {
         const before = received.length;
-        const { code, stderr } = await runCli([...args, `--${flag}`]);
+        const { code, stderr } = await runCli([...args, `--${flag}`], env ? { env } : {});
 
         assert.notEqual(code, 0, `a value-less --${flag} should not reach the wire as 'true'`);
         assert.match(stderr, new RegExp(`--${flag} requires a value`, "i"));
@@ -379,6 +388,26 @@ describe("CLI command integration tests (real subprocess)", () => {
         assert.equal(contacted, false, "CLI must not request when a flag value is missing");
       });
     }
+  }
+
+  // Issue #181: `export bulk` is worse than the sites above — it runs entirely
+  // locally (no server request at all) and used to forward a bare flag as a
+  // value-less token into export.js's own parseArgs, which would then read the
+  // *next* forwarded flag as this one's value. Each value-taking flag must die
+  // here, before src/export.js is ever invoked.
+  const exportBulkFlags = [
+    "tenant", "sink", "dir", "out", "bucket", "region", "endpoint",
+    "prefix", "since", "until", "format", "compression",
+  ];
+  for (const flag of exportBulkFlags) {
+    test(`export bulk rejects a bare --${flag} before running`, async () => {
+      const before = received.length;
+      const { code, stderr } = await runCli(["export", "bulk", `--${flag}`]);
+
+      assert.notEqual(code, 0, `a value-less --${flag} should not be forwarded to export.js`);
+      assert.match(stderr, new RegExp(`--${flag} requires a value`, "i"));
+      assert.equal(received.length, before, "export bulk must never contact the ingest server");
+    });
   }
 
   test("commands with no API key exit non-zero and never contact the server", async () => {

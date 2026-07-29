@@ -389,4 +389,27 @@ describe("export CLI parseArgs", () => {
     assert.equal(parseArgs([...base, "-h"]).help, true);
     assert.equal(parseArgs([...base, "--help"]).help, true);
   });
+
+  // Issue #181: a bare `--since` immediately followed by another `--flag` used
+  // to be read as `since: "--until"`, silently swallowing --until's own value
+  // (until stayed null) with no error at all. Every value-taking flag must
+  // reject this instead of guessing.
+  test("a bare flag followed by another flag throws instead of consuming it as a value", () => {
+    assert.throws(
+      () => parseArgs([...base, "--tenant", "t1", "--since", "--until", "2026-01-01T00:00:00Z", "--dry-run"]),
+      /--since requires a value/
+    );
+  });
+
+  test("a bare flag at the end of argv throws instead of silently keeping the default", () => {
+    assert.throws(() => parseArgs([...base, "--since"]), /--since requires a value/);
+    assert.throws(() => parseArgs([...base, "--out"]), /--out requires a value/);
+    assert.throws(() => parseArgs([...base, "--prefix"]), /--prefix requires a value/);
+  });
+
+  test("--flag=value form is unaffected by the bare-flag guard", () => {
+    const o = parseArgs([...base, "--since=2026-01-01T00:00:00Z", "--until=2026-02-01T00:00:00Z"]);
+    assert.equal(o.since, "2026-01-01T00:00:00Z");
+    assert.equal(o.until, "2026-02-01T00:00:00Z");
+  });
 });
