@@ -118,13 +118,14 @@ function armTimeout(req, fail) {
     ));
     req.destroy();
   };
-  req.setTimeout(requestTimeoutMs, onIdle);
-  // req.setTimeout() only takes effect once a socket is attached, which for a
-  // fresh connection happens on 'connect' — so a black-holed address (nothing
-  // answers, nothing refuses) instead rides Node's own connect timeout (~5s,
-  // even for a --timeout of 1 or 60). Arming the socket's own timer as soon as
-  // it exists covers that gap; whichever fires first wins, the other is inert
-  // once the request is destroyed.
+  // req.setTimeout() defers arming until a socket is attached, and for a fresh
+  // connection that happens on 'connect' — so a plain req.setTimeout() rides
+  // Node's own connect timeout (~5s) while the socket is still connecting,
+  // ignoring --timeout entirely until after it succeeds. socket.setTimeout()
+  // has no such gap: armed the moment the socket exists, whether still
+  // connecting or already established, it covers both phases with one timer —
+  // using req.setTimeout() as well here would attach a second, independent
+  // listener for the same event and fire onIdle twice.
   req.on("socket", (socket) => socket.setTimeout(requestTimeoutMs, onIdle));
 }
 
@@ -657,6 +658,14 @@ async function cmdExport(positional, flags, serverUrl, apiKey) {
           // one, oneLine's 160-char cap would clip the copy that still carried
           // the reason. err.code alone says enough next to the path we already
           // printed; fall back to describeError only when there's no code.
+          //
+          // main()'s catch still runs this whole string through describeError,
+          // which applies the same 160-char cap to it as one line — so a
+          // pathological --out (over ~140 chars) can still lose the code off
+          // the end. Not chased further: that cap is a deliberate, existing
+          // guard applied uniformly to every error this CLI prints (it exists
+          // to keep terminal output readable), and special-casing this one
+          // call site around it would fight the guard rather than respect it.
           rejectOnce(`could not write ${flags.out}: ${err.code || describeError(err)}`, err);
         });
       } else {
