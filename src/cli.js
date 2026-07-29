@@ -101,23 +101,35 @@ function resolveTimeoutMs(flags, env = process.env) {
   return Math.min(Math.max(1, Math.round(seconds * 1000)), 2 ** 31 - 1);
 }
 
-/** Arm the inactivity timeout on a request.
+/** Arm the inactivity timeout on a request. Returns a disarm() to call once
+ *  the request settles, by whatever path — success, a non-timeout failure, or
+ *  the timeout itself.
  *
  *  Node's setTimeout only *notifies* — it does not abort — so the socket has to
  *  be destroyed here, or the CLI goes back to waiting on a server that has
  *  stopped talking. The timer is idle-based: it resets on every byte, which is
- *  what lets a slow-but-progressing export run past it. */
-function armTimeout(req, fail) {
-  if (requestTimeoutMs <= 0) return;
+ *  what lets a slow-but-progressing export run past it.
+ *
+ *  Disarming matters because http(s).globalAgent keep-alives by default: a
+ *  command that makes several sequential requests to the same host (`aep
+ *  init`'s health-check → mint-key → verify-event) can reuse one socket.
+ *  socket.setTimeout(ms, cb) *adds* cb as a 'timeout' listener rather than
+ *  replacing whatever the previous request on that socket registered — Node
+ *  never removes it just because that request finished — so without an
+ *  explicit removeListener, every request's callback stays live and a later
+ *  idle period fires all of them at once. */
+function armTimeout(req, fail, ms = requestTimeoutMs) {
+  if (ms <= 0) return () => {};
   const onIdle = () => {
     // Report first, destroy second: destroying emits further events, and the
     // timeout is the cause worth printing, not the cleanup it triggers.
     fail(Object.assign(
-      new Error(`no data for ${requestTimeoutMs / 1000}s (raise --timeout, or set it to 0 to disable)`),
+      new Error(`no data for ${ms / 1000}s (raise --timeout, or set it to 0 to disable)`),
       { code: "ETIMEDOUT" }
     ));
     req.destroy();
   };
+  let armedSocket = null;
   // req.setTimeout() defers arming until a socket is attached, and for a fresh
   // connection that happens on 'connect' — so a plain req.setTimeout() rides
   // Node's own connect timeout (~5s) while the socket is still connecting,
@@ -126,7 +138,18 @@ function armTimeout(req, fail) {
   // connecting or already established, it covers both phases with one timer —
   // using req.setTimeout() as well here would attach a second, independent
   // listener for the same event and fire onIdle twice.
-  req.on("socket", (socket) => socket.setTimeout(requestTimeoutMs, onIdle));
+  const onSocket = (socket) => {
+    armedSocket = socket;
+    socket.setTimeout(ms, onIdle);
+  };
+  req.on("socket", onSocket);
+  return function disarm() {
+    req.removeListener("socket", onSocket);
+    // Only remove our own listener — not socket.setTimeout(0), which would
+    // also cancel whatever timer a *different* request now sharing this
+    // (kept-alive) socket has since armed.
+    if (armedSocket) armedSocket.removeListener("timeout", onIdle);
+  };
 }
 
 /** The error a truncated response reports.
@@ -165,15 +188,20 @@ function request(method, urlStr, body, headers = {}) {
     // still. Only the first of those is the cause; the rest describe the
     // cleanup. Settling once keeps the reported reason the real one.
     let settled = false;
+    // Reassigned once armTimeout() runs below; declared first so fail/succeed
+    // can close over it regardless of call order.
+    let disarm = () => {};
     // Name the server we failed to reach; the raw error doesn't (see describeError).
     const fail = (err) => {
       if (settled) return;
       settled = true;
+      disarm();
       reject(new Error(describeError(err, targetOf(url)), { cause: err }));
     };
     const succeed = (value) => {
       if (settled) return;
       settled = true;
+      disarm();
       resolve(value);
     };
 
@@ -192,7 +220,7 @@ function request(method, urlStr, body, headers = {}) {
     });
 
     req.on("error", fail);
-    armTimeout(req, fail);
+    disarm = armTimeout(req, fail);
     if (bodyStr) req.write(bodyStr);
     req.end();
   });
@@ -595,6 +623,9 @@ async function cmdExport(positional, flags, serverUrl, apiKey) {
     let settled = false;
     let sink = null;      // write stream for --out, once bytes may have reached it
     let streaming = false; // response body started flowing (to stdout or a file)
+    // Reassigned once armTimeout() runs below; declared first so rejectOnce/
+    // succeed can close over it regardless of call order.
+    let disarm = () => {};
 
     // This command streams the response, so it builds its own request rather
     // than going through request() — it needs the same settle-once handling and
@@ -603,6 +634,7 @@ async function cmdExport(positional, flags, serverUrl, apiKey) {
     const rejectOnce = (message, err) => {
       if (settled) return;
       settled = true;
+      disarm();
       reject(new Error(message, { cause: err }));
     };
     const fail = (err) => {
@@ -623,6 +655,7 @@ async function cmdExport(positional, flags, serverUrl, apiKey) {
     const succeed = () => {
       if (settled) return;
       settled = true;
+      disarm();
       resolve();
     };
 
@@ -679,7 +712,7 @@ async function cmdExport(positional, flags, serverUrl, apiKey) {
       }
     });
     req.on("error", fail);
-    armTimeout(req, fail);
+    disarm = armTimeout(req, fail);
     req.end();
   });
 }
@@ -2046,11 +2079,13 @@ async function main() {
   const serverUrl = (flags.server || process.env.AEP_SERVER || "http://localhost:8787").replace(/\/$/, "");
   const apiKey    = flags.key || process.env.AEP_API_KEY || null;
   // admin token — resolved lazily per-command (not required for non-admin commands)
-  // Skip resolution (and its die() on a bad value) for --help and for commands
-  // that never call request(): a stray `--timeout junk` alongside one of these
-  // shouldn't stop it from running. `audit verify`/`audit render` check a local
-  // bundle file; `export bulk` and `validate` are both local-filesystem tools.
-  const isLocalOnly = positional[0] === "validate"
+  // Skip resolution (and its die() on a bad value) for --help, no command at
+  // all (bare `aep` prints usage), and commands that never call request(): a
+  // stray `--timeout junk` alongside one of these shouldn't stop it from
+  // running. `audit verify`/`audit render` check a local bundle file;
+  // `export bulk` and `validate` are both local-filesystem tools.
+  const isLocalOnly = !positional[0]
+    || positional[0] === "validate"
     || (positional[0] === "export" && positional[1] === "bulk")
     || (positional[0] === "audit" && (positional[1] === "verify" || positional[1] === "render"));
   requestTimeoutMs = (flags.help || isLocalOnly) ? DEFAULT_TIMEOUT_MS : resolveTimeoutMs(flags);
@@ -2102,7 +2137,9 @@ async function main() {
 // Exports (for testing)
 // ---------------------------------------------------------------------------
 
-module.exports = { parseArgs, describeError, targetOf, resolveTimeoutMs, DEFAULT_TIMEOUT_MS };
+module.exports = {
+  parseArgs, describeError, targetOf, resolveTimeoutMs, DEFAULT_TIMEOUT_MS, armTimeout,
+};
 
 // `aep` runs this file directly (package.json bin). The guard keeps a plain
 // require() — as the unit tests do — from executing a command and printing the

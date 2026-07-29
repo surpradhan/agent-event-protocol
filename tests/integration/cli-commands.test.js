@@ -556,6 +556,96 @@ describe("--timeout resolution skips local-only commands (issue #178)", () => {
     assert.notEqual(code, 0);
     assert.match(stderr, /--timeout must be/);
   });
+
+  test("no command at all still prints usage instead of dying on --timeout", async () => {
+    const { code, stdout, stderr } = await runLocal(["--timeout", "junk"]);
+
+    assert.equal(code, 0, "bare `aep --timeout junk` should print usage, not fail");
+    assert.doesNotMatch(stderr, /--timeout must be/);
+    assert.match(stdout, /AEP CLI/);
+  });
+});
+
+/**
+ * Issue #178 — armTimeout()'s socket-level listener must be removed once its
+ * own request settles, or a later request that reuses the same kept-alive
+ * socket (http(s).globalAgent, and any agent with keepAlive: true) inherits
+ * it: Node's socket.setTimeout(ms, cb) *adds* cb as a 'timeout' listener
+ * rather than replacing the previous request's, so an unremoved one fires
+ * alongside the new one on the next idle period — and would keep stacking
+ * with every further request that reuses the socket without disarming.
+ *
+ * Exercised directly against the exported armTimeout(), rather than through
+ * a full CLI command: aep init (the one command that makes several sequential
+ * requests to the same host) swallows the underlying error's detail in its
+ * own reporting, which would make a subprocess-level test blind to a second,
+ * leaked listener firing — it settles the *promise* exactly once regardless,
+ * by design (see the `settled` guard both call sites use). Listener count is
+ * the thing that actually catches a leak.
+ */
+describe("armTimeout does not leak listeners across a reused keep-alive socket (issue #178)", () => {
+  test("a settled request's timeout listener is gone before the next request on the same socket arms its own", async () => {
+    const { armTimeout } = require("../../src/cli");
+    const server = http.createServer((req, res) => {
+      if (req.url === "/first") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end("{}");
+        return;
+      }
+      // /second: accept, never respond — the socket goes idle while reused.
+    });
+
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const port = server.address().port;
+      const agent = new http.Agent({ keepAlive: true });
+
+      // Request 1: succeeds, then disarms. If disarm doesn't actually remove
+      // the socket-level listener, it's still sitting on the (reused) socket
+      // for request 2 to inherit.
+      let sharedSocket;
+      await new Promise((resolve, reject) => {
+        const req = http.request({ host: "127.0.0.1", port, path: "/first", agent }, (res) => {
+          res.resume();
+          res.on("end", () => { disarm(); resolve(); });
+        });
+        req.on("socket", (s) => { sharedSocket = s; });
+        const disarm = armTimeout(req, reject, 500);
+        req.end();
+      });
+
+      // Not listenerCount('timeout') === 0: Node's own http.Agent adds its own
+      // 'timeout' listener (named onTimeout) when it parks a kept-alive socket
+      // back in the free pool — that one is Node's, not ours, and armTimeout
+      // has no business removing it. What must be gone is specifically our
+      // onIdle (named via `const onIdle = () => {}`'s inferred function name).
+      assert.ok(
+        !sharedSocket.listeners("timeout").some((fn) => fn.name === "onIdle"),
+        "request 1's onIdle listener must be removed once it settles, before request 2 ever arms its own"
+      );
+
+      // Request 2: same agent + host + port → same socket. Never answered, so
+      // its own timer trips. Exactly one call to fail() proves only ONE
+      // listener fired — a leaked one from request 1 would fire a second time
+      // on the very same event, since both are bound to 'timeout' on the same
+      // socket object.
+      let fireCount = 0;
+      await new Promise((resolve) => {
+        const req2 = http.request({ host: "127.0.0.1", port, path: "/second", agent }, () => {});
+        // destroy() emits 'error' (socket hang up) asynchronously; the real
+        // armTimeout() callers handle it via their own req.on("error", fail),
+        // which this test doesn't need — just needs it not to be uncaught.
+        req2.on("error", () => {});
+        armTimeout(req2, () => { fireCount++; req2.destroy(); resolve(); }, 300);
+        req2.end();
+      });
+
+      assert.equal(fireCount, 1, `expected exactly one timeout fire, got ${fireCount}`);
+      agent.destroy();
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
 });
 
 /**
