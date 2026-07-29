@@ -2046,12 +2046,14 @@ async function main() {
   const serverUrl = (flags.server || process.env.AEP_SERVER || "http://localhost:8787").replace(/\/$/, "");
   const apiKey    = flags.key || process.env.AEP_API_KEY || null;
   // admin token — resolved lazily per-command (not required for non-admin commands)
-  // Skip resolution (and its die() on a bad value) for --help and `validate`:
-  // neither ever calls request(), so a stray `--timeout junk` alongside
-  // `--help` shouldn't stop the help text from printing.
-  requestTimeoutMs = (flags.help || positional[0] === "validate")
-    ? DEFAULT_TIMEOUT_MS
-    : resolveTimeoutMs(flags);
+  // Skip resolution (and its die() on a bad value) for --help and for commands
+  // that never call request(): a stray `--timeout junk` alongside one of these
+  // shouldn't stop it from running. `audit verify`/`audit render` check a local
+  // bundle file; `export bulk` and `validate` are both local-filesystem tools.
+  const isLocalOnly = positional[0] === "validate"
+    || (positional[0] === "export" && positional[1] === "bulk")
+    || (positional[0] === "audit" && (positional[1] === "verify" || positional[1] === "render"));
+  requestTimeoutMs = (flags.help || isLocalOnly) ? DEFAULT_TIMEOUT_MS : resolveTimeoutMs(flags);
 
   const command = positional[0];
 

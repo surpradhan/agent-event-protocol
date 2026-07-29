@@ -478,6 +478,58 @@ describe("CLI command integration tests (real subprocess)", () => {
 });
 
 /**
+ * Issue #178 — --timeout resolution must not block a command that never
+ * makes a request. `audit verify`/`audit render` check a bundle file offline
+ * and `validate` checks a local event file; none of the three ever calls
+ * request(), so a stray bad --timeout alongside one must not stop it from
+ * running its own (unrelated) validation and reporting *that* failure.
+ */
+describe("--timeout resolution skips local-only commands (issue #178)", () => {
+  function runLocal(args) {
+    return new Promise((resolve) => {
+      execFile(process.execPath, [CLI_PATH, ...args],
+        { cwd: REPO_ROOT, env: { ...baseEnv, AUDIT_SIGNING_SECRET: "test-secret" }, timeout: 10000 },
+        (error, stdout, stderr) => {
+          resolve({ code: error ? (error.code ?? 1) : 0, stdout, stderr });
+        });
+    });
+  }
+
+  test("audit verify with a bad --timeout still runs, and fails on its own usage", async () => {
+    const { code, stderr } = await runLocal(["audit", "verify", "--timeout", "junk"]);
+
+    assert.notEqual(code, 0);
+    assert.doesNotMatch(stderr, /--timeout must be/,
+      "a command that never contacts a server must not be blocked by --timeout validation");
+    assert.match(stderr, /Usage: aep audit verify/);
+  });
+
+  test("audit render with a bad --timeout still runs, and fails on its own usage", async () => {
+    const { code, stderr } = await runLocal(["audit", "render", "--timeout", "junk"]);
+
+    assert.notEqual(code, 0);
+    assert.doesNotMatch(stderr, /--timeout must be/);
+  });
+
+  test("validate with a bad --timeout still runs, and fails on its own usage", async () => {
+    const { code, stderr } = await runLocal(["validate", "--timeout", "junk"]);
+
+    assert.notEqual(code, 0);
+    assert.doesNotMatch(stderr, /--timeout must be/);
+    assert.match(stderr, /Usage: aep validate/);
+  });
+
+  test("a network command still rejects a bad --timeout before contacting the server", async () => {
+    // Control case: session DOES call request(), so it must keep validating.
+    const { code, stderr } = await runLocal(["session", "ses_1", "--timeout", "junk",
+      "--server", "http://127.0.0.1:1", "--key", "x"]);
+
+    assert.notEqual(code, 0);
+    assert.match(stderr, /--timeout must be/);
+  });
+});
+
+/**
  * Issue #178 — a request that starts fine and then stalls.
  *
  * Two different failures before the fix, both covered here. A server that
