@@ -93,7 +93,7 @@ function request(method, urlStr, body, headers = {}) {
     });
 
     // Name the server we failed to reach; the raw error doesn't (see describeError).
-    req.on("error", (err) => reject(new Error(describeError(err, url.origin), { cause: err })));
+    req.on("error", (err) => reject(new Error(describeError(err, targetOf(url)), { cause: err })));
     if (bodyStr) req.write(bodyStr);
     req.end();
   });
@@ -108,6 +108,41 @@ function die(msg) {
   process.exit(1);
 }
 
+/** The origin of a URL, for use in an error message.
+ *
+ *  Prefer `origin` — unlike `href` it drops any userinfo, so a server URL of
+ *  the form http://user:pass@host can't put a password on stderr. WHATWG
+ *  returns the *string* "null" for a non-special scheme (a typo'd
+ *  `--server foo://…`), which would read as "could not reach null". */
+function targetOf(url) {
+  return url.origin && url.origin !== "null" ? url.origin : `${url.protocol}//${url.host}`;
+}
+
+/** How many distinct causes to name before summarising the rest. */
+const MAX_CAUSES = 5;
+
+/** Squash an error string onto one terminal line.
+ *
+ *  OpenSSL-backed messages arrive multi-line and carry a trailing newline plus
+ *  a path into node's deps/, none of which belongs in a one-line `Error:`. */
+function oneLine(text, max = 160) {
+  const flat = String(text).replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
+/** Codes whose message adds nothing we don't already print.
+ *
+ *  These carry a message of the form "connect ECONNREFUSED 127.0.0.1:8787" —
+ *  the syscall, the code, and an address — while the error line already names
+ *  the target. Printing the code alone also collapses the addresses happy
+ *  eyeballs tried into one cause instead of repeating it per address. Anything
+ *  NOT listed here keeps its message, which is what leaves a TLS failure's
+ *  actual reason ("wrong version number", "self-signed certificate") readable. */
+const TERSE_ERROR_CODES = new Set([
+  "ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENETUNREACH",
+  "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT", "EPIPE",
+]);
+
 /** Render a thrown/rejected error as one line of terminal detail.
  *
  *  Node dials every address a host resolves to (happy eyeballs) and, when they
@@ -117,29 +152,55 @@ function die(msg) {
  *  address tried, so unwrap them (recursively — an AggregateError may nest).
  *
  *  Pass `target` at a call site that knows what it was talking to. That form
- *  leads with the error code, which both reads well next to a URL and collapses
- *  the IPv6/IPv4 attempts into a single ECONNREFUSED instead of repeating it
- *  per address. Without a target the message is more informative than the code
- *  (compare "ENOENT" with "ENOENT: no such file or directory, open 'x.json'"),
- *  so the preference flips. */
+ *  leads with the error code, dropping the message only for the codes whose
+ *  message restates it (see TERSE_ERROR_CODES) — which is what collapses the
+ *  IPv6/IPv4 attempts into a single ECONNREFUSED, while leaving a TLS failure's
+ *  reason intact. Without a target the message is the more informative half —
+ *  compare "ENOENT" with "ENOENT: no such file or directory, open 'x.json'" —
+ *  so the preference flips.
+ *
+ *  This runs on the failure path, including inside a socket 'error' handler, so
+ *  it must not throw: a hostile or exotic error object (throwing getter, cyclic
+ *  `.errors`, null prototype) has to degrade to a worse message, never to a
+ *  crash. */
 function describeError(err, target = null) {
   const label = target
-    ? (e) => e.code || e.message
+    ? (e) => {
+      if (!e.code) return e.message;
+      if (!e.message || TERSE_ERROR_CODES.has(e.code)) return e.code;
+      return `${e.code}: ${e.message}`;
+    }
     : (e) => e.message || e.code;
 
-  const causes = [];
+  const causes = new Set();
+  const seen = new Set();
+
   const collect = (e) => {
-    if (!e || typeof e !== "object") return;
-    if (Array.isArray(e.errors) && e.errors.length > 0) {
-      e.errors.forEach(collect);
-      return;
+    if (!e || typeof e !== "object" || seen.has(e) || causes.size >= MAX_CAUSES) return;
+    seen.add(e); // cyclic .errors would otherwise recurse until the stack blows
+    try {
+      // Descend only when the children actually describe something. A
+      // validation error (ajv, Joi, …) also carries `.errors`, but its entries
+      // are plain objects with neither message nor code — losing the parent's
+      // own message to them would be a regression on what `err.message` gave.
+      if (Array.isArray(e.errors) && e.errors.length > 0) {
+        const before = causes.size;
+        e.errors.forEach(collect);
+        if (causes.size > before) return;
+      }
+      const text = label(e);
+      if (text) causes.add(oneLine(text));
+    } catch (_) {
+      // A getter threw. Skip this node rather than lose the whole report.
     }
-    const text = label(e);
-    if (text && !causes.includes(text)) causes.push(text);
   };
   collect(err);
 
-  const detail = causes.join(", ") || String(err);
+  let detail = [...causes].join(", ");
+  if (causes.size >= MAX_CAUSES) detail += ", …";
+  if (!detail) {
+    try { detail = String(err); } catch (_) { detail = "unknown error"; }
+  }
   return target ? `could not reach ${target} (${detail})` : detail;
 }
 
@@ -428,7 +489,7 @@ async function cmdExport(positional, flags, serverUrl, apiKey) {
     });
     // This command streams the response, so it builds its own request rather
     // than going through request() — it needs the same error context.
-    req.on("error", (err) => reject(new Error(describeError(err, url.origin), { cause: err })));
+    req.on("error", (err) => reject(new Error(describeError(err, targetOf(url)), { cause: err })));
     req.end();
   });
 }
@@ -1843,6 +1904,9 @@ async function main() {
 // Exports (for testing)
 // ---------------------------------------------------------------------------
 
-module.exports = { parseArgs, describeError };
+module.exports = { parseArgs, describeError, targetOf };
 
-main();
+// `aep` runs this file directly (package.json bin). The guard keeps a plain
+// require() — as the unit tests do — from executing a command and printing the
+// usage banner into the test output.
+if (require.main === module) main();

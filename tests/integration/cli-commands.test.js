@@ -403,17 +403,30 @@ describe("CLI command integration tests (real subprocess)", () => {
     assert.doesNotMatch(stderr, /AggregateError/);
   });
 
-  test("a hostname that does not resolve reports ENOTFOUND, not AggregateError", async () => {
-    // .invalid is reserved by RFC 2606 and must never resolve, so this exercises
-    // the single-error (non-aggregate) path without depending on the network.
+  test("the message names the target for a non-aggregate connection error too", async () => {
+    // An IP literal skips the happy-eyeballs dialer, so this failure arrives as
+    // a single plain Error rather than an AggregateError — the other branch of
+    // describeError, exercised end-to-end without depending on DNS. (An
+    // unresolvable-hostname test would be at the mercy of resolvers that hijack
+    // NXDOMAIN, which is why this uses a closed port instead.)
+    const port = await closedPort();
     const { code, stderr } = await runCli(["session", "ses_1"], {
-      env: { AEP_SERVER: "http://aep-nonexistent.invalid" },
+      env: { AEP_SERVER: `http://127.0.0.1:${port}` },
     });
 
-    assert.notEqual(code, 0, "CLI should exit non-zero when the host does not resolve");
-    assert.match(stderr, /could not reach http:\/\/aep-nonexistent\.invalid/);
-    assert.match(stderr, /ENOTFOUND|EAI_AGAIN/);
-    assert.doesNotMatch(stderr, /AggregateError/);
+    assert.notEqual(code, 0, "CLI should exit non-zero when the server is unreachable");
+    assert.match(stderr, new RegExp(`could not reach http://127\\.0\\.0\\.1:${port} \\(ECONNREFUSED\\)`));
+  });
+
+  test("a server URL carrying credentials does not echo them in the error", async () => {
+    const port = await closedPort();
+    const { code, stderr } = await runCli(["session", "ses_1"], {
+      env: { AEP_SERVER: `http://alice:hunter2@127.0.0.1:${port}` },
+    });
+
+    assert.notEqual(code, 0);
+    assert.doesNotMatch(stderr, /hunter2/, "the password must not reach stderr");
+    assert.match(stderr, new RegExp(`could not reach http://127\\.0\\.0\\.1:${port}`));
   });
 
   test("emit with a missing required flag exits non-zero without contacting the server", async () => {

@@ -2,7 +2,8 @@
 
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
-const { parseArgs, describeError } = require("../../src/cli");
+const { URL } = require("url");
+const { parseArgs, describeError, targetOf } = require("../../src/cli");
 
 // ---------------------------------------------------------------------------
 // Tests for parseArgs function
@@ -249,6 +250,59 @@ describe("describeError", () => {
     );
   });
 
+  test("keeps the message when it explains more than the code (TLS)", () => {
+    // Connect/DNS messages just restate the code and address, so the code alone
+    // is enough. TLS errors are the opposite: the explanation is in the message
+    // and dropping it would lose the only actionable part.
+    const tls = Object.assign(new Error("self-signed certificate in certificate chain"), {
+      code: "SELF_SIGNED_CERT_IN_CHAIN",
+    });
+    assert.equal(
+      describeError(tls, "https://aep.example"),
+      "could not reach https://aep.example (SELF_SIGNED_CERT_IN_CHAIN: self-signed certificate in certificate chain)"
+    );
+  });
+
+  test("keeps the reason when a code appears inside its own message (EPROTO)", () => {
+    // https:// against a plaintext port. The code is embedded in the message,
+    // so a "does the message contain the code?" rule would throw the OpenSSL
+    // reason away — the only part that tells the operator what to change.
+    const proto = Object.assign(
+      new Error("write EPROTO 00:error:0A00010B:SSL routines:wrong version number"),
+      { code: "EPROTO" }
+    );
+    assert.match(describeError(proto, "https://localhost:8787"), /wrong version number/);
+  });
+
+  test("keeps a multi-line cause on one line", () => {
+    // Real OpenSSL messages span lines and end with a newline plus a path into
+    // node's deps/; none of that belongs in a one-line `Error:`.
+    const multiline = Object.assign(
+      new Error("write EPROTO\n00:error:0A00010B:SSL routines:wrong version number:\n../deps/openssl/ssl/record.c:12:\n"),
+      { code: "EPROTO" }
+    );
+    const msg = describeError(multiline, "https://localhost:8787");
+    assert.doesNotMatch(msg, /\n/, "the rendered error must be a single line");
+    assert.match(msg, /wrong version number/);
+  });
+
+  test("truncates a single runaway cause", () => {
+    const huge = Object.assign(new Error("x".repeat(5000)), { code: "EWEIRD" });
+    const msg = describeError(huge, "https://localhost:8787");
+    assert.ok(msg.length < 300, `expected a terminal-sized message, got ${msg.length} chars`);
+    assert.match(msg, /…/);
+  });
+
+  test("does not descend into a non-error .errors array", () => {
+    // Validation libraries (ajv, Joi) hang plain objects off .errors. Those
+    // describe nothing on their own, so the parent's message must survive —
+    // this is what `err.message` gave before the unwrap existed.
+    const validation = Object.assign(new Error("2 validation failures"), {
+      errors: [{ path: "a", keyword: "type" }, { path: "b", keyword: "required" }],
+    });
+    assert.equal(describeError(validation), "2 validation failures");
+  });
+
   test("without a target, prefers the message over the code", () => {
     // An fs error's message carries the path; its code alone would lose that.
     const enoent = Object.assign(new Error("ENOENT: no such file or directory, open 'x.json'"), {
@@ -264,10 +318,55 @@ describe("describeError", () => {
   });
 
   test("degrades gracefully on an empty AggregateError and on a thrown non-error", () => {
+    // Degenerate: with no causes to unwrap there is nothing better to say than
+    // the class name, so this one case still shows "AggregateError".
     assert.equal(
       describeError(new AggregateError([]), "http://localhost:8787"),
       "could not reach http://localhost:8787 (AggregateError)"
     );
     assert.equal(describeError("just a string"), "just a string");
+  });
+
+  // This runs on the failure path — inside a socket 'error' handler — so a
+  // hostile error object must degrade the message, never crash the CLI.
+  test("survives a cyclic .errors chain", () => {
+    const outer = new AggregateError([]);
+    outer.errors = [outer];
+    assert.doesNotThrow(() => describeError(outer, "http://localhost:8787"));
+  });
+
+  test("survives a getter that throws", () => {
+    const hostile = new Error("outer");
+    Object.defineProperty(hostile, "code", { get() { throw new Error("boom"); } });
+    assert.doesNotThrow(() => describeError(hostile, "http://localhost:8787"));
+  });
+
+  test("survives a null-prototype throwable", () => {
+    assert.doesNotThrow(() => describeError(Object.create(null)));
+  });
+
+  test("summarises rather than printing an unbounded list of causes", () => {
+    const many = new AggregateError(
+      Array.from({ length: 500 }, (_, i) =>
+        Object.assign(new Error(`fail ${i}`), { code: `E${i}` }))
+    );
+    const msg = describeError(many, "http://localhost:8787");
+    assert.match(msg, /…/, "should elide the tail rather than list every cause");
+    assert.ok(msg.length < 300, `message should stay terminal-sized, got ${msg.length} chars`);
+  });
+});
+
+describe("targetOf", () => {
+  test("uses the origin, which excludes any userinfo", () => {
+    // A password in --server must never reach stderr.
+    const url = new URL("http://alice:hunter2@localhost:8787/sessions");
+    assert.equal(targetOf(url), "http://localhost:8787");
+    assert.doesNotMatch(targetOf(url), /hunter2/);
+  });
+
+  test("falls back for a non-special scheme, whose origin is the string 'null'", () => {
+    const url = new URL("foo://localhost:8787/x");
+    assert.equal(url.origin, "null", "precondition: WHATWG gives 'null' here");
+    assert.equal(targetOf(url), "foo://localhost:8787");
   });
 });
