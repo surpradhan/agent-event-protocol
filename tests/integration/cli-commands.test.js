@@ -355,55 +355,31 @@ describe("CLI command integration tests (real subprocess)", () => {
   // as the literal string "true" instead of refusing locally. `metrics` was
   // fixed in #172 via requireFlagValue(); these commands share the same
   // since/until/limit/threshold forwarding pattern and needed the same fix.
-  test("analytics policy-blocked rejects a bare --since before contacting the server", async () => {
-    const before = received.length;
-    const { code, stderr } = await runCli(["analytics", "policy-blocked", "--since"]);
+  //
+  // Looped over every (command, flag) pair rather than hand-picking one flag
+  // per site — each site forwards 3-4 identically-shaped params, and a single
+  // spot-check per site wouldn't catch a future edit that fixes one flag at a
+  // site while leaving a sibling flag at that same site unrouted.
+  const bareFlagCoverage = [
+    { args: ["analytics", "policy-blocked"], urlPrefix: "/analytics/policy-blocked", flags: ["since", "until", "limit"] },
+    { args: ["analytics", "performance"], urlPrefix: "/analytics/performance", flags: ["since", "until", "limit"] },
+    { args: ["analytics", "anomalies"], urlPrefix: "/analytics/anomalies", flags: ["since", "until", "limit", "threshold"] },
+    { args: ["webhooks", "deliveries", "wh_001"], urlPrefix: "/webhooks/wh_001/deliveries", flags: ["since", "until", "limit"] },
+  ];
 
-    assert.notEqual(code, 0, "a value-less --since should not reach the wire as 'true'");
-    assert.match(stderr, /--since requires a value/i);
-    const contacted = received.slice(before).some(r => r.url.startsWith("/analytics/policy-blocked"));
-    assert.equal(contacted, false, "CLI must not request when a flag value is missing");
-  });
+  for (const { args, urlPrefix, flags } of bareFlagCoverage) {
+    for (const flag of flags) {
+      test(`${args.join(" ")} rejects a bare --${flag} before contacting the server`, async () => {
+        const before = received.length;
+        const { code, stderr } = await runCli([...args, `--${flag}`]);
 
-  test("analytics performance rejects a bare --until before contacting the server", async () => {
-    const before = received.length;
-    const { code, stderr } = await runCli(["analytics", "performance", "--until"]);
-
-    assert.notEqual(code, 0, "a value-less --until should not reach the wire as 'true'");
-    assert.match(stderr, /--until requires a value/i);
-    const contacted = received.slice(before).some(r => r.url.startsWith("/analytics/performance"));
-    assert.equal(contacted, false, "CLI must not request when a flag value is missing");
-  });
-
-  test("analytics anomalies rejects a bare --limit before contacting the server", async () => {
-    const before = received.length;
-    const { code, stderr } = await runCli(["analytics", "anomalies", "--limit"]);
-
-    assert.notEqual(code, 0, "a value-less --limit should not reach the wire as 'true'");
-    assert.match(stderr, /--limit requires a value/i);
-    const contacted = received.slice(before).some(r => r.url.startsWith("/analytics/anomalies"));
-    assert.equal(contacted, false, "CLI must not request when a flag value is missing");
-  });
-
-  test("analytics anomalies rejects a bare --threshold before contacting the server", async () => {
-    const before = received.length;
-    const { code, stderr } = await runCli(["analytics", "anomalies", "--threshold"]);
-
-    assert.notEqual(code, 0, "a value-less --threshold should not reach the wire as 'true'");
-    assert.match(stderr, /--threshold requires a value/i);
-    const contacted = received.slice(before).some(r => r.url.startsWith("/analytics/anomalies"));
-    assert.equal(contacted, false, "CLI must not request when a flag value is missing");
-  });
-
-  test("webhooks deliveries rejects a bare --since before contacting the server", async () => {
-    const before = received.length;
-    const { code, stderr } = await runCli(["webhooks", "deliveries", "wh_001", "--since"]);
-
-    assert.notEqual(code, 0, "a value-less --since should not reach the wire as 'true'");
-    assert.match(stderr, /--since requires a value/i);
-    const contacted = received.slice(before).some(r => r.url.includes("/webhooks/wh_001/deliveries"));
-    assert.equal(contacted, false, "CLI must not request when a flag value is missing");
-  });
+        assert.notEqual(code, 0, `a value-less --${flag} should not reach the wire as 'true'`);
+        assert.match(stderr, new RegExp(`--${flag} requires a value`, "i"));
+        const contacted = received.slice(before).some(r => r.url.startsWith(urlPrefix));
+        assert.equal(contacted, false, "CLI must not request when a flag value is missing");
+      });
+    }
+  }
 
   test("commands with no API key exit non-zero and never contact the server", async () => {
     const sessionId = `ses_noauth_${Date.now()}`;

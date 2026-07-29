@@ -372,8 +372,9 @@ function ok(label, data) {
  *  an authenticated round-trip to learn about a local typo. Returns undefined
  *  when the flag is absent, so callers can distinguish "not given" from "empty".
  *
- *  Used by `metrics`, `analytics policy-blocked`/`performance`/`anomalies`, and
- *  `webhooks deliveries` for their since/until/limit/threshold filters. */
+ *  Used by `--timeout` (all commands), `metrics`, `analytics
+ *  policy-blocked`/`performance`/`anomalies`, and `webhooks deliveries` for
+ *  their since/until/limit/threshold filters. */
 function requireFlagValue(flags, name) {
   const raw = flags[name];
   if (raw === undefined) return undefined;
