@@ -791,11 +791,13 @@ async function cmdAuditExport(positional, flags, serverUrl, apiKey) {
   if (!sessionId) die("Usage: aep audit export <session_id> [--out bundle.json]");
   if (!apiKey)    die("API key required. Set --key or AEP_API_KEY env var.");
 
-  const secret = readAuditSecret();
-  const { buildAuditBundle } = require("./audit");
-
+  // Cheap local checks before the AUDIT_SIGNING_SECRET requirement, so a typo'd
+  // flag is reported on its own terms rather than behind an unrelated env-var error.
   const type = requireFlagValue(flags, "type");
   const q    = requireFlagValue(flags, "q");
+
+  const secret = readAuditSecret();
+  const { buildAuditBundle } = require("./audit");
 
   const qs = new URLSearchParams({ format: "json" });
   if (type !== undefined) qs.set("type", type);
@@ -1949,20 +1951,19 @@ async function cmdExportBulk(positional, flags) {
   // (Both CLIs use --flag value style so this is mostly pass-through.)
   const fwdArgv = ["node", "export.js"];
 
+  // Every value passed in here already went through requireFlagValue() below,
+  // so it's always a string or undefined — never the bare-flag `true` a raw
+  // `flags.x` read would give.
   const add = (name, val) => {
-    if (val !== undefined && val !== false && val !== null) {
-      if (val === true) {
-        fwdArgv.push(`--${name}`);
-      } else {
-        fwdArgv.push(`--${name}`, String(val));
-      }
-    }
+    if (val !== undefined) fwdArgv.push(`--${name}`, val);
   };
 
   // Validate every value-taking flag up front so a bare `--since` (etc.) dies
   // here with a clear error instead of being forwarded as a value-less token
   // that export.js's own parser would then misinterpret (see issue #181).
   const tenant      = requireFlagValue(flags, "tenant");
+  // Named sinkKind, not sink — a `const sink` (the constructed Sink object)
+  // is already declared later in this same function.
   const sinkKind    = requireFlagValue(flags, "sink");
   const dir         = requireFlagValue(flags, "dir");
   const out         = requireFlagValue(flags, "out");

@@ -35,6 +35,7 @@ delete baseEnv.AEP_SERVER;
 delete baseEnv.AEP_API_KEY;
 delete baseEnv.ADMIN_TOKEN;
 delete baseEnv.AEP_ADMIN_TOKEN;
+delete baseEnv.AUDIT_SIGNING_SECRET;
 
 describe("CLI command integration tests (real subprocess)", () => {
   /** @type {Array<{method:string,url:string,headers:object,body:any}>} */
@@ -371,7 +372,8 @@ describe("CLI command integration tests (real subprocess)", () => {
     { args: ["export", "ses_bare_002"], urlPrefix: "/sessions/ses_bare_002/export", flags: ["type", "q"] },
     {
       args: ["audit", "export", "ses_bare_003"], urlPrefix: "/sessions/ses_bare_003/export", flags: ["type", "q"],
-      // cmdAuditExport reads AUDIT_SIGNING_SECRET before validating flags.
+      // cmdAuditExport validates flags before requiring AUDIT_SIGNING_SECRET,
+      // but a real secret is supplied here so THIS test isolates the flag check.
       env: { AUDIT_SIGNING_SECRET: "test-secret" },
     },
   ];
@@ -389,6 +391,17 @@ describe("CLI command integration tests (real subprocess)", () => {
       });
     }
   }
+
+  test("audit export reports a bad flag ahead of the unrelated AUDIT_SIGNING_SECRET check", async () => {
+    // AUDIT_SIGNING_SECRET is deliberately left unset (baseEnv strips it) so this
+    // proves cmdAuditExport validates --type/--q before it ever calls
+    // readAuditSecret() — a typo'd flag shouldn't be masked by an environment error.
+    const { code, stderr } = await runCli(["audit", "export", "ses_bare_004", "--type"]);
+
+    assert.notEqual(code, 0);
+    assert.match(stderr, /--type requires a value/i);
+    assert.doesNotMatch(stderr, /AUDIT_SIGNING_SECRET/);
+  });
 
   // Issue #181: `export bulk` is worse than the sites above — it runs entirely
   // locally (no server request at all) and used to forward a bare flag as a
