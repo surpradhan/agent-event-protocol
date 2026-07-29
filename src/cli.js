@@ -12,6 +12,7 @@
  *   aep audit      — Build / verify / render a tamper-evident audit bundle
  *   aep workflow   — Query a full workflow tree by trace_id
  *   aep analytics  — Policy-enforcement, performance, custom & anomaly analytics
+ *   aep metrics    — Print server metrics (GET /metrics, JSON) for this tenant
  *   aep webhooks   — Register & manage outbound webhooks
  *   aep compliance — Compliance report templates (SOC2/HIPAA/GDPR/EU AI Act)
  *   aep admin      — Manage API keys (create / list / delete)
@@ -115,6 +116,23 @@ function ok(label, data) {
   }
 }
 
+/** Read a flag that must carry a value.
+ *
+ *  parseArgs turns a bare `--since` (no value, or followed by another flag)
+ *  into boolean `true`; forwarding that verbatim sends `?since=true` and costs
+ *  an authenticated round-trip to learn about a local typo. Returns undefined
+ *  when the flag is absent, so callers can distinguish "not given" from "empty".
+ *
+ *  Used by `metrics` only for now — the analytics/webhooks commands predate it
+ *  and still forward bare flags; switching them over changes their observable
+ *  behaviour, so it belongs in its own change, not in issue #112's. */
+function requireFlagValue(flags, name) {
+  const raw = flags[name];
+  if (raw === undefined) return undefined;
+  if (raw === true || String(raw).trim() === "") die(`--${name} requires a value`);
+  return String(raw);
+}
+
 /** Format an ISO-8601 timestamp for human-readable CLI list output:
  *  "2026-06-12T14:32:01.000Z" → "2026-06-12 14:32:01Z" (UTC, millis dropped).
  *  Returns the raw value unchanged if it isn't a parseable date. */
@@ -141,7 +159,7 @@ Commands:
   audit       Build / verify / render a tamper-evident audit bundle
   workflow    Query a full workflow tree by trace_id
   analytics   Policy-enforcement, performance, custom & anomaly analytics
-  metrics     Print server metrics (counters, sessions, workflows) as JSON
+  metrics     Print this tenant's server metrics (GET /metrics) as JSON
   webhooks    Register & manage outbound webhooks
   compliance  Compliance report templates (SOC2/HIPAA/GDPR/EU AI Act)
   admin       Manage API keys (create / list / delete)
@@ -989,27 +1007,46 @@ async function cmdAnalytics(positional, flags, serverUrl, apiKey) {
 
 function metricsHelp() {
   console.log(`
-\x1b[1maep metrics\x1b[0m — Print server metrics (counters, sessions, workflows) as JSON
+\x1b[1maep metrics\x1b[0m — Print this tenant's server metrics as JSON
 
 Usage:
-  aep metrics [--since iso] [--until iso]
+  aep metrics [--since <iso>] [--until <iso>]
 
 Flags:
-  --since <iso>   Only count events at/after this ISO-8601 timestamp
-  --until <iso>   Only count events before this ISO-8601 timestamp
+  --since <iso>   Only count events/sessions at or after this ISO-8601 timestamp
+  --until <iso>   Only count events/sessions before this ISO-8601 timestamp
 
-Fetches GET /metrics (the JSON endpoint, not /metrics/prometheus) and prints
-the response body. Requires a read-scoped API key.
+Fetches GET /metrics — the JSON endpoint, NOT the Prometheus scrape endpoint at
+/metrics/prometheus — and prints the response body. Requires a read-scoped API key.
+
+Response fields: accepted, byType, session_count, workflow_count,
+subagent_session_count, max_tree_depth, signatures. Because an API key scopes the
+request to one tenant, the server-wide counters (received, rejected, duplicates)
+are always 0 here — they are process-wide, not per-tenant.
+
+--since/--until window the event and session counts only; signatures is
+process-wide telemetry, and max_tree_depth is reported as 0 (a depth over an
+arbitrary window isn't meaningful). A windowed response echoes the window back
+as a "windowed" field.
+
+Output is always JSON, so there is no --json flag.
 `);
 }
 
-async function cmdMetrics(flags, serverUrl, apiKey) {
+async function cmdMetrics(positional, flags, serverUrl, apiKey) {
   if (flags.help) { metricsHelp(); return; }
+  // 'metrics' takes no subcommand. Without this guard a plausible typo like
+  // `aep metrics prometheus` would silently print the JSON metrics instead.
+  if (positional[1]) {
+    die(`'aep metrics' takes no subcommand (got '${positional[1]}'). For the Prometheus scrape endpoint, GET ${serverUrl}/metrics/prometheus directly.`);
+  }
   if (!apiKey) die("API key required. Set --key or AEP_API_KEY env var.");
 
   const qs = new URLSearchParams();
-  if (flags.since) qs.set("since", flags.since);
-  if (flags.until) qs.set("until", flags.until);
+  const since = requireFlagValue(flags, "since");
+  const until = requireFlagValue(flags, "until");
+  if (since !== undefined) qs.set("since", since);
+  if (until !== undefined) qs.set("until", until);
   const query = qs.toString() ? `?${qs}` : "";
 
   const res = await request("GET", `${serverUrl}/metrics${query}`, null, {
@@ -1742,7 +1779,7 @@ async function main() {
       case "audit":    await cmdAudit(positional, flags, serverUrl, apiKey); break;
       case "workflow": await cmdWorkflow(positional, flags, serverUrl, apiKey); break;
       case "analytics": await cmdAnalytics(positional, flags, serverUrl, apiKey); break;
-      case "metrics":  await cmdMetrics(flags, serverUrl, apiKey); break;
+      case "metrics":  await cmdMetrics(positional, flags, serverUrl, apiKey); break;
       case "webhooks": await cmdWebhooks(positional, flags, serverUrl, apiKey); break;
       case "compliance": await cmdCompliance(positional, flags, serverUrl, apiKey); break;
       case "admin":    await cmdAdmin(positional, flags, serverUrl); break;

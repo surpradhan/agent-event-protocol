@@ -253,11 +253,12 @@ aep session ses_123 --type task.created --q "search term"
 aep export ses_123 --format json|csv --out export.json
 npm run export -- --format jsonl|csv|parquet --compression none|gzip|brotli --sink local|s3 --all-tenants
 aep workflow trc_456
+aep metrics --since 2026-07-01T00:00:00Z
 aep validate events.json
 ```
 
 **📈 Observability**
-- Prometheus `/metrics` endpoint for monitoring
+- JSON `/metrics` endpoint (`aep metrics`) + Prometheus `/metrics/prometheus` scrape endpoint
 - Structured JSON logs with Pino
 - Health checks (`/health`, `/ready`)
 - Rejection logs with rejection reasons
