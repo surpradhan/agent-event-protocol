@@ -372,10 +372,9 @@ function ok(label, data) {
  *  an authenticated round-trip to learn about a local typo. Returns undefined
  *  when the flag is absent, so callers can distinguish "not given" from "empty".
  *
- *  Used by `metrics` only for now — the analytics/webhooks commands predate it
- *  and still forward bare flags; switching them over changes their observable
- *  behaviour, so it belongs in its own change, not in issue #112's. Tracked as
- *  issue #174. */
+ *  Used by `--timeout` (all commands), `metrics`, `analytics
+ *  policy-blocked`/`performance`/`anomalies`, and `webhooks deliveries` for
+ *  their since/until/limit/threshold filters. */
 function requireFlagValue(flags, name) {
   const raw = flags[name];
   if (raw === undefined) return undefined;
@@ -1091,9 +1090,12 @@ async function cmdAnalyticsPolicyBlocked(flags, serverUrl, apiKey) {
   if (!apiKey) die("API key required. Set --key or AEP_API_KEY env var.");
 
   const qs = new URLSearchParams();
-  if (flags.since) qs.set("since", flags.since);
-  if (flags.until) qs.set("until", flags.until);
-  if (flags.limit) qs.set("limit", flags.limit);
+  const since = requireFlagValue(flags, "since");
+  const until = requireFlagValue(flags, "until");
+  const limit = requireFlagValue(flags, "limit");
+  if (since !== undefined) qs.set("since", since);
+  if (until !== undefined) qs.set("until", until);
+  if (limit !== undefined) qs.set("limit", limit);
   const query = qs.toString() ? `?${qs}` : "";
 
   const res = await request("GET", `${serverUrl}/analytics/policy-blocked${query}`, null, {
@@ -1144,9 +1146,12 @@ async function cmdAnalyticsPerformance(flags, serverUrl, apiKey) {
   if (!apiKey) die("API key required. Set --key or AEP_API_KEY env var.");
 
   const qs = new URLSearchParams();
-  if (flags.since) qs.set("since", flags.since);
-  if (flags.until) qs.set("until", flags.until);
-  if (flags.limit) qs.set("limit", flags.limit);
+  const since = requireFlagValue(flags, "since");
+  const until = requireFlagValue(flags, "until");
+  const limit = requireFlagValue(flags, "limit");
+  if (since !== undefined) qs.set("since", since);
+  if (until !== undefined) qs.set("until", until);
+  if (limit !== undefined) qs.set("limit", limit);
   const query = qs.toString() ? `?${qs}` : "";
 
   const res = await request("GET", `${serverUrl}/analytics/performance${query}`, null, {
@@ -1273,10 +1278,14 @@ async function cmdAnalyticsAnomalies(flags, serverUrl, apiKey) {
   if (!apiKey) die("API key required. Set --key or AEP_API_KEY env var.");
 
   const qs = new URLSearchParams();
-  if (flags.since) qs.set("since", flags.since);
-  if (flags.until) qs.set("until", flags.until);
-  if (flags.threshold) qs.set("threshold", flags.threshold);
-  if (flags.limit) qs.set("limit", flags.limit);
+  const since = requireFlagValue(flags, "since");
+  const until = requireFlagValue(flags, "until");
+  const threshold = requireFlagValue(flags, "threshold");
+  const limit = requireFlagValue(flags, "limit");
+  if (since !== undefined) qs.set("since", since);
+  if (until !== undefined) qs.set("until", until);
+  if (threshold !== undefined) qs.set("threshold", threshold);
+  if (limit !== undefined) qs.set("limit", limit);
   const query = qs.toString() ? `?${qs}` : "";
 
   const res = await request("GET", `${serverUrl}/analytics/anomalies${query}`, null, {
@@ -1492,9 +1501,12 @@ async function cmdWebhooks(positional, flags, serverUrl, apiKey) {
     case "deliveries": {
       if (!id) die("Usage: aep webhooks deliveries <id> [--since iso] [--until iso] [--limit n]");
       const qs = new URLSearchParams();
-      if (flags.since) qs.set("since", flags.since);
-      if (flags.until) qs.set("until", flags.until);
-      if (flags.limit) qs.set("limit", flags.limit);
+      const since = requireFlagValue(flags, "since");
+      const until = requireFlagValue(flags, "until");
+      const limit = requireFlagValue(flags, "limit");
+      if (since !== undefined) qs.set("since", since);
+      if (until !== undefined) qs.set("until", until);
+      if (limit !== undefined) qs.set("limit", limit);
       const query = qs.toString() ? `?${qs}` : "";
       const res = await request("GET", `${serverUrl}/webhooks/${encodeURIComponent(id)}/deliveries${query}`, null, auth);
       if (res.status !== 200) die(`Server returned HTTP ${res.status}: ${JSON.stringify(res.body)}`);

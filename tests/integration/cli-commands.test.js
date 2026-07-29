@@ -350,6 +350,37 @@ describe("CLI command integration tests (real subprocess)", () => {
     assert.equal(contacted, false, "CLI must not contact the server when the key is missing");
   });
 
+  // Issue #174: parseArgs turns a bare (value-less) flag into boolean `true`,
+  // which analytics/webhooks used to forward straight into the query string
+  // as the literal string "true" instead of refusing locally. `metrics` was
+  // fixed in #172 via requireFlagValue(); these commands share the same
+  // since/until/limit/threshold forwarding pattern and needed the same fix.
+  //
+  // Looped over every (command, flag) pair rather than hand-picking one flag
+  // per site — each site forwards 3-4 identically-shaped params, and a single
+  // spot-check per site wouldn't catch a future edit that fixes one flag at a
+  // site while leaving a sibling flag at that same site unrouted.
+  const bareFlagCoverage = [
+    { args: ["analytics", "policy-blocked"], urlPrefix: "/analytics/policy-blocked", flags: ["since", "until", "limit"] },
+    { args: ["analytics", "performance"], urlPrefix: "/analytics/performance", flags: ["since", "until", "limit"] },
+    { args: ["analytics", "anomalies"], urlPrefix: "/analytics/anomalies", flags: ["since", "until", "limit", "threshold"] },
+    { args: ["webhooks", "deliveries", "wh_001"], urlPrefix: "/webhooks/wh_001/deliveries", flags: ["since", "until", "limit"] },
+  ];
+
+  for (const { args, urlPrefix, flags } of bareFlagCoverage) {
+    for (const flag of flags) {
+      test(`${args.join(" ")} rejects a bare --${flag} before contacting the server`, async () => {
+        const before = received.length;
+        const { code, stderr } = await runCli([...args, `--${flag}`]);
+
+        assert.notEqual(code, 0, `a value-less --${flag} should not reach the wire as 'true'`);
+        assert.match(stderr, new RegExp(`--${flag} requires a value`, "i"));
+        const contacted = received.slice(before).some(r => r.url.startsWith(urlPrefix));
+        assert.equal(contacted, false, "CLI must not request when a flag value is missing");
+      });
+    }
+  }
+
   test("commands with no API key exit non-zero and never contact the server", async () => {
     const sessionId = `ses_noauth_${Date.now()}`;
     const before = received.length;
