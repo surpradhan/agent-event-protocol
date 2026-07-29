@@ -125,7 +125,8 @@ function ok(label, data) {
  *
  *  Used by `metrics` only for now — the analytics/webhooks commands predate it
  *  and still forward bare flags; switching them over changes their observable
- *  behaviour, so it belongs in its own change, not in issue #112's. */
+ *  behaviour, so it belongs in its own change, not in issue #112's. Tracked as
+ *  issue #174. */
 function requireFlagValue(flags, name) {
   const raw = flags[name];
   if (raw === undefined) return undefined;
@@ -1020,9 +1021,11 @@ Fetches GET /metrics — the JSON endpoint, NOT the Prometheus scrape endpoint a
 /metrics/prometheus — and prints the response body. Requires a read-scoped API key.
 
 Response fields: accepted, byType, session_count, workflow_count,
-subagent_session_count, max_tree_depth, signatures. Because an API key scopes the
-request to one tenant, the server-wide counters (received, rejected, duplicates)
-are always 0 here — they are process-wide, not per-tenant.
+subagent_session_count, max_tree_depth, signatures. The counters received,
+rejected and duplicates are process-wide rather than per-tenant, so a
+tenant-scoped request — any read-scoped API key — reports them as 0. A caller
+the server treats as full-read (dev-mode open reads, or a DASHBOARD_TOKEN
+passed as --key) sees the real lifetime totals instead.
 
 --since/--until window the event and session counts only; signatures is
 process-wide telemetry, and max_tree_depth is reported as 0 (a depth over an
@@ -1037,7 +1040,8 @@ async function cmdMetrics(positional, flags, serverUrl, apiKey) {
   if (flags.help) { metricsHelp(); return; }
   // 'metrics' takes no subcommand. Without this guard a plausible typo like
   // `aep metrics prometheus` would silently print the JSON metrics instead.
-  if (positional[1]) {
+  // Length, not truthiness — `aep metrics ""` is still a subcommand that isn't one.
+  if (positional.length > 1) {
     die(`'aep metrics' takes no subcommand (got '${positional[1]}'). For the Prometheus scrape endpoint, GET ${serverUrl}/metrics/prometheus directly.`);
   }
   if (!apiKey) die("API key required. Set --key or AEP_API_KEY env var.");

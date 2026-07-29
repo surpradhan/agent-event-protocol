@@ -101,8 +101,7 @@ describe("CLI command integration tests (real subprocess)", () => {
         // so a test asserting on a field name would fail if the CLI ever reshaped
         // the response instead of passing it through. A since/until that isn't
         // ISO-8601 drives the 400 branch, like the real endpoint.
-        const metricsMatch = req.method === "GET" && req.url.match(/^\/metrics(\?|$)/);
-        if (metricsMatch) {
+        if (req.method === "GET" && /^\/metrics(\?|$)/.test(req.url)) {
           const params = new URLSearchParams(req.url.split("?")[1] || "");
           const bad = ["since", "until"].some(
             k => params.has(k) && Number.isNaN(Date.parse(params.get(k)))
@@ -274,9 +273,10 @@ describe("CLI command integration tests (real subprocess)", () => {
   });
 
   test("metrics forwards --since/--until as query params", async () => {
-    // Literal expected path (not rebuilt with URLSearchParams, which would just
-    // mirror the implementation): '+' is the encoding for the '+' in the offset.
-    const { code } = await runCli([
+    // Literal expected path, not rebuilt with URLSearchParams (which would just
+    // mirror the implementation). The '+' in the UTC offset must survive as %2B,
+    // since a raw '+' would decode server-side as a space.
+    const { code, stdout } = await runCli([
       "metrics", "--since", "2026-07-01T00:00:00Z", "--until", "2026-07-02T05:30:00+05:30",
     ]);
 
@@ -284,6 +284,8 @@ describe("CLI command integration tests (real subprocess)", () => {
     const req = received.find(r => r.method === "GET" && r.url ===
       "/metrics?since=2026-07-01T00%3A00%3A00Z&until=2026-07-02T05%3A30%3A00%2B05%3A30");
     assert.ok(req, "mock server never received the windowed metrics GET");
+    // The windowed path must still print the body, not just issue the request.
+    assert.equal(JSON.parse(stdout).accepted, 42);
   });
 
   test("metrics exits non-zero and reports the body when the server returns non-2xx", async () => {
@@ -315,6 +317,12 @@ describe("CLI command integration tests (real subprocess)", () => {
     assert.match(stderr, /metrics\/prometheus/, "error should point at the scrape endpoint");
     const contacted = received.slice(before).some(r => r.url.startsWith("/metrics"));
     assert.equal(contacted, false, "CLI must not request when the invocation is invalid");
+
+    // An empty-string argument is still an argument — a truthiness check would
+    // let it through and print metrics as if it were a bare `aep metrics`.
+    const empty = await runCli(["metrics", ""]);
+    assert.notEqual(empty.code, 0, "an empty subcommand should be rejected too");
+    assert.match(empty.stderr, /takes no subcommand/i);
   });
 
   test("metrics --help documents the command without a key or a request", async () => {
