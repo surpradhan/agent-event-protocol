@@ -519,6 +519,35 @@ describe("--timeout resolution skips local-only commands (issue #178)", () => {
     assert.match(stderr, /Usage: aep validate/);
   });
 
+  test("export bulk with a bad --timeout still runs its own logic to completion", async () => {
+    // A fresh scratch DB (via DATABASE_PATH), auto-migrated by db.init() —
+    // cmdExportBulk runs all the way through a dry-run against it. The point
+    // isn't success or failure; it's that a bad --timeout, which never gets
+    // used since this command never calls request(), didn't stop it from
+    // getting there at all.
+    const scratchDb = path.join(os.tmpdir(), `aep-bulk-${process.pid}-${Date.now()}.db`);
+    try {
+      const { code, stdout, stderr } = await new Promise((resolve) => {
+        execFile(process.execPath, [CLI_PATH, "export", "bulk", "--timeout", "junk", "--dry-run"],
+          {
+            cwd: REPO_ROOT,
+            env: { ...baseEnv, DATABASE_PATH: scratchDb },
+            timeout: 10000,
+          },
+          (error, stdout, stderr) => {
+            resolve({ code: error ? (error.code ?? 1) : 0, stdout, stderr });
+          });
+      });
+
+      assert.doesNotMatch(stderr, /--timeout must be/,
+        "export bulk never calls request(); --timeout validation must not block it");
+      assert.equal(code, 0, `expected the dry-run against a fresh DB to succeed, got stderr: ${stderr}`);
+      assert.match(stdout, /Scanned \d+ tenant/, "should reach export bulk's own summary output");
+    } finally {
+      fs.rmSync(scratchDb, { force: true });
+    }
+  });
+
   test("a network command still rejects a bad --timeout before contacting the server", async () => {
     // Control case: session DOES call request(), so it must keep validating.
     const { code, stderr } = await runLocal(["session", "ses_1", "--timeout", "junk",
