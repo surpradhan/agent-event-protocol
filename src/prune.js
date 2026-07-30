@@ -37,6 +37,7 @@
  */
 
 const db = require("./db");
+const { describeError } = require("./errors");
 const { pruneAll } = require("./retention");
 const { runExport } = require("./export/index");
 const { createSink } = require("./export/sink");
@@ -186,7 +187,7 @@ async function main() {
 // Only run when invoked directly (not when required by tests).
 if (require.main === module) {
   main().catch((err) => {
-    console.error(`\x1b[31mError:\x1b[0m ${err.message || String(err)}`);
+    console.error(`\x1b[31mError:\x1b[0m ${describeError(err)}`);
     process.exit(1);
   });
 }
