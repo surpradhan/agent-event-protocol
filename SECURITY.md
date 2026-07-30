@@ -71,7 +71,9 @@ AEP provides the following security properties:
 
 ### ✅ Rate Limiting
 - **Per-Tenant Rate Limiting**: Prevents abuse by single tenant
-- **Connection Limits**: Maximum 100 concurrent SSE connections
+- **Connection Limits**: Maximum 1000 concurrent SSE connections server-wide
+  (`MAX_SSE_CONNECTIONS`, default `1000`) and 100 per tenant
+  (`MAX_SSE_PER_TENANT`, default `100`), both overridable via env var
 - **Rejection Logging**: Failed events logged with reasons
 
 ### ✅ Transport Security
@@ -118,11 +120,16 @@ We track security advisories for all production dependencies:
 
 ```json
 {
-  "ajv": "^8.18.0",                // JSON Schema validation
-  "ajv-formats": "^3.0.1",         // Format validation
-  "better-sqlite3": "^12.8.0",     // Database driver
-  "express": "^5.2.1",             // Web framework
-  "pino": "^10.3.1"                // Logging
+  "@aws-sdk/client-s3": "^3.1068.0",   // S3 client for the cloud export sink
+  "@aws-sdk/lib-storage": "^3.1068.0", // Multipart upload helper for streaming S3 exports
+  "@dsnp/parquetjs": "^1.8.7",         // Parquet file writer for export
+  "ajv": "^8.18.0",                    // JSON Schema validation
+  "ajv-formats": "^3.0.1",             // Format validation
+  "better-sqlite3": "^12.8.0",         // Database driver
+  "express": "^5.2.1",                 // Web framework
+  "pdfkit": "^0.19.1",                 // PDF rendering for audit bundles and compliance reports
+  "pg": "^8.13.1",                     // PostgreSQL driver for the Postgres storage backend
+  "pino": "^10.3.1"                    // Logging
 }
 ```
 

@@ -53,6 +53,7 @@ curl -s -X POST http://localhost:8787/admin/keys \
   "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
   "keyPrefix": "aep_a3f9e1c2",
   "tenantId": "my-org",
+  "projectId": "default",
   "label": "development key",
   "scopes": ["read", "write"],
   "signingEnabled": false
