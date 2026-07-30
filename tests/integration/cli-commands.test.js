@@ -536,6 +536,89 @@ describe("CLI command integration tests (real subprocess)", () => {
     assert.match(stderr, new RegExp(`could not reach http://127\\.0\\.0\\.1:${port} \\(ECONNREFUSED\\)`));
   });
 
+  test("a bracketed IPv6 AEP_SERVER reaches a server actually listening there (issue #177)", async (t) => {
+    // Regression test: WHATWG's URL.hostname keeps the brackets an IPv6
+    // literal needs in a URL string ("[::1]"), and handing that straight to
+    // http(s).request() as `hostname` sent Node looking up the literal string
+    // "[::1]" via DNS — which always fails, even with a server up and
+    // listening. A closed-port ECONNREFUSED (the pattern the tests above use)
+    // can't tell that apart from a real fix, so this one needs a server that
+    // actually answers.
+    const ipv6Server = http.createServer((req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ events: [] }));
+    });
+    try {
+      await new Promise((resolve, reject) => {
+        ipv6Server.once("error", reject);
+        ipv6Server.listen(0, "::1", resolve);
+      });
+    } catch (err) {
+      // Some sandboxes/CI hosts disable IPv6 entirely; the fix under test is
+      // about not mis-handling a bracketed literal, not about IPv6 support
+      // itself, so skip rather than fail where the platform has none.
+      if (err.code === "EAFNOSUPPORT" || err.code === "EADDRNOTAVAIL") {
+        t.skip(`IPv6 loopback unavailable in this environment (${err.code})`);
+        return;
+      }
+      throw err;
+    }
+
+    try {
+      const port = ipv6Server.address().port;
+      const sessionId = `ses_ipv6_${Date.now()}`;
+      const { code, stdout, stderr } = await runCli(["session", sessionId, "--json"], {
+        env: { AEP_SERVER: `http://[::1]:${port}` },
+      });
+
+      assert.equal(code, 0, `expected the CLI to reach the IPv6 server, got stderr: ${stderr}`);
+      assert.doesNotMatch(stderr, /ENOTFOUND/,
+        "the bracketed literal must not be sent to the DNS resolver as a hostname");
+      assert.deepEqual(JSON.parse(stdout), { events: [] });
+    } finally {
+      await new Promise((resolve) => ipv6Server.close(resolve));
+    }
+  });
+
+  test("a bracketed IPv6 AEP_SERVER reaches the streaming export path too (issue #177)", async (t) => {
+    // export builds its own request instead of going through request() (see
+    // "the unreachable-server message covers the streaming export path too"
+    // above), so dialHostname()'s other call site needs the same regression
+    // coverage independently — a fix (or future regression) applied to only
+    // one call site wouldn't show up in the other's tests.
+    const exportBody = JSON.stringify({ events: [] });
+    const ipv6Server = http.createServer((req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(exportBody);
+    });
+    try {
+      await new Promise((resolve, reject) => {
+        ipv6Server.once("error", reject);
+        ipv6Server.listen(0, "::1", resolve);
+      });
+    } catch (err) {
+      if (err.code === "EAFNOSUPPORT" || err.code === "EADDRNOTAVAIL") {
+        t.skip(`IPv6 loopback unavailable in this environment (${err.code})`);
+        return;
+      }
+      throw err;
+    }
+
+    try {
+      const port = ipv6Server.address().port;
+      const { code, stdout, stderr } = await runCli(["export", "ses_1"], {
+        env: { AEP_SERVER: `http://[::1]:${port}` },
+      });
+
+      assert.equal(code, 0, `expected export to reach the IPv6 server, got stderr: ${stderr}`);
+      assert.doesNotMatch(stderr, /ENOTFOUND/,
+        "the bracketed literal must not be sent to the DNS resolver as a hostname");
+      assert.equal(stdout, exportBody);
+    } finally {
+      await new Promise((resolve) => ipv6Server.close(resolve));
+    }
+  });
+
   test("a server URL carrying credentials does not echo them in the error", async () => {
     const port = await closedPort();
     const { code, stderr } = await runCli(["session", "ses_1"], {
