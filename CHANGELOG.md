@@ -4,6 +4,125 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Python SDK — pin the ruff ruleset with an explicit `select` — 2026-07-30
+
+`sdks/python/pyproject.toml`'s `[tool.ruff.lint]` now pins the exact set of
+rule codes `ruff==0.16.0` enables by default via an explicit `select`, instead
+of relying on ruff's implicit default (which shifted silently at the 0.15.22
+→ 0.16.0 bump). Ruff's actual default turned out to be sparsely curated
+*within* each of the ~37 families it touches — e.g. only 3/58
+`flake8-bandit` (`S`) codes and 2/35 `flake8-use-pathlib` (`PTH`) codes are
+active — so neither selecting whole families nor selecting bare prefixes for
+every touched family would reproduce it (the former drops ~30 active
+families, the latter newly activates ~380 inactive codes). The pin instead
+mixes bare prefixes for 7 fully-covered families with ~380 explicit rule
+codes for the rest, sourced from `ruff check --isolated --show-settings`.
+Verified byte-for-byte identical enabled rule set before/after — a pure pin,
+zero behavior change. Closes #168.
+
+---
+
+## CLI — collapse target-less dial errors in prune/export — 2026-07-30
+
+`src/prune.js` and `src/export.js` reported an unreachable Postgres/S3
+endpoint by printing every happy-eyeballs address attempt in full (e.g.
+`connect ECONNREFUSED ::1:5432, connect ECONNREFUSED 127.0.0.1:5432`) instead
+of the collapsed, `cli.js`-style `could not reach postgres://localhost:5432
+(ECONNREFUSED)`. New `withTarget(err, target)` and `databaseTarget(env)` in
+`src/errors.js` derive a credential-free `host:port` target (from
+`DATABASE_URL`, `PGHOST`/`PGPORT`, or `null` for the sqlite backend, a
+unix-socket `PGHOST`, or an unparseable `DATABASE_URL`) and attach it only
+when the error is genuinely a dial failure (`isUnreachable()`) — a
+reached-server failure (bad password, service error) passes through
+unmodified with its own, more accurate message. `S3Sink.write()` gets the
+same treatment, naming `EXPORT_S3_ENDPOINT` or `s3://<bucket>` on an upload
+failure. Closes #186.
+
+---
+
+## CLI — strip IPv6 brackets before dialing the server hostname — 2026-07-30
+
+A bracketed IPv6 `AEP_SERVER` (e.g. `http://[::1]:8787`) failed to connect
+even with a server up and listening: `request()` and `cmdExport`'s streaming
+request both passed `url.hostname` — which WHATWG's `URL` keeps bracketed —
+straight to `http(s).request()`, so Node resolved the literal string
+`"[::1]"` via DNS and always failed with `ENOTFOUND`. New `dialHostname(url)`
+helper strips the brackets before dialing at both call sites; `targetOf()`
+(the human-readable error message) is untouched, since it still wants the
+brackets so `could not reach http://[::1]:8787` reads correctly. Closes #177.
+
+---
+
+## CLI — lift `describeError` into `src/errors.js` for prune/export — 2026-07-30
+
+`src/prune.js` and `src/export.js` still rendered an unreachable server as a
+bare `Error: AggregateError` after #175 fixed the same bug in the `aep` CLI
+proper — they read `err.message || String(err)` directly instead of using
+`describeError()`. Moved `describeError`/`targetOf`/`oneLine`/`restatesCode`
+out of `src/cli.js` into a new `src/errors.js` and wired both operator CLIs
+to use it (without a `target`, matching `cli.js`'s own catch-all fallback).
+Closes #176.
+
+---
+
+## CLI — reject value-less `--out` and `cmdEmit`'s required flags — 2026-07-30
+
+A bare `--out` (no value) on `aep export`, `aep audit export`, `aep audit
+render`, or `aep compliance report` either crashed with a raw Node
+`TypeError [ERR_INVALID_ARG_TYPE]` after a successful network round trip, or
+— for `audit render` — was silently treated as "no `--out` given" and
+derived a PDF path from the bundle filename instead of failing loud.
+`cmdEmit`'s four required flags (`--type`/`--source`/`--session`/`--trace`)
+had the same gap: a bare `--type` sailed past the `if (!flags.type)` check
+and landed as a literal `true` in the emitted event body. All now route
+through the existing `requireFlagValue()` helper. Closes #183.
+
+---
+
+## CLI — reject value-less flags in compliance/session/export/export-bulk — 2026-07-29
+
+Extends #180's fix to the remaining call sites left out of scope there:
+`cmdComplianceReport`, `cmdSession`, `cmdExport`, `cmdAuditExport`, and
+`cmdExportBulk`. The `export bulk` case was the most severe: it
+re-serializes its own flags into an argv-like array forwarded to
+`src/export.js`'s `parseArgs()`, and a bare `--since` there used to be
+silently and *incorrectly* consumed by the next forwarded token as its
+value — with no error at all
+(`['--since','--until','2026-01-01...']` → `since: "--until"`). Fixed at
+both ends: `cmdExportBulk` now validates every flag before building the
+forwarded argv, and `src/export.js`'s own `parseArgs` no longer consumes a
+token that looks like another flag (or is missing) as the current flag's
+value. Closes #181.
+
+---
+
+## CLI — reject value-less since/until/limit/threshold flags — 2026-07-29
+
+Routes `--since`/`--until`/`--limit` (and `--threshold` for `anomalies`) on
+`aep analytics policy-blocked`, `aep analytics performance`, `aep analytics
+anomalies`, and `aep webhooks deliveries` through the `requireFlagValue()`
+helper #172 added for `aep metrics`, instead of forwarding a value-less flag
+(parsed as boolean `true`) straight into the query string, where the server
+rejected it with a 400. Closes #174.
+
+---
+
+## CLI — time out and fail loudly instead of hanging on a stalled server — 2026-07-29
+
+The `aep` CLI hung forever if a server accepted a connection and then
+stalled or died mid-response — neither the shared `request()` helper nor
+`cmdExport`'s streaming request had a `res.on("error")`/`res.on("aborted")`
+listener, so a response that died after its headers arrived left the
+promise pending indefinitely. Adds an inactivity timeout on both request
+paths (default 30s, overridable with `--timeout <seconds>` or `AEP_TIMEOUT`,
+`0` disables) that explicitly destroys the socket, listens for
+dead-response events, and settles the promise exactly once from the first
+(most meaningful) failure event. `aep export` now also reports a partial
+transfer as a failure instead of printing a false `✓ Exported to …` for a
+half-written file. Closes #178.
+
+---
+
 ## CLI — connection errors name the target and the cause — 2026-07-29
 
 - **Fixed:** every CLI command reported an unreachable server as a bare
@@ -1331,6 +1450,58 @@ deployment.
   `.claude/CLAUDE.md` (docs tree).
 - **Drift-guard impact: none** — docs only, no CI workflow change (still 13
   required checks).
+
+---
+
+## Retention & pruning job — Phase 13 PR-D — 2026-06-06
+
+Turns the per-project `retention_days` policy from PR-C into a working job.
+New `pruneEventsBefore(tenantId, cutoff)` (dual-backend parity behind
+`StorageBackend`) deletes events past their project's retention window in a
+single transaction and reconciles the derived `sessions` rows for partially
+pruned sessions. `src/retention.js` provides the pure `isPrunable()` /
+`computeCutoff()` logic; `src/prune.js` is the operator-invoked entry point
+(`npm run prune`, `--dry-run`, `--json`) — no always-on scheduler, wiring to
+cron / a k8s CronJob is PR-E's job. Projects with `retention_days`
+NULL/0/negative are kept forever, covering the seeded `default` project. No
+schema change, no new CI job — exercised by the existing `Postgres parity
+tests` job (verified locally: 68/68 integration on a fresh and non-fresh
+`postgres:16` DB).
+
+---
+
+## Projects, tiers & quotas — Phase 13 PR-C — 2026-06-06
+
+Introduces the `projects` / tier data model and enforces per-project event
+quotas on ingest. New `projects` table (migration `003_projects_quotas.js`,
+mirrored in the Postgres `SCHEMA_DDL`) seeded with a `default`
+(enterprise/unlimited) project, so existing single-tenant deployments are
+unaffected; `api_keys` gains `project_id`. `src/tiers.js` defines `free` /
+`team` / `enterprise` tier defaults for `event_quota` / `retention_days`,
+each env-overridable and materialised onto the project row at creation.
+`src/middleware/quota.js` enforces quotas with an in-memory,
+TTL-refreshed-per-project usage counter, returning `429` + `Retry-After`
+once a project's quota is reached (a documented soft, single-node limit).
+New `POST /admin/projects`, `GET /admin/projects`, `GET /admin/projects/:id`
+(admin-gated); `POST /admin/keys` accepts `projectId`. All new backend
+methods implemented at parity on both `SqliteBackend` and `PostgresBackend`.
+
+---
+
+## Postgres storage backend — Phase 13 PR-B — 2026-06-06
+
+Adds a real async PostgreSQL `StorageBackend` implementation (behind the
+interface introduced in PR-A), selectable via `STORAGE_BACKEND=postgres` +
+`DATABASE_URL` (falling back to standard `PG*` libpq env vars) — zero
+changes to any `server.js`/`auth.js` caller, since adding Postgres is purely
+additive behind `createBackend()`. Pure helpers (`formatSession`,
+`buildTree`, `computeMaxDepth`, cursor encode/decode) are lifted out of
+`sqlite.js` into `src/db/backends/_helpers.js` so both backends share
+byte-identical logic rather than duplicating it. Timestamps are stored as
+ISO-8601 `TEXT`, not `TIMESTAMPTZ`, so cursor-pagination comparisons stay
+byte-for-byte lexicographic exactly like SQLite. New **`Postgres parity
+tests`** CI job runs the full integration suite against a real `postgres:16`
+container (drift-guard required checks 12 → 13).
 
 ---
 
