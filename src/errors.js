@@ -167,7 +167,13 @@ const UNREACHABLE_CODES = new Set([
  *  describeError(err, target) can actually keep. (`.cause` is not walked: a
  *  library may wrap a dial failure there — see pg-pool's connection-timeout
  *  error — but describeError doesn't narrate through it, and teaching it to
- *  is a separate, deliberately out-of-scope change; see issue #186.) Runs on
+ *  is a separate, deliberately out-of-scope change; see issue #186.) `.some()`
+ *  on `.errors` means one unreachable child is enough to call the whole node
+ *  unreachable, even if a sibling child carries a reached-server code — this
+ *  is deliberately permissive rather than strict-AND: Node's happy-eyeballs
+ *  AggregateError only ever aggregates per-address dial attempts, never a
+ *  dial failure alongside a post-connect service failure, so that mixed case
+ *  doesn't arise from anything this codebase actually throws. Runs on
  *  failure paths — same never-throw contract as describeError. */
 function isUnreachable(err, seen = new Set()) {
   if (!err || typeof err !== "object" || seen.has(err)) return false;
