@@ -519,13 +519,36 @@ Global flags on all commands: `--server <url>` (default `http://localhost:8787`)
 
 `--timeout <seconds>` (env `AEP_TIMEOUT`, default `30`) bounds how long a command waits on a silent server before giving up — the timer measures *inactivity*, so a large export that keeps streaming never trips it. Use `--timeout 0` to disable it for a transfer that legitimately stalls.
 
+The CLI has 12 top-level commands. `export` additionally has an `export bulk` subcommand (documented as part of `export` below, not as a separate command).
+
 | Command | What it does | Example |
 |---|---|---|
+| `aep init` | Guided first-run onboarding wizard: checks server health, mints an API key with the admin token, verifies it with a test event | `aep init --admin-token dev-admin` |
 | `aep emit` | Emit a single event to the ingest server | `aep emit --type task.created --source agent://x --session ses_abc --trace trc_xyz --key $AEP_API_KEY --payload '{"task":"test"}'` |
 | `aep session <id>` | Print the event timeline for a session | `aep session ses_abc --key $AEP_API_KEY` |
 | `aep export <id>` | Export session events to JSON or CSV | `aep export ses_abc --format csv --out events.csv --key $AEP_API_KEY` |
-| `aep workflow <traceId>` | Print the full multi-agent workflow tree | `aep workflow trc_xyz --key $AEP_API_KEY` |
+| `aep export bulk` | Bulk DB export (all tenants/sessions) to local filesystem or S3 — an operator job, wired to cron / a k8s CronJob in production | `aep export bulk --sink s3 --bucket my-bucket --since 2026-01-01` |
+| `aep audit <export\|verify\|render>` | Build, verify, or render a tamper-evident, HMAC-signed audit bundle | `aep audit export ses_abc --out bundle.json --key $AEP_API_KEY` |
+| `aep workflow <traceId>` | Print the full multi-agent workflow tree, or (`--graph`) the cross-session causation graph | `aep workflow trc_xyz --key $AEP_API_KEY` |
+| `aep analytics <subcommand>` | Policy-enforcement, performance, custom & anomaly analytics | `aep analytics performance --since 2026-07-01 --key $AEP_API_KEY` |
+| `aep metrics` | Print this tenant's server metrics (`GET /metrics`, JSON) | `aep metrics --key $AEP_API_KEY` |
+| `aep webhooks <subcommand>` | Register & manage outbound webhooks | `aep webhooks create --url https://example.com/hook --key $AEP_API_KEY` |
+| `aep compliance report` | Compliance report templates (SOC2/HIPAA/GDPR/EU AI Act) | `aep compliance report --framework soc2 --key $AEP_API_KEY` |
+| `aep admin keys <subcommand>` | Manage API keys (create / list / delete) | `aep admin keys create --label dev --admin-token $ADMIN_TOKEN` |
 | `aep validate <file>` | Validate a local event JSON file | `aep validate examples/sample-event.json` |
+
+Commands with subcommands, and their key flags (run `aep <command> --help`, or `aep <command> <subcommand> --help`, for the full list):
+
+- **`aep export bulk`** — `--tenant <id>` (default: all tenants with a project row), `--all-tenants` (also include tenants with events but no project row), `--sink local|s3`, `--dir <path>`, `--bucket <name>`, `--region <r>`, `--endpoint <url>`, `--prefix <key>`, `--since`/`--until <iso>`, `--format jsonl|csv|parquet` (default jsonl), `--compression none|gzip|brotli` (default gzip), `--dry-run`, `--json`. S3 credentials come from the standard AWS credential chain — never passed as flags. Equivalent to `npm run export`.
+- **`aep audit export <session_id>`** — `--out <file>`, `--type`, `--q`, `--allow-empty` (export even with 0 matching events), `--pdf [file]` (also render a human-readable PDF alongside the JSON bundle). Requires `AUDIT_SIGNING_SECRET`.
+  - **`aep audit verify <bundle.json>`** — `--json`. Exit code `0` = valid, `1` = invalid/tampered. Requires `AUDIT_SIGNING_SECRET`.
+  - **`aep audit render <bundle.json>`** — `--out <file>`, `--force` (render even when verification fails). Requires `AUDIT_SIGNING_SECRET`.
+- **`aep analytics policy-blocked`** / **`performance`** — `--since`/`--until <iso>`, `--limit <n>` (1–1000, default 20), `--json`.
+  - **`aep analytics anomalies`** — `--since`/`--until <iso>`, `--threshold <n>` (modified-z cutoff, default 3.5), `--limit <n>` (1–1000, default 50), `--json`.
+  - **`aep analytics query`** — `--file <path>` or `--spec <json>` (query spec), `--save <name>` (save to the tenant library), `--list` (list saved queries), `--run <id>` (run a saved query), `--delete <id>`, `--json`.
+- **`aep webhooks`** — `list`, `get <id>`, `create --url <target> [--events <list>] [--disabled]`, `update <id> [--url] [--events] [--enable|--disable]`, `delete <id>`, `deliveries <id> [--since] [--until] [--limit]`. `--events` is a comma-separated list of event types or `*` for all. `--json` replaces the compact summary with the raw response for `list`/`deliveries`; for `create`/`update` it additionally prints the raw response after the confirmation line; `get` always prints the raw response; `delete` has no JSON output (204, no body). `create` returns a one-time `signing_secret` (shown once — store it).
+- **`aep compliance report`** — `--framework soc2|hipaa|gdpr|eu_ai_act` (required), `--session <id>` / `--trace <id>` (optional integrity proof-point, at most one), `--since`/`--until <iso>`, `--json`, `--out <file>`, `--pdf <file>`.
+- **`aep admin keys`** — `create --label <label> [--scopes read,write] [--tenant-id <id>] [--json]`, `list [--json]`, `delete <id>`. Requires `ADMIN_TOKEN` or `AEP_ADMIN_TOKEN` — either the env var or the global `--admin-token <token>` flag (as in the table example above).
 
 Interactive API docs are also available at `http://localhost:8787/docs` (Swagger UI) — useful for exploring endpoints without writing curl commands.
 
@@ -537,25 +560,87 @@ Authentication requirements: `[key:write]` = API key with write scope; `[key:rea
 
 > **API versioning:** the consumer-facing endpoints below are also served under the `/v1` prefix (e.g. `POST /v1/events`). The unversioned paths shown remain supported for backward compatibility, and every response includes an `API-Version: 1` header. Infra endpoints (`/health`, `/ready`, `/metrics/prometheus`), the dashboard/docs UI (`/dashboard`, `/docs`, `/openapi.json`), and `/admin/*` are **not** versioned.
 
+The server exposes 45 routes, grouped below by area.
+
+### Ingest
+
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| POST | `/events` | key:write | Ingest a single event. Returns 202 (accepted), 200 (duplicate), 400 (validation error), 401 (auth failure). |
-| GET | `/health` | none | Liveness probe. Returns `{ ok, service, version, checks: { db } }`. HTTP 503 if DB unreachable. |
-| GET | `/ready` | none | Readiness probe. HTTP 200 only when DB is connected and migrations have run. Use for Kubernetes `readinessProbe`. |
-| GET | `/metrics` | key:read or dash | Counters: received, accepted, rejected, duplicates, by-type breakdown, session/workflow counts, max tree depth. |
-| GET | `/metrics/prometheus` | metrics | Prometheus text format 0.0.4. Open in dev when `METRICS_TOKEN` is unset; 503 in production until it is set. Scrapers send `Authorization: Bearer <token>`. |
-| GET | `/stream` | key:read or dash | Server-Sent Events. Delivers `event.received` frames in real time. Heartbeat every 15 seconds. |
+| POST | `/events` | key:write | Ingest a single event. Returns 202 (accepted), 200 (duplicate), 400 (validation error), 401 (auth/signature failure). |
+
+### Read / Query
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
 | GET | `/sessions` | key:read or dash | Paginated session list. Query: `?limit=<1-500>`, `?cursor=<token>`. |
-| GET | `/sessions/:id/events` | key:read or dash | Ordered event timeline. Query: `?type`, `?q`, `?limit=<1-1000>`, `?cursor`. |
-| GET | `/sessions/:id/export` | key:read or dash | Export events. Query: `?format=json\|csv`, `?type`, `?q`. |
+| GET | `/sessions/:id` | key:read or dash | Single session metadata lookup. 404 if it does not exist for the tenant. |
+| GET | `/sessions/:id/events` | key:read or dash | Ordered event timeline. Query: `?type`, `?q`, `?role`, `?limit=<1-1000>`, `?cursor`. |
 | GET | `/sessions/:id/tree` | key:read or dash | Session and all descendants as a recursive tree. |
+| GET | `/sessions/:id/export` | key:read or dash | Export events. Query: `?format=json\|csv`, `?type`, `?q`, `?role`. |
+| GET | `/sessions/:id/audit-bundle` | key:read or dash | Tamper-evident, HMAC-signed audit bundle for one session. Query: `?format=json\|pdf`. 503 if `AUDIT_SIGNING_SECRET` is unset. |
+| GET | `/workflows` | key:read or dash | Paginated list of the tenant's distinct `trace_id`s. Query: `?limit=<1-500>`, `?cursor`. |
 | GET | `/workflows/:traceId` | key:read or dash | All sessions sharing a `trace_id`, assembled into a workflow tree. |
-| GET | `/dashboard` | dash (if set) | Serves the browser dashboard UI. |
-| GET | `/openapi.json` | none | OpenAPI 3.1 specification document. |
-| GET | `/docs` | none | Swagger UI (rendered from CDN). |
-| POST | `/admin/keys` | admin | Generate a new API key. Body: `{ tenantId, label?, scopes?, hmacSecret? }`. Raw key shown once only. |
+| GET | `/workflows/:traceId/graph` | key:read or dash | Cross-session causation graph (nodes + edges) for the whole trace, with cross-session edges flagged. |
+| GET | `/workflows/:traceId/audit-bundle` | key:read or dash | Signed audit bundle covering every session in the trace. Query: `?format=json\|pdf`. 503 if `AUDIT_SIGNING_SECRET` is unset. |
+| GET | `/rejections` | key:read or dash | Recent rejected events (schema/signature failures), tenant-scoped. Query: `?limit`. |
+
+### Analytics
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| GET | `/analytics/policy-blocked` | key:read or dash | Aggregates `policy.blocked` events. Query: `?since`, `?until`, `?limit`, `?format=json\|csv`. |
+| GET | `/analytics/performance` | key:read or dash | p50/p95/p99 latency by tool/agent/session/operation. Query: `?since`, `?until`, `?limit`, `?format=json\|csv`. |
+| GET | `/analytics/anomalies` | key:read or dash | Flags workflows deviating from baseline (robust modified-z). Query: `?since`, `?until`, `?threshold`, `?limit`, `?format=json\|csv`. |
+| POST | `/analytics/query` | key:read or dash | Run an ad-hoc custom-analytics query (structured JSON spec, not SQL). |
+| POST | `/analytics/saved-queries` | key:write | Save a named query to the tenant's library. Body: `{ name, spec }`. 409 on duplicate name. |
+| GET | `/analytics/saved-queries` | key:read or dash | List the tenant's saved queries, newest first. |
+| GET | `/analytics/saved-queries/:id` | key:read or dash | Fetch one saved query. 404 if absent. |
+| POST | `/analytics/saved-queries/:id/run` | key:read or dash | Run a saved query by id. |
+| DELETE | `/analytics/saved-queries/:id` | key:write | Delete a saved query. |
+
+### Webhooks
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| POST | `/webhooks` | key:write | Register a webhook. Body: `{ target_url, event_types?, enabled? }`. SSRF-guarded; returns a one-time `signing_secret`. |
+| GET | `/webhooks` | key:read or dash | List the tenant's webhooks, newest first. |
+| GET | `/webhooks/:id` | key:read or dash | Fetch one webhook. 404 if absent. |
+| PATCH | `/webhooks/:id` | key:write | Partial update (`target_url` / `event_types` / `enabled`). |
+| DELETE | `/webhooks/:id` | key:write | Remove a webhook. |
+| GET | `/webhooks/:id/deliveries` | key:read or dash | Recent delivery attempts for a webhook. Query: `?since`, `?until`, `?limit`. |
+
+### Compliance
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| GET | `/compliance/report` | key:read or dash | Framework-mapped compliance report. Query: `?framework=soc2\|hipaa\|gdpr\|eu_ai_act` (required), `?session`, `?trace` (at most one), `?since`, `?until`, `?format=json\|pdf`. |
+
+### Admin (unversioned — `/admin/*`)
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| POST | `/admin/keys` | admin | Generate a new API key. Body: `{ tenantId, projectId?, label?, scopes?, hmacSecret? }`. Raw key shown once only. |
 | GET | `/admin/keys` | admin | List all API keys. Raw keys and secrets never returned. |
 | DELETE | `/admin/keys/:id` | admin | Revoke a key immediately. |
+| GET | `/admin/keys/:id/access-log` | admin | API-key usage audit trail (opt-in via `ACCESS_LOG_ENABLED`). Query: `?since`, `?until`, `?limit`. |
+| POST | `/admin/projects` | admin | Create a project on a named tier (event quota / retention / data-residency region). |
+| GET | `/admin/projects` | admin | List all projects, each with current usage. |
+| GET | `/admin/projects/:id` | admin | Fetch a single project, with current usage. 404 if absent. |
+
+### Auth & misc
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| POST | `/auth/sse-ticket` | key:read or dash | Exchange a credential for a short-lived (30s), one-time SSE ticket, so it never appears in the `/stream` URL. |
+| GET | `/stream` | key:read or dash (or SSE ticket) | Server-Sent Events. Delivers `event.received` / `rejection.received` frames in real time. Heartbeat every 15 seconds. |
+| GET | `/metrics` | key:read or dash | Counters: received, accepted, rejected, duplicates, by-type breakdown, session/workflow counts, max tree depth. Query: `?since`, `?until`. |
+| GET | `/metrics/prometheus` | metrics | Prometheus text format 0.0.4. Open in dev when `METRICS_TOKEN` is unset; 503 in production until it is set. Scrapers send `Authorization: Bearer <token>`. |
+| GET | `/health` | none | Liveness probe. Returns `{ ok, service, version, checks: { db } }`. HTTP 503 if DB unreachable. |
+| GET | `/ready` | none | Readiness probe. HTTP 200 only when DB is connected and migrations have run. Use for Kubernetes `readinessProbe`. |
+| GET | `/dashboard` | dash (if set) | Serves the browser dashboard UI. |
+| GET | `/dashboard.html` | dash (if set) | Alias of `/dashboard`. |
+| GET | `/openapi.json` | none | OpenAPI 3.1 specification document. |
+| GET | `/docs` | none | Swagger UI (rendered from CDN). |
 
 ---
 
