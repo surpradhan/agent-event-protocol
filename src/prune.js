@@ -37,7 +37,7 @@
  */
 
 const db = require("./db");
-const { describeError } = require("./errors");
+const { describeError, withTarget, databaseTarget } = require("./errors");
 const { pruneAll } = require("./retention");
 const { runExport } = require("./export/index");
 const { createSink } = require("./export/sink");
@@ -166,7 +166,13 @@ async function main() {
     ({ exportTenant, destLabel } = buildExportWiring());
   }
 
-  await db.init();
+  try {
+    await db.init();
+  } catch (err) {
+    // Name the database we failed to dial (issue #186), matching src/cli.js's
+    // unreachable-server errors; a reached-server failure passes through.
+    throw withTarget(err, databaseTarget());
+  }
   try {
     const summary = await pruneAll({ dryRun, exportBeforePrune, exportTenant });
     if (json) {

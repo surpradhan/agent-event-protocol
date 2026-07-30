@@ -15,6 +15,8 @@
  * `err.message || String(err)`.
  */
 
+const { URL } = require("url");
+
 /** The origin of a URL, for use in an error message.
  *
  *  Prefer `origin` — unlike `href` it drops any userinfo, so a server URL of
@@ -136,4 +138,108 @@ function describeError(err, target = null) {
   return target ? `could not reach ${target} (${detail})` : detail;
 }
 
-module.exports = { describeError, targetOf };
+/** Codes that mean the peer was never reached — the dial itself failed.
+ *
+ *  A strict subset of TERSE_ERROR_CODES: that set exists for
+ *  describeError's message-collapsing (which cares whether a message merely
+ *  restates its code), a weaker claim than "the connection never landed".
+ *  ECONNRESET and EPIPE are deliberately excluded even though their messages
+ *  are just as terse — both require an already-established connection
+ *  (a peer tearing down a live connection, or a write failing because the
+ *  peer already closed its end), so reframing either as "could not reach"
+ *  would misdirect an operator at the network when the service was up and
+ *  reachable but dropped mid-conversation (e.g. Postgres hitting
+ *  max_connections after accept, or an S3 multipart upload's connection
+ *  dropping mid-transfer). */
+const UNREACHABLE_CODES = new Set([
+  "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT",
+]);
+
+/** Is this a transport-level failure — the peer was never reached?
+ *
+ *  Decides whether "could not reach <target>" framing is honest. An auth
+ *  failure or a service-side error means the dial succeeded, and wrapping it
+ *  as unreachable would point the operator at the network instead of at their
+ *  credentials/config. Deliberately walks the same shape describeError's
+ *  `collect()` does — `.code` (restricted to UNREACHABLE_CODES) and
+ *  (recursively) `.errors`, e.g. a happy-eyeballs AggregateError's
+ *  per-address attempts — and no further, so a "yes" here is a promise
+ *  describeError(err, target) can actually keep. (`.cause` is not walked: a
+ *  library may wrap a dial failure there — see pg-pool's connection-timeout
+ *  error — but describeError doesn't narrate through it, and teaching it to
+ *  is a separate, deliberately out-of-scope change; see issue #186.) `.some()`
+ *  on `.errors` means one unreachable child is enough to call the whole node
+ *  unreachable, even if a sibling child carries a reached-server code — this
+ *  is deliberately permissive rather than strict-AND: Node's happy-eyeballs
+ *  AggregateError only ever aggregates per-address dial attempts, never a
+ *  dial failure alongside a post-connect service failure, so that mixed case
+ *  doesn't arise from anything this codebase actually throws. Runs on
+ *  failure paths — same never-throw contract as describeError. */
+function isUnreachable(err, seen = new Set()) {
+  if (!err || typeof err !== "object" || seen.has(err)) return false;
+  seen.add(err);
+  try {
+    if (UNREACHABLE_CODES.has(err.code)) return true;
+    return Array.isArray(err.errors) && err.errors.some((e) => isUnreachable(e, seen));
+  } catch (_) {
+    return false; // a getter threw — can't tell, so don't reframe
+  }
+}
+
+/** Attach a target to an unreachable-network error; pass anything else through.
+ *
+ *  For a dial failure this returns a new Error whose `.message` is the full
+ *  cli.js-style line — "could not reach <target> (<causes>)" — with the
+ *  original as `.cause`, so a later `describeError(err)` (no target) prints it
+ *  as-is: the top-level handlers in src/prune.js / src/export.js need no
+ *  change. A reached-server failure (bad password, missing bucket) or a null
+ *  target returns `err` untouched, keeping its own, more accurate message. */
+function withTarget(err, target) {
+  if (!target || !isUnreachable(err)) return err;
+  return new Error(describeError(err, target), { cause: err });
+}
+
+/** Credential-free target for the configured storage backend, or null.
+ *
+ *  Names what src/db's Postgres backend will dial, for error messages —
+ *  mirroring its config resolution (DATABASE_URL, else libpq's PGHOST/PGPORT,
+ *  else localhost:5432). `pg-connection-string` (what `pg`'s Pool uses to
+ *  parse DATABASE_URL) lets a `?host=`/`?port=` query param override the
+ *  URL's own authority — the documented way to spell a Unix-socket path in a
+ *  DATABASE_URL, since a socket path can't live in a URL authority (e.g.
+ *  Cloud SQL's `postgres:///db?host=/cloudsql/project:region:instance`) — so
+ *  that precedence is mirrored here too, otherwise the reported target could
+ *  name a host `pg` never actually dials. Always reports the `postgres://`
+ *  scheme, regardless of which of DATABASE_URL's accepted aliases
+ *  (postgres/postgresql) was used, for one consistent look. Returns null
+ *  whenever there is no network target to name: the sqlite backend (a file,
+ *  whose errors already carry the path), or a Unix-socket host, spelled any
+ *  of the three ways `pg-connection-string` accepts — PGHOST, DATABASE_URL's
+ *  `?host=` (already percent-decoded by URLSearchParams, so it reads as a
+ *  bare "/…" path), or a percent-encoded slash directly in the URL authority
+ *  (`postgres://%2Fvar%2Frun%2Fpostgresql/db` — WHATWG's `URL` treats a
+ *  non-special scheme's host as opaque and never decodes it, so this form
+ *  stays literally "%2F…"; checked the same way `pg-connection-string` itself
+ *  does, `/^%2f/i`, rather than decoding, which could throw on a malformed
+ *  escape) — or a DATABASE_URL in a shape WHATWG won't parse (key=value
+ *  form) — parsing is how credentials are provably dropped, so an
+ *  unparseable string is never echoed. */
+function databaseTarget(env = process.env) {
+  if (String(env.STORAGE_BACKEND || "sqlite").toLowerCase() !== "postgres") return null;
+  if (env.DATABASE_URL) {
+    try {
+      const url = new URL(env.DATABASE_URL);
+      const host = url.searchParams.get("host") || url.hostname;
+      if (!host || host.startsWith("/") || /^%2f/i.test(host)) return null; // unix socket, not a dial target
+      const port = url.searchParams.get("port") || url.port || "5432";
+      return `postgres://${host}:${port}`;
+    } catch (_) {
+      return null;
+    }
+  }
+  const host = env.PGHOST || "localhost";
+  if (host.startsWith("/")) return null; // unix-socket directory, not a dial target
+  return `postgres://${host}:${env.PGPORT || "5432"}`;
+}
+
+module.exports = { describeError, targetOf, withTarget, databaseTarget };

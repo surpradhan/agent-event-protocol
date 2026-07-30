@@ -33,7 +33,7 @@
 const path = require("path");
 
 const db = require("./db");
-const { describeError } = require("./errors");
+const { describeError, withTarget, databaseTarget } = require("./errors");
 const { runExport, DEFAULT_FORMAT, DEFAULT_COMPRESSION } = require("./export/index");
 const { createSink, SUPPORTED_SINKS } = require("./export/sink");
 const { SUPPORTED_FORMATS, SUPPORTED_COMPRESSIONS, isSelfCompressed } = require("./export/formats");
@@ -294,7 +294,13 @@ async function main() {
   // or EXPORT_ALL_TENANTS=1 is set; otherwise they are reported and skipped.
   const allTenants = opts.allTenants || process.env.EXPORT_ALL_TENANTS === "1";
 
-  await db.init();
+  try {
+    await db.init();
+  } catch (err) {
+    // Name the database we failed to dial (issue #186), matching src/cli.js's
+    // unreachable-server errors; a reached-server failure passes through.
+    throw withTarget(err, databaseTarget());
+  }
   try {
     const summary = await runExport({
       tenantId: opts.tenantId,
