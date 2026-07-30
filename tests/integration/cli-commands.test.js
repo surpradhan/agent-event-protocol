@@ -367,11 +367,16 @@ describe("CLI command integration tests (real subprocess)", () => {
     { args: ["analytics", "anomalies"], urlPrefix: "/analytics/anomalies", flags: ["since", "until", "limit", "threshold"] },
     { args: ["webhooks", "deliveries", "wh_001"], urlPrefix: "/webhooks/wh_001/deliveries", flags: ["since", "until", "limit"] },
     // Issue #181: the same bare-flag-forwarding bug in four more commands.
-    { args: ["compliance", "report", "--framework", "soc2"], urlPrefix: "/compliance/report", flags: ["session", "trace", "since", "until"] },
+    // Issue #183 added "out" to the compliance report / export / audit export
+    // rows below: a bare `--out` used to reach fs.writeFileSync/createWriteStream
+    // as literal `true` and surface as a raw Node TypeError instead of a clean
+    // CLI error — #181's enumerated scope covered the other flags at these
+    // sites but deliberately left --out for a follow-up.
+    { args: ["compliance", "report", "--framework", "soc2"], urlPrefix: "/compliance/report", flags: ["session", "trace", "since", "until", "out"] },
     { args: ["session", "ses_bare_001"], urlPrefix: "/sessions/ses_bare_001/events", flags: ["type", "q"] },
-    { args: ["export", "ses_bare_002"], urlPrefix: "/sessions/ses_bare_002/export", flags: ["type", "q"] },
+    { args: ["export", "ses_bare_002"], urlPrefix: "/sessions/ses_bare_002/export", flags: ["type", "q", "out"] },
     {
-      args: ["audit", "export", "ses_bare_003"], urlPrefix: "/sessions/ses_bare_003/export", flags: ["type", "q"],
+      args: ["audit", "export", "ses_bare_003"], urlPrefix: "/sessions/ses_bare_003/export", flags: ["type", "q", "out"],
       // cmdAuditExport validates flags before requiring AUDIT_SIGNING_SECRET,
       // but a real secret is supplied here so THIS test isolates the flag check.
       env: { AUDIT_SIGNING_SECRET: "test-secret" },
@@ -402,6 +407,44 @@ describe("CLI command integration tests (real subprocess)", () => {
     assert.match(stderr, /--type requires a value/i);
     assert.doesNotMatch(stderr, /AUDIT_SIGNING_SECRET/);
   });
+
+  // Issue #183: `audit render` doesn't hit the network at all, so it can't be
+  // covered by bareFlagCoverage's urlPrefix check — but it had the worst variant
+  // of this bug. A bare --out was silently treated as "no --out given" (typeof
+  // true !== "string") and the CLI derived a path from the bundle filename
+  // instead, instead of failing loudly. It's also checked before the unrelated
+  // AUDIT_SIGNING_SECRET requirement, mirroring `audit export` above.
+  test("audit render rejects a bare --out before the unrelated AUDIT_SIGNING_SECRET check", async () => {
+    const { code, stderr } = await runCli(["audit", "render", "bundle.json", "--out"]);
+
+    assert.notEqual(code, 0, "a value-less --out must not silently fall back to a derived path");
+    assert.match(stderr, /--out requires a value/i);
+    assert.doesNotMatch(stderr, /AUDIT_SIGNING_SECRET/);
+  });
+
+  // Issue #183: cmdEmit checked `!flags.type` etc, which a bare `--type` (value
+  // `true`) sails through — the literal boolean then landed in the emitted
+  // event body instead of being rejected. Each required flag must die loud.
+  const emitRequiredFlags = ["type", "source", "session", "trace"];
+  for (const bareFlag of emitRequiredFlags) {
+    test(`emit rejects a bare --${bareFlag} before contacting the server`, async () => {
+      const sessionId = `ses_emit_bare_${bareFlag}_${Date.now()}`;
+      const values = { type: "task.created", source: "agent://test", session: sessionId, trace: "trc_bare_001" };
+      const args = ["emit"];
+      for (const f of emitRequiredFlags) {
+        args.push(`--${f}`);
+        if (f !== bareFlag) args.push(values[f]);
+      }
+
+      const before = received.length;
+      const { code, stderr } = await runCli(args);
+
+      assert.notEqual(code, 0, `a value-less --${bareFlag} should not reach the wire as 'true'`);
+      assert.match(stderr, new RegExp(`--${bareFlag} requires a value`, "i"));
+      const contacted = received.slice(before).some(r => r.method === "POST" && r.url === "/events");
+      assert.equal(contacted, false, "CLI must not POST when a required flag value is missing");
+    });
+  }
 
   // Issue #181: `export bulk` is worse than the sites above — it runs entirely
   // locally (no server request at all) and used to forward a bare flag as a
