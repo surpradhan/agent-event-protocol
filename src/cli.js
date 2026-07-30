@@ -165,6 +165,18 @@ function truncatedResponseError() {
   );
 }
 
+/** The hostname to hand to http(s).request() for a parsed URL.
+ *
+ *  WHATWG's URL.hostname keeps the square brackets an IPv6 literal needs in a
+ *  URL string (e.g. "[::1]"), but Node's request options want the bare
+ *  address — passed through brackets and all, it triggers a DNS lookup for
+ *  the literal string "[::1]", which never resolves, instead of dialling the
+ *  address. Only strip for that one caller; targetOf() still wants the
+ *  brackets for a human-readable "could not reach http://[::1]:8787". */
+function dialHostname(url) {
+  return url.hostname.replace(/^\[|\]$/g, "");
+}
+
 function request(method, urlStr, body, headers = {}) {
   return new Promise((resolve, reject) => {
     const url = new URL(urlStr);
@@ -172,7 +184,7 @@ function request(method, urlStr, body, headers = {}) {
     const bodyStr = body ? JSON.stringify(body) : null;
 
     const opts = {
-      hostname: url.hostname,
+      hostname: dialHostname(url),
       port: url.port || (url.protocol === "https:" ? 443 : 80),
       path: url.pathname + url.search,
       method,
@@ -505,7 +517,7 @@ async function cmdExport(positional, flags, serverUrl, apiKey) {
     const url = new URL(`${serverUrl}/sessions/${sessionId}/export?${qs}`);
     const lib = url.protocol === "https:" ? https : http;
     const opts = {
-      hostname: url.hostname,
+      hostname: dialHostname(url),
       port: url.port || (url.protocol === "https:" ? 443 : 80),
       path: url.pathname + url.search,
       method: "GET",
