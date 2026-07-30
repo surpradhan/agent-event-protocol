@@ -2,6 +2,10 @@
 
 > Phase 10 — Automatic instrumentation for agent pods running in Kubernetes.
 
+A Kubernetes operator (CRD + mutating admission webhook) that automates AEP sidecar injection for annotated pods.
+
+> **📍 Project direction (2026-06):** AEP is converging on OpenTelemetry rather than continuing as a standalone protocol. The operator is **parked** — it remains published and usable as a reference implementation (bugfixes welcome), but is not receiving new-feature investment; active development has moved toward contributions to the OTel GenAI semantic conventions.
+
 Annotate any pod with `aep.dev/inject=true` and the operator automatically
 injects an AEP observability sidecar that emits structured events to the AEP
 ingest server — zero changes to agent code required.
