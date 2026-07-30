@@ -73,12 +73,13 @@ environment variables (`PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` /
 
 Both backends run their schema setup on `db.init()` at startup — `CREATE TABLE
 IF NOT EXISTS …`, `CREATE INDEX IF NOT EXISTS …`, and `INSERT … ON CONFLICT DO
-NOTHING` for seed rows. There is **no separate migration step to run**: point the
-server at an empty database and it will create the `events`, `sessions`,
-`api_keys`, `projects`, and `server_metrics` tables (plus the seeded `default`
-project) on first start. Re-running against an existing database is a no-op. The
-`GET /ready` probe returns 200 only once `init()` has completed and the schema is
-present — wire it to a Kubernetes `readinessProbe`.
+NOTHING` for seed rows. There is **no separate migration step to run**: point
+the server at an empty database and it will create the `events`, `sessions`,
+`server_metrics`, `api_keys`, `projects`, `api_key_access_log`,
+`saved_queries`, `webhooks`, and `webhook_deliveries` tables (plus the seeded
+`default` project) on first start. Re-running against an existing database is
+a no-op. The `GET /ready` probe returns 200 only once `init()` has completed
+and the schema is present — wire it to a Kubernetes `readinessProbe`.
 
 ---
 
@@ -225,9 +226,9 @@ Built-in defaults (`src/tiers.js`):
 | `team` | 5,000,000 | 90 |
 | `enterprise` | unlimited | unlimited (keep forever) |
 
-> The PRD frames free as "unlimited events up to 5 GB". This repo meters by
-> **event count, not bytes**, so the free tier is translated to a conservative
-> finite event quota so the quota path is enforceable and testable.
+> This repo meters usage by **event count, not bytes** — the free tier is a
+> conservative finite event quota (rather than a byte ceiling) so the quota
+> path is enforceable and testable.
 
 Every default is overridable via environment variables — set these on the server
 (and on the prune job, since it reads `retention_days`) so limits can be tuned

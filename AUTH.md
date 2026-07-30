@@ -117,8 +117,9 @@ Response:
   "message": "API key created. Store the key securely — it will not be shown again.",
   "key":       "aep_a3f9e1c2d4b5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3",
   "id":        "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "keyPrefix": "aep_a3f9e1c",
+  "keyPrefix": "aep_a3f9e1c2",
   "tenantId":  "acme-corp",
+  "projectId": "default",
   "label":     "Production ingest key",
   "scopes":    ["read", "write"],
   "signingEnabled": false

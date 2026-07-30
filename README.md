@@ -5,7 +5,7 @@
 [![GitHub](https://img.shields.io/badge/GitHub-surpradhan/agent--event--protocol-blue?logo=github)](https://github.com/surpradhan/agent-event-protocol)
 [![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Tests: 700+](https://img.shields.io/badge/tests-700%2B-brightgreen)](#testing)
+[![Tests: 900+](https://img.shields.io/badge/tests-900%2B-brightgreen)](#testing)
 
 > **📍 Project direction (2026-06):** AEP is converging on OpenTelemetry rather than continuing as a standalone protocol. Active development is moving toward contributions to the OTel GenAI semantic conventions. This repo remains published and usable, but the envelope/server here is now a **reference implementation**, not the forward roadmap.
 
@@ -422,7 +422,7 @@ Typically indicates cross-tenant access attempt or insufficient scopes for the r
 
 ## 🧪 Testing
 
-**JavaScript server (Node.js) — 700+ tests (490+ unit + 250+ integration)**
+**JavaScript server (Node.js) — 900+ tests (550+ unit + 350+ integration)**
 ```bash
 npm test                  # full suite
 npm run test:unit         # unit tests (event protocol, validation, analytics, export, CLI)
@@ -438,10 +438,20 @@ pytest tests/unit/        # unit tests (no server needed)
 pytest tests/integration/ # integration tests (auto-skip if server is down)
 ```
 
-**Go SDK — 80+ tests**
+**Go SDK — 85+ tests**
 ```bash
 cd sdks/go
-go test ./...            # 69+ unit tests + 11 integration tests (auto-skip if server is down)
+go test ./...                       # 78 unit tests (no server needed)
+go test -tags=integration ./aep -v  # 9 integration tests (auto-skip if server is down)
+```
+
+**Node SDK — 73+ tests (70+ unit + 3 integration, auto-skip if server is down)**
+```bash
+cd sdks/node
+npm install
+npm test                  # vitest — full suite (unit + integration)
+npm run test:unit         # unit tests (event factory, validation, HMAC signing, client, instrument)
+npm run test:integration  # integration tests (auto-skip unless AEP_INGEST_URL is reachable)
 ```
 
 **Test Coverage:**

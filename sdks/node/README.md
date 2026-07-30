@@ -219,8 +219,12 @@ not gate *which commit* gets released, which is why these two checks are added
 on top of it.
 
 The published tarball matches `npm pack --dry-run` locally — only `dist/`,
-`README.md`, `LICENSE`, and `package.json` ship; `src/`, `tests/`, `demos/`,
-and tooling configs are excluded by the `"files"` allowlist in `package.json`.
+`README.md`, `LICENSE`, and `package.json` ship. `package.json`'s `"files"`
+allowlist lists only `dist`; `README.md`, `LICENSE`, and `package.json` itself
+ship regardless of that allowlist because npm always includes them in a
+published package. `src/`, `tests/`, `demos/`, and tooling configs are not in
+the allowlist and are not among npm's always-included files, so they're
+excluded.
 
 **One-time maintainer setup (GitHub UI — not code):**
 
