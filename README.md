@@ -478,9 +478,9 @@ We welcome contributions! Here's how:
 6. **Push** and open a Pull Request
 
 **Areas we're looking for help:**
-- 📱 Mobile dashboard (React Native)
-- 📈 Advanced metrics & analytics
-- 🌍 Internationalization
+- 🔭 The OTel bridge (`otelbridge/`) — extending the span → AEP-event Collector exporter, and OTel GenAI SIG semantic-convention contributions (the guardrail/`policy.blocked` proposal is the flagship ask). The signed-audit hash-chain/checkpoint work and its standalone verifier CLI live in the separate [`surpradhan/otel-agent-audit`](https://github.com/surpradhan/otel-agent-audit) repo, not here.
+- 🐍 Python SDK (`sdks/python/`) — the active carry-forward SDK; instrumentation hardening and refinements (not a 6th framework — five is the target)
+- 🐛 Bugfixes & docs for the server/dashboard/operator reference implementation and the frozen Go/Node SDKs — welcome, but these are in maintenance mode, not new-feature targets
 - 📚 Docs & tutorials
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed guidelines.
