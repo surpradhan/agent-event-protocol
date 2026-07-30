@@ -136,4 +136,4 @@ function describeError(err, target = null) {
   return target ? `could not reach ${target} (${detail})` : detail;
 }
 
-module.exports = { describeError, targetOf, oneLine, restatesCode, TERSE_ERROR_CODES, MAX_CAUSES };
+module.exports = { describeError, targetOf };
