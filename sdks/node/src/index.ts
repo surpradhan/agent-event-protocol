@@ -1,9 +1,9 @@
 /**
  * `@surpradhan/aep` — Node.js / TypeScript SDK for the Agent Event Protocol.
  *
- * Phase 12g (PR1) ships the SDK core: event factory, validation, HMAC signing,
- * and the ingest/query client — mirroring the Python and Go SDKs. Framework
- * auto-instrumentation (`instrument()` for LangChain.js) lands in PR2.
+ * Ships the SDK core: event factory, validation, HMAC signing, and the
+ * ingest/query client — mirroring the Python and Go SDKs. Also exports
+ * `instrument()` for LangChain.js/LangGraph framework auto-instrumentation.
  */
 
 export {
