@@ -2,6 +2,8 @@
 
 Thank you for your interest in contributing to AEP! We welcome contributions from everyone: whether it's bug fixes, features, documentation, or ideas.
 
+> **📍 Project direction (2026-06):** AEP is converging on OpenTelemetry rather than continuing as a standalone protocol. **Feature contributions are welcome for the Python SDK (`sdks/python/`) and the OTel bridge (`otelbridge/`)** — the active surfaces carrying this work forward. The ingest server, dashboard, and Kubernetes operator are **parked** (reference implementation — bugfixes and docs welcome, not new features), and the Go and Node SDKs are **frozen** (maintenance mode only, don't extend them). See the project direction note at the top of [README.md](./README.md) for the full picture.
+
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -213,19 +215,64 @@ Look for issues tagged with `good-first-issue` label on GitHub:
 ```
 agent-event-protocol/
 ├── src/
-│   ├── server.js           # Express app & routes
-│   ├── auth.js             # Authentication middleware
-│   ├── db.js               # SQLite wrapper
-│   ├── validator.js        # Event schema validation
-│   ├── signature.js        # HMAC signing
-│   ├── cli.js              # CLI entry point
-│   ├── middleware/         # Middleware modules
+│   ├── server.js            # Express app; v1 router mounted at / and /v1
+│   ├── cli.js               # `aep` CLI entry point
+│   ├── cli-validate.js      # CLI event-file validation helper
+│   ├── auth.js              # API keys (hashed), DASHBOARD_TOKEN, ADMIN_TOKEN
+│   ├── errors.js            # Shared CLI error rendering (describeError, targetOf)
+│   ├── validator.js         # Event schema validation (AJV)
+│   ├── createEvent.js       # Event factory
+│   ├── coreEventTypes.js    # The 12 core event type constants
+│   ├── signature.js         # HMAC signing/verification
+│   ├── _canonical.js        # Canonical JSON form used for signing
+│   ├── customQuery.js       # Safe structured analytics queries
+│   ├── analytics.js         # Policy/performance/anomaly analytics endpoints
+│   ├── anomalies.js         # Robust modified-z anomaly detection
+│   ├── performance.js       # Latency percentile analytics
+│   ├── workflowGraph.js     # Causation-graph / DAG endpoint
+│   ├── audit.js             # HMAC-signed audit bundle export
+│   ├── audit-pdf.js         # Audit bundle PDF rendering
+│   ├── compliance.js        # SOC2/HIPAA/GDPR/EU-AI-Act compliance reports
+│   ├── compliance-pdf.js    # Compliance report PDF rendering
+│   ├── retention.js         # Retention pruning logic
+│   ├── prune.js             # `npm run prune` CLI
+│   ├── export.js            # `npm run export` CLI
+│   ├── webhooks.js          # Webhook CRUD
+│   ├── webhookDelivery.js   # Webhook delivery + retries
+│   ├── webhookSignature.js  # Per-webhook HMAC signing
+│   ├── ssrf.js              # SSRF guard for webhook targets
+│   ├── metrics.js           # JSON + Prometheus metrics
+│   ├── logger.js            # Pino structured logging
+│   ├── regions.js           # Data residency labels
+│   ├── tiers.js             # Project tiers/quotas
+│   ├── openapi.json         # OpenAPI 3.1 spec (source of truth for the API)
+│   ├── db/
+│   │   ├── index.js          # StorageBackend selection (SQLite/Postgres)
+│   │   ├── migrate.js        # Migration runner
+│   │   ├── migrations/       # 001..010, one file per schema change
+│   │   └── backends/
+│   │       ├── interface.js  # StorageBackend interface contract
+│   │       ├── sqlite.js     # SQLite backend (better-sqlite3)
+│   │       ├── postgres.js   # Postgres backend (hand-mirrored DDL)
+│   │       └── _helpers.js   # Shared backend query helpers
+│   ├── export/
+│   │   ├── index.js          # Streaming export core
+│   │   ├── formats.js        # JSONL/CSV/Parquet formatting
+│   │   ├── parquet.js        # Parquet writer (lazy-required)
+│   │   ├── s3sink.js         # S3 egress
+│   │   └── sink.js           # Local-file sink
+│   ├── middleware/
+│   │   ├── rateLimit.js      # Per-API-key rate limiting (ingest only)
+│   │   ├── quota.js          # Per-project quota enforcement
+│   │   ├── accessLog.js      # Opt-in, path-only access logging
+│   │   └── queryValidation.js # Query-param validation
 │   └── public/
-│       └── dashboard.html  # Frontend dashboard (HTML/CSS/JS)
+│       ├── dashboard.html    # Vanilla-JS dashboard (~3.1k lines)
+│       └── fonts/            # Statically served dashboard fonts
 ├── tests/
-│   ├── unit/               # Unit tests
-│   └── integration/        # Integration tests
-└── examples/               # Demo scenarios
+│   ├── unit/                # Unit tests
+│   └── integration/         # Integration tests
+└── examples/                # Demo scenarios
 ```
 
 ### Key Concepts
@@ -306,9 +353,9 @@ Have questions about the codebase?
 
 ## 🔄 Code Review Process
 
-All PRs require:
+All PRs go through:
 1. **Automated checks**: Tests pass, linting passes
-2. **Code review**: At least one approval from maintainers
+2. **Maintainer review**: A maintainer reviews every PR and leaves feedback. This isn't a hard GitHub-enforced merge gate — see "Branch protection on `main`" above — but review happens in practice before a PR merges
 3. **Feedback integration**: Address comments & re-request review
 
 Maintainers aim to review PRs within 48 hours.
@@ -379,7 +426,6 @@ test("validateEvent rejects null input", () => {
 - **Discussions**: Ideas, questions, announcements
 - **Issues**: Bug reports, feature requests
 - **Pull Requests**: Code contributions
-- **Email**: [TODO: contact email for partnerships]
 
 ---
 
