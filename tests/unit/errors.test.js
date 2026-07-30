@@ -443,6 +443,21 @@ describe("databaseTarget", () => {
     );
   });
 
+  test("returns null for a percent-encoded Unix-socket path in the URL authority", () => {
+    // pg-connection-string also accepts a socket path spelled directly as the
+    // URL's host, percent-encoded (postgres://%2Fvar%2Frun%2Fpostgresql/db) —
+    // WHATWG's URL treats a non-special scheme's host as opaque and never
+    // decodes it, so without this check the target would fabricate a
+    // network-looking label ("postgres://%2Fvar...:5432") pg never dials.
+    assert.equal(
+      databaseTarget({
+        STORAGE_BACKEND: "postgres",
+        DATABASE_URL: "postgres://%2Fvar%2Frun%2Fpostgresql/aep"
+      }),
+      null
+    );
+  });
+
   test("a ?host=/?port= query param overrides the URL's own authority", () => {
     // pg-connection-string (what `pg`'s Pool uses to parse DATABASE_URL) applies
     // this override, so the reported target must match what `pg` actually dials

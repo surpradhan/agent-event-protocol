@@ -213,18 +213,24 @@ function withTarget(err, target) {
  *  scheme, regardless of which of DATABASE_URL's accepted aliases
  *  (postgres/postgresql) was used, for one consistent look. Returns null
  *  whenever there is no network target to name: the sqlite backend (a file,
- *  whose errors already carry the path), a Unix-socket host (PGHOST, or
- *  DATABASE_URL's `?host=`/bare authority, starting with "/"), or a
- *  DATABASE_URL in a shape WHATWG won't parse (key=value form) — parsing is
- *  how credentials are provably dropped, so an unparseable string is never
- *  echoed. */
+ *  whose errors already carry the path), or a Unix-socket host, spelled any
+ *  of the three ways `pg-connection-string` accepts — PGHOST, DATABASE_URL's
+ *  `?host=` (already percent-decoded by URLSearchParams, so it reads as a
+ *  bare "/…" path), or a percent-encoded slash directly in the URL authority
+ *  (`postgres://%2Fvar%2Frun%2Fpostgresql/db` — WHATWG's `URL` treats a
+ *  non-special scheme's host as opaque and never decodes it, so this form
+ *  stays literally "%2F…"; checked the same way `pg-connection-string` itself
+ *  does, `/^%2f/i`, rather than decoding, which could throw on a malformed
+ *  escape) — or a DATABASE_URL in a shape WHATWG won't parse (key=value
+ *  form) — parsing is how credentials are provably dropped, so an
+ *  unparseable string is never echoed. */
 function databaseTarget(env = process.env) {
   if (String(env.STORAGE_BACKEND || "sqlite").toLowerCase() !== "postgres") return null;
   if (env.DATABASE_URL) {
     try {
       const url = new URL(env.DATABASE_URL);
       const host = url.searchParams.get("host") || url.hostname;
-      if (!host || host.startsWith("/")) return null; // unix socket, not a dial target
+      if (!host || host.startsWith("/") || /^%2f/i.test(host)) return null; // unix socket, not a dial target
       const port = url.searchParams.get("port") || url.port || "5432";
       return `postgres://${host}:${port}`;
     } catch (_) {
