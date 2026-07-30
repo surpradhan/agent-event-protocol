@@ -262,9 +262,9 @@ agent-event-protocol/
 │   │   ├── s3sink.js         # S3 egress
 │   │   └── sink.js           # Local-file sink
 │   ├── middleware/
-│   │   ├── rateLimit.js      # Per-API-key rate limiting (ingest only)
-│   │   ├── quota.js          # Per-project quota enforcement
-│   │   ├── accessLog.js      # Opt-in, path-only access logging
+│   │   ├── rateLimit.js       # Per-API-key rate limiting (ingest only)
+│   │   ├── quota.js           # Per-project quota enforcement
+│   │   ├── accessLog.js       # Opt-in, path-only access logging
 │   │   └── queryValidation.js # Query-param validation
 │   └── public/
 │       ├── dashboard.html    # Vanilla-JS dashboard (~3.1k lines)
