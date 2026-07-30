@@ -26,7 +26,10 @@
  * for this slice; they slot in as sibling sinks behind the same interface.
  */
 
+const { URL } = require("url");
+
 const { ExportSink } = require("./sink");
+const { targetOf, withTarget } = require("../errors");
 
 /**
  * S3 export sink.
@@ -86,10 +89,34 @@ class S3Sink extends ExportSink {
     return `s3://${this.bucket}/${key}`;
   }
 
+  /**
+   * Credential-free name for what an upload dials, for error messages (issue
+   * #186): the custom endpoint's origin when one is set, else the bucket —
+   * with the region when known, since a dial failure's message drops the
+   * region-derived AWS hostname (see errors.js TERSE_ERROR_CODES).
+   * @returns {string}
+   */
+  _target() {
+    if (this.endpoint) {
+      try {
+        return targetOf(new URL(this.endpoint));
+      } catch (_) { /* not URL-shaped; fall through to the bucket form */ }
+    }
+    return this.region ? `s3://${this.bucket} (${this.region})` : `s3://${this.bucket}`;
+  }
+
   async write(key, stream) {
     this._ensureDeps();
     const upload = this._createUpload({ Bucket: this.bucket, Key: key, Body: stream });
-    await upload.done();
+    try {
+      await upload.done();
+    } catch (err) {
+      // An unreachable endpoint gets the "could not reach <target>" line —
+      // which also collapses happy-eyeballs' per-address dial attempts. A
+      // service reply (AccessDenied, NoSuchBucket, …) means S3 WAS reached:
+      // withTarget passes it through with its own, more accurate message.
+      throw withTarget(err, this._target());
+    }
     return { location: this._location(key) };
   }
 }

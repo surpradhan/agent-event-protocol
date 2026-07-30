@@ -75,6 +75,58 @@ describe("S3Sink", () => {
   });
 });
 
+describe("S3Sink upload failures (issue #186)", () => {
+  /** A createUpload whose done() rejects, matching @aws-sdk/lib-storage's shape. */
+  function failingUploaderFactory(err) {
+    return { createUpload: () => ({ done: () => Promise.reject(err) }) };
+  }
+
+  function refused(code = "ECONNREFUSED") {
+    return Object.assign(new Error(`connect ${code} 127.0.0.1:9000`), { code });
+  }
+
+  test("an unreachable custom endpoint gets 'could not reach <target>'", async () => {
+    const { createUpload } = failingUploaderFactory(new AggregateError([refused(), refused()]));
+    const sink = new S3Sink({ bucket: "b", endpoint: "https://minio.local:9000", createUpload });
+    const { Readable } = require("node:stream");
+    await assert.rejects(
+      sink.write("k.txt", Readable.from([Buffer.from("x")])),
+      /^Error: could not reach https:\/\/minio\.local:9000 \(ECONNREFUSED\)$/
+    );
+  });
+
+  test("without a custom endpoint, names the bucket (and region, if set)", async () => {
+    const { createUpload } = failingUploaderFactory(refused());
+    const sink = new S3Sink({ bucket: "archive", region: "us-east-1", createUpload });
+    const { Readable } = require("node:stream");
+    await assert.rejects(
+      sink.write("k.txt", Readable.from([Buffer.from("x")])),
+      /^Error: could not reach s3:\/\/archive \(us-east-1\) \(ECONNREFUSED\)$/
+    );
+  });
+
+  test("without a custom endpoint or a region, names just the bucket", async () => {
+    const { createUpload } = failingUploaderFactory(refused());
+    const sink = new S3Sink({ bucket: "archive", createUpload });
+    const { Readable } = require("node:stream");
+    await assert.rejects(
+      sink.write("k.txt", Readable.from([Buffer.from("x")])),
+      /^Error: could not reach s3:\/\/archive \(ECONNREFUSED\)$/
+    );
+  });
+
+  test("a reached-endpoint service error (e.g. AccessDenied) passes through unchanged", async () => {
+    const serviceError = Object.assign(new Error("Access Denied"), { Code: "AccessDenied", $metadata: {} });
+    const { createUpload } = failingUploaderFactory(serviceError);
+    const sink = new S3Sink({ bucket: "archive", createUpload });
+    const { Readable } = require("node:stream");
+    await assert.rejects(
+      sink.write("k.txt", Readable.from([Buffer.from("x")])),
+      (err) => err === serviceError && err.message === "Access Denied"
+    );
+  });
+});
+
 describe("createSink factory", () => {
   test("local by default", () => {
     assert.ok(createSink() instanceof LocalFileSink);

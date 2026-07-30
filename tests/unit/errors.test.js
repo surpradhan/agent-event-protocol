@@ -3,7 +3,7 @@
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
 const { URL } = require("url");
-const { describeError, targetOf } = require("../../src/errors");
+const { describeError, targetOf, withTarget, databaseTarget } = require("../../src/errors");
 
 // ---------------------------------------------------------------------------
 // Tests for describeError (issue #173; moved from cli.test.js in #176 when
@@ -266,5 +266,131 @@ describe("targetOf", () => {
     const url = new URL("foo://localhost:8787/x");
     assert.equal(url.origin, "null", "precondition: WHATWG gives 'null' here");
     assert.equal(targetOf(url), "foo://localhost:8787");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests for withTarget + databaseTarget (issue #186; gives src/prune.js and
+// src/export.js's Postgres/S3 dial failures the same "could not reach
+// <target>" polish src/cli.js already has for the HTTP server).
+// ---------------------------------------------------------------------------
+
+describe("withTarget", () => {
+  function refused(code = "ECONNREFUSED") {
+    return Object.assign(new Error(`connect ${code} 127.0.0.1:5432`), { code });
+  }
+
+  test("wraps an unreachable-network error with the target", () => {
+    const wrapped = withTarget(refused(), "postgres://localhost:5432");
+    assert.equal(wrapped.message, "could not reach postgres://localhost:5432 (ECONNREFUSED)");
+  });
+
+  test("unwrapping the wrapped error with describeError (no target) matches", () => {
+    // This is the contract src/prune.js / src/export.js's top-level catch
+    // relies on: they call describeError(err) with no target, and must still
+    // get the full "could not reach ..." line, not just the wrapper's message
+    // re-parsed.
+    const wrapped = withTarget(refused(), "postgres://localhost:5432");
+    assert.equal(describeError(wrapped), "could not reach postgres://localhost:5432 (ECONNREFUSED)");
+  });
+
+  test("preserves the original error as .cause", () => {
+    const original = refused();
+    const wrapped = withTarget(original, "postgres://localhost:5432");
+    assert.equal(wrapped.cause, original);
+  });
+
+  test("an AggregateError of per-address dial failures still collapses", () => {
+    const agg = new AggregateError([refused(), refused()]);
+    const wrapped = withTarget(agg, "postgres://localhost:5432");
+    assert.equal(wrapped.message, "could not reach postgres://localhost:5432 (ECONNREFUSED)");
+  });
+
+  test("passes through a reached-server failure unchanged (no target framing)", () => {
+    // e.g. Postgres replying with an auth failure, or S3 replying AccessDenied
+    // — the peer WAS reached, so "could not reach" would misdirect the operator.
+    const authFailure = Object.assign(new Error("password authentication failed for user \"aep\""), {
+      code: "28P01"
+    });
+    const result = withTarget(authFailure, "postgres://localhost:5432");
+    assert.equal(result, authFailure);
+    assert.equal(result.message, "password authentication failed for user \"aep\"");
+  });
+
+  test("passes through unchanged when target is null", () => {
+    const err = refused();
+    assert.equal(withTarget(err, null), err);
+  });
+
+  test("does not reframe a code nested only under .cause", () => {
+    // isUnreachable deliberately walks the same shape describeError's collect()
+    // does (.code, .errors) and no further — a "yes" here is a promise
+    // describeError(err, target) can keep. A library (e.g. pg-pool, on a
+    // connection timeout) may wrap the real cause under .cause instead; since
+    // describeError doesn't narrate through .cause, reframing based on it would
+    // produce a target line whose parenthesized detail doesn't actually name
+    // the cause. Out of scope for #186 — see errors.js's isUnreachable comment.
+    const inner = refused();
+    const outer = new Error("connection failed", { cause: inner });
+    const result = withTarget(outer, "postgres://localhost:5432");
+    assert.equal(result, outer);
+    assert.equal(result.message, "connection failed");
+  });
+
+  test("survives a hostile error object rather than crashing", () => {
+    const hostile = new Error("outer");
+    Object.defineProperty(hostile, "code", { get() { throw new Error("boom"); } });
+    assert.doesNotThrow(() => withTarget(hostile, "postgres://localhost:5432"));
+  });
+});
+
+describe("databaseTarget", () => {
+  test("returns null for the sqlite backend (default)", () => {
+    assert.equal(databaseTarget({}), null);
+    assert.equal(databaseTarget({ STORAGE_BACKEND: "sqlite" }), null);
+  });
+
+  test("parses DATABASE_URL and drops credentials", () => {
+    const target = databaseTarget({
+      STORAGE_BACKEND: "postgres",
+      DATABASE_URL: "postgres://user:hunter2@db.example:5432/aep"
+    });
+    assert.equal(target, "postgres://db.example:5432");
+    assert.doesNotMatch(target, /hunter2/);
+    assert.doesNotMatch(target, /user/);
+  });
+
+  test("falls back to PGHOST/PGPORT when DATABASE_URL is unset", () => {
+    assert.equal(
+      databaseTarget({ STORAGE_BACKEND: "postgres", PGHOST: "db.internal", PGPORT: "5433" }),
+      "postgres://db.internal:5433"
+    );
+  });
+
+  test("defaults to localhost:5432 when nothing is configured", () => {
+    assert.equal(databaseTarget({ STORAGE_BACKEND: "postgres" }), "postgres://localhost:5432");
+  });
+
+  test("returns null for a unix-socket PGHOST (not a dial target)", () => {
+    assert.equal(
+      databaseTarget({ STORAGE_BACKEND: "postgres", PGHOST: "/var/run/postgresql" }),
+      null
+    );
+  });
+
+  test("returns null for an unparseable DATABASE_URL rather than echoing it", () => {
+    // key=value connection strings aren't WHATWG-URL-shaped; parsing (and thus
+    // dropping any embedded credential) isn't possible, so name nothing.
+    assert.equal(
+      databaseTarget({ STORAGE_BACKEND: "postgres", DATABASE_URL: "host=db user=aep password=hunter2" }),
+      null
+    );
+  });
+
+  test("backend name comparison is case-insensitive", () => {
+    assert.equal(
+      databaseTarget({ STORAGE_BACKEND: "Postgres", PGHOST: "db.internal" }),
+      "postgres://db.internal:5432"
+    );
   });
 });

@@ -15,6 +15,8 @@
  * `err.message || String(err)`.
  */
 
+const { URL } = require("url");
+
 /** The origin of a URL, for use in an error message.
  *
  *  Prefer `origin` — unlike `href` it drops any userinfo, so a server URL of
@@ -136,4 +138,66 @@ function describeError(err, target = null) {
   return target ? `could not reach ${target} (${detail})` : detail;
 }
 
-module.exports = { describeError, targetOf };
+/** Is this a transport-level failure — the peer was never reached?
+ *
+ *  Decides whether "could not reach <target>" framing is honest. An auth
+ *  failure or a service-side error means the dial succeeded, and wrapping it
+ *  as unreachable would point the operator at the network instead of at their
+ *  credentials/config. Deliberately walks the same shape describeError's
+ *  `collect()` does — `.code` and (recursively) `.errors`, e.g. a
+ *  happy-eyeballs AggregateError's per-address attempts — and no further, so
+ *  a "yes" here is a promise describeError(err, target) can actually keep.
+ *  (`.cause` is not walked: a library may wrap a dial failure there — see
+ *  pg-pool's connection-timeout error — but describeError doesn't narrate
+ *  through it, and teaching it to is a separate, deliberately out-of-scope
+ *  change; see issue #186.) Runs on failure paths — same never-throw
+ *  contract as describeError. */
+function isUnreachable(err, seen = new Set()) {
+  if (!err || typeof err !== "object" || seen.has(err)) return false;
+  seen.add(err);
+  try {
+    if (TERSE_ERROR_CODES.has(err.code)) return true;
+    return Array.isArray(err.errors) && err.errors.some((e) => isUnreachable(e, seen));
+  } catch (_) {
+    return false; // a getter threw — can't tell, so don't reframe
+  }
+}
+
+/** Attach a target to an unreachable-network error; pass anything else through.
+ *
+ *  For a dial failure this returns a new Error whose `.message` is the full
+ *  cli.js-style line — "could not reach <target> (<causes>)" — with the
+ *  original as `.cause`, so a later `describeError(err)` (no target) prints it
+ *  as-is: the top-level handlers in src/prune.js / src/export.js need no
+ *  change. A reached-server failure (bad password, missing bucket) or a null
+ *  target returns `err` untouched, keeping its own, more accurate message. */
+function withTarget(err, target) {
+  if (!target || !isUnreachable(err)) return err;
+  return new Error(describeError(err, target), { cause: err });
+}
+
+/** Credential-free target for the configured storage backend, or null.
+ *
+ *  Names what src/db's Postgres backend will dial, for error messages —
+ *  mirroring its config resolution (DATABASE_URL, else libpq's PGHOST/PGPORT,
+ *  else localhost:5432). Returns null whenever there is no network target to
+ *  name: the sqlite backend (a file, whose errors already carry the path), a
+ *  unix-socket PGHOST, or a DATABASE_URL in a shape WHATWG won't parse
+ *  (key=value form) — parsing is how credentials are provably dropped, so an
+ *  unparseable string is never echoed. */
+function databaseTarget(env = process.env) {
+  if (String(env.STORAGE_BACKEND || "sqlite").toLowerCase() !== "postgres") return null;
+  if (env.DATABASE_URL) {
+    try {
+      const url = new URL(env.DATABASE_URL);
+      return url.host ? targetOf(url) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+  const host = env.PGHOST || "localhost";
+  if (host.startsWith("/")) return null; // unix-socket directory, not a dial target
+  return `postgres://${host}:${env.PGPORT || "5432"}`;
+}
+
+module.exports = { describeError, targetOf, withTarget, databaseTarget };
