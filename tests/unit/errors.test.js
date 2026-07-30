@@ -322,6 +322,25 @@ describe("withTarget", () => {
     assert.equal(withTarget(err, null), err);
   });
 
+  test("does not reframe ECONNRESET — the connection was established, then torn down", () => {
+    // ECONNRESET means a live connection existed and the peer reset it (e.g.
+    // Postgres hitting max_connections right after accept, or a load balancer
+    // killing an in-progress handshake) — the dial itself succeeded, so
+    // "could not reach" would send the operator to the wrong layer.
+    const reset = refused("ECONNRESET");
+    const result = withTarget(reset, "postgres://localhost:5432");
+    assert.equal(result, reset);
+  });
+
+  test("does not reframe EPIPE — a write failed because the peer already closed its end", () => {
+    // Relevant to S3Sink specifically: a multipart upload's connection dropping
+    // mid-transfer (after earlier parts already succeeded) surfaces as EPIPE,
+    // not an unreachable endpoint.
+    const pipeError = refused("EPIPE");
+    const result = withTarget(pipeError, "s3://bucket");
+    assert.equal(result, pipeError);
+  });
+
   test("does not reframe a code nested only under .cause", () => {
     // isUnreachable deliberately walks the same shape describeError's collect()
     // does (.code, .errors) and no further — a "yes" here is a promise
@@ -384,6 +403,56 @@ describe("databaseTarget", () => {
     assert.equal(
       databaseTarget({ STORAGE_BACKEND: "postgres", DATABASE_URL: "host=db user=aep password=hunter2" }),
       null
+    );
+  });
+
+  test("preserves IPv6 brackets from DATABASE_URL", () => {
+    assert.equal(
+      databaseTarget({
+        STORAGE_BACKEND: "postgres",
+        DATABASE_URL: "postgres://user:hunter2@[::1]:5432/aep"
+      }),
+      "postgres://[::1]:5432"
+    );
+  });
+
+  test("uses postgres:// even when DATABASE_URL spells the 'postgresql' alias", () => {
+    assert.equal(
+      databaseTarget({ STORAGE_BACKEND: "postgres", DATABASE_URL: "postgresql://db.example:5432/aep" }),
+      "postgres://db.example:5432"
+    );
+  });
+
+  test("defaults the port to 5432 when DATABASE_URL omits it", () => {
+    assert.equal(
+      databaseTarget({ STORAGE_BACKEND: "postgres", DATABASE_URL: "postgres://db.example/aep" }),
+      "postgres://db.example:5432"
+    );
+  });
+
+  test("returns null for a Unix-socket path spelled via DATABASE_URL's ?host= param", () => {
+    // pg-connection-string's documented way to name a socket in a DATABASE_URL,
+    // since a socket path can't live in a URL authority (e.g. Cloud SQL's
+    // postgres:///db?host=/cloudsql/project:region:instance).
+    assert.equal(
+      databaseTarget({
+        STORAGE_BACKEND: "postgres",
+        DATABASE_URL: "postgres:///aep?host=/cloudsql/proj:region:instance"
+      }),
+      null
+    );
+  });
+
+  test("a ?host=/?port= query param overrides the URL's own authority", () => {
+    // pg-connection-string (what `pg`'s Pool uses to parse DATABASE_URL) applies
+    // this override, so the reported target must match what `pg` actually dials
+    // — not the (ignored) hostname sitting in the URL's authority.
+    assert.equal(
+      databaseTarget({
+        STORAGE_BACKEND: "postgres",
+        DATABASE_URL: "postgres://ignored-host/aep?host=actual-host&port=1234"
+      }),
+      "postgres://actual-host:1234"
     );
   });
 

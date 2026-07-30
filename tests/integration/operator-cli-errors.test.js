@@ -117,4 +117,14 @@ describe("operator CLI unreachable-database target framing (issue #186)", () => 
     assert.doesNotMatch(stderr, /user/, "the DATABASE_URL userinfo must not reach stderr");
     assert.doesNotMatch(stderr, /pass/, "the DATABASE_URL password must not reach stderr");
   });
+
+  test("export also does not leak the DATABASE_URL's credentials into the error line", async () => {
+    // Same withTarget(err, databaseTarget()) wiring as prune.js, driven as its
+    // own subprocess rather than assumed identical from the prune-only case.
+    const port = await closedPort();
+    const { stderr } = await runAgainstUnreachablePostgres(EXPORT_PATH, port);
+
+    assert.doesNotMatch(stderr, /user/, "the DATABASE_URL userinfo must not reach stderr");
+    assert.doesNotMatch(stderr, /pass/, "the DATABASE_URL password must not reach stderr");
+  });
 });
