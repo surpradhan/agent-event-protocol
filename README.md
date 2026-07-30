@@ -445,7 +445,7 @@ go test ./...                       # 78 unit tests (no server needed)
 go test -tags=integration ./aep -v  # 9 integration tests (auto-skip if server is down)
 ```
 
-**Node SDK — 70+ tests (unit) + 3 integration (auto-skip if server is down)**
+**Node SDK — 73+ tests (70+ unit + 3 integration, auto-skip if server is down)**
 ```bash
 cd sdks/node
 npm install

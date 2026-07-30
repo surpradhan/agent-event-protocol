@@ -1505,6 +1505,21 @@ container (drift-guard required checks 12 → 13).
 
 ---
 
+## Storage abstraction + async DB contract — Phase 13 PR-A — 2026-06-06
+
+First PR of the multi-PR Phase 13 (Hosted SaaS) effort. Adds no Postgres —
+isolates the sync→async DB conversion behind a new `StorageBackend` interface
+(`src/db/backends/interface.js`) so a future Postgres backend (PR-B) slots in
+without touching callers again, with SQLite as the only implementation and
+zero behavior change. `src/db/backends/sqlite.js`'s SQL is byte-for-byte
+identical to the previous synchronous `src/db/index.js`; only the wrapping
+changed (class + async signatures + an awaited `init()` replacing module-load
+construction). `src/server.js` awaits all DB call sites and uses
+`db.ping()`/`db.schemaReady()` for `/health`/`/ready` instead of reaching past
+the interface; `src/auth.js`'s key lookup/creation is now async too.
+
+---
+
 ## Node SDK 0.3.0 — first npm release, 2026-06-06
 
 First published release of the Node SDK (`@surpradhan/aep`) to the public npm
