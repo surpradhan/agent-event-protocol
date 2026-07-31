@@ -15,9 +15,9 @@ a bundle from the server, so callers had to hand-roll the `GET` themselves.
 The new methods return the parsed bundle dict, ready to pass straight into
 `verify_audit_bundle` — errors follow the same mapping as every other read
 call (`AEPNotFoundError` on 404, `AEPServerError` on 503 when
-`AUDIT_SIGNING_SECRET` isn't configured). Go/Node SDK equivalents are
-tracked separately (both are in maintenance mode) — see issue #116. Closes
-#116.
+`AUDIT_SIGNING_SECRET` isn't configured). Go/Node SDK equivalents were
+explicitly deferred as optional follow-ups per the scoping note on #116 —
+both SDKs are in maintenance mode. Closes #116.
 
 ---
 

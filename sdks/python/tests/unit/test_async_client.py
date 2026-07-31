@@ -296,6 +296,7 @@ async def test_get_audit_bundle_signing_not_configured():
         with pytest.raises(AEPServerError) as exc_info:
             await client.get_audit_bundle("ses_001")
     assert exc_info.value.status_code == 503
+    assert "Audit export not configured" in str(exc_info.value)
 
 
 @respx.mock
@@ -333,6 +334,7 @@ async def test_get_workflow_audit_bundle_signing_not_configured():
         with pytest.raises(AEPServerError) as exc_info:
             await client.get_workflow_audit_bundle("trc_001")
     assert exc_info.value.status_code == 503
+    assert "Audit export not configured" in str(exc_info.value)
 
 
 # ── health & metrics ──────────────────────────────────────────────────────────
