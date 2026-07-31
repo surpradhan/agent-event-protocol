@@ -4,6 +4,23 @@ All notable changes to AEP are documented here.
 
 ---
 
+## Python SDK — audit-bundle fetch methods on `AEPClient` / `AsyncAEPClient` — 2026-07-31
+
+Both clients gain `get_audit_bundle(session_id)` and
+`get_workflow_audit_bundle(trace_id)`, fetching from `GET
+/sessions/{id}/audit-bundle` and `GET /workflows/{traceId}/audit-bundle`
+respectively. This closes the fetch-then-verify gap: the SDK already shipped
+`verify_audit_bundle` (offline verification) but had no client method to pull
+a bundle from the server, so callers had to hand-roll the `GET` themselves.
+The new methods return the parsed bundle dict, ready to pass straight into
+`verify_audit_bundle` — errors follow the same mapping as every other read
+call (`AEPNotFoundError` on 404, `AEPServerError` on 503 when
+`AUDIT_SIGNING_SECRET` isn't configured). Go/Node SDK equivalents were
+explicitly deferred as optional follow-ups per the scoping note on #116 —
+both SDKs are in maintenance mode. Closes #116.
+
+---
+
 ## Python SDK — pin the ruff ruleset with an explicit `select` — 2026-07-30
 
 `sdks/python/pyproject.toml`'s `[tool.ruff.lint]` now pins the exact set of

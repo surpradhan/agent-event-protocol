@@ -413,7 +413,9 @@ Notes:
 | `get_session_events(session_id, *, type, q, limit, cursor)` | GET `/sessions/{id}/events` | same, `await`-able |
 | `get_session_tree(session_id)` | GET `/sessions/{id}/tree` | same, `await`-able |
 | `get_session_export(session_id, *, format)` | GET `/sessions/{id}/export` | same, `await`-able |
+| `get_audit_bundle(session_id)` | GET `/sessions/{id}/audit-bundle` | same, `await`-able |
 | `get_workflow(trace_id)` | GET `/workflows/{traceId}` | same, `await`-able |
+| `get_workflow_audit_bundle(trace_id)` | GET `/workflows/{traceId}/audit-bundle` | same, `await`-able |
 | `get_metrics()` | GET `/metrics` | same, `await`-able |
 | `health()` | GET `/health` | same, `await`-able |
 | `ready()` | GET `/ready` | same, `await`-able |
@@ -516,6 +518,24 @@ locked by a shared known-answer fixture). Any post-hoc change — a mutated payl
 field, reordered/added/dropped events, an edited manifest, or the wrong secret —
 makes `valid` false. (Building/signing bundles stays server-side, where the
 signing secret lives.)
+
+`AEPClient` / `AsyncAEPClient` can fetch a bundle straight from the server, so a
+full fetch → verify round-trip needs no manual `GET`:
+
+```python
+from aep import AEPClient, verify_audit_bundle
+
+with AEPClient() as client:
+    bundle = client.get_audit_bundle("ses_001")            # or get_workflow_audit_bundle(trace_id)
+
+result = verify_audit_bundle(bundle, secret="my-audit-signing-secret")
+if not result["valid"]:
+    raise SystemExit(f"bundle failed verification: {result['errors']}")
+```
+
+`get_audit_bundle` / `get_workflow_audit_bundle` raise `AEPNotFoundError` if the
+session/workflow doesn't exist, and `AEPServerError` (503) if the server has no
+`AUDIT_SIGNING_SECRET` configured — same error handling as every other read call.
 
 ---
 

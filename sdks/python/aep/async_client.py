@@ -162,10 +162,28 @@ class AsyncAEPClient:
     ) -> dict[str, Any]:
         return await self._get(f"/sessions/{session_id}/export", params={"format": format})
 
+    async def get_audit_bundle(self, session_id: str) -> dict[str, Any]:
+        """GET the signed audit bundle for a session (``/sessions/{id}/audit-bundle``).
+
+        Round-trips with :func:`aep.verify_audit_bundle` — pass the returned
+        dict straight to it along with the audit signing secret. Raises
+        :exc:`AEPNotFoundError` if the session doesn't exist, or
+        :exc:`AEPServerError` (503) if the server has no
+        ``AUDIT_SIGNING_SECRET`` configured.
+        """
+        return await self._get(f"/sessions/{session_id}/audit-bundle")
+
     # ── workflows ─────────────────────────────────────────────────────────────
 
     async def get_workflow(self, trace_id: str) -> dict[str, Any]:
         return await self._get(f"/workflows/{trace_id}")
+
+    async def get_workflow_audit_bundle(self, trace_id: str) -> dict[str, Any]:
+        """GET the signed audit bundle for a workflow (``/workflows/{traceId}/audit-bundle``).
+
+        Same round-trip and error semantics as :meth:`get_audit_bundle`.
+        """
+        return await self._get(f"/workflows/{trace_id}/audit-bundle")
 
     # ── metrics & health ──────────────────────────────────────────────────────
 

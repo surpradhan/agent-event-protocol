@@ -1,12 +1,13 @@
 """Unit tests for AsyncAEPClient using respx to mock httpx."""
 
 import json
+from pathlib import Path
 
 import httpx
 import pytest
 import respx
 
-from aep import create_event
+from aep import create_event, verify_audit_bundle
 from aep.async_client import AsyncAEPClient
 from aep.exceptions import (
     AEPAuthError,
@@ -18,6 +19,17 @@ from aep.exceptions import (
 )
 
 _BASE = "http://test-server:8787"
+
+# Shared KAT bundle (src/audit.js buildAuditBundle) — see tests/unit/test_audit.py.
+_KAT_SECRET = "shared-secret-123"
+_KAT_FIXTURE = (
+    Path(__file__).resolve().parents[4] / "tests" / "fixtures" / "audit" / "kat-bundle.json"
+)
+
+
+def _load_kat_bundle():
+    with _KAT_FIXTURE.open(encoding="utf-8") as fh:
+        return json.load(fh)
 
 
 def _event(**overrides):
@@ -242,6 +254,87 @@ async def test_get_workflow():
     async with AsyncAEPClient(server_url=_BASE) as client:
         result = await client.get_workflow("trc_001")
     assert result["trace_id"] == "trc_001"
+
+
+# ── audit bundles ─────────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_audit_bundle_round_trips_with_verify():
+    """Fetch → verify_audit_bundle round-trip against the shared KAT fixture."""
+    bundle = _load_kat_bundle()
+    respx.get(f"{_BASE}/sessions/ses_kat/audit-bundle").mock(
+        return_value=httpx.Response(200, json=bundle)
+    )
+    async with AsyncAEPClient(server_url=_BASE) as client:
+        fetched = await client.get_audit_bundle("ses_kat")
+
+    result = verify_audit_bundle(fetched, _KAT_SECRET)
+    assert result["valid"] is True
+    assert result["content_digest_match"] is True
+    assert result["manifest_signature_valid"] is True
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_audit_bundle_not_found():
+    respx.get(f"{_BASE}/sessions/ses_missing/audit-bundle").mock(
+        return_value=httpx.Response(404, json={"error": "Session not found"})
+    )
+    async with AsyncAEPClient(server_url=_BASE) as client:
+        with pytest.raises(AEPNotFoundError):
+            await client.get_audit_bundle("ses_missing")
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_audit_bundle_signing_not_configured():
+    respx.get(f"{_BASE}/sessions/ses_001/audit-bundle").mock(
+        return_value=httpx.Response(503, json={"error": "Audit export not configured"})
+    )
+    async with AsyncAEPClient(server_url=_BASE) as client:
+        with pytest.raises(AEPServerError) as exc_info:
+            await client.get_audit_bundle("ses_001")
+    assert exc_info.value.status_code == 503
+    assert "Audit export not configured" in str(exc_info.value)
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_workflow_audit_bundle_round_trips_with_verify():
+    bundle = _load_kat_bundle()
+    respx.get(f"{_BASE}/workflows/trc_kat/audit-bundle").mock(
+        return_value=httpx.Response(200, json=bundle)
+    )
+    async with AsyncAEPClient(server_url=_BASE) as client:
+        fetched = await client.get_workflow_audit_bundle("trc_kat")
+
+    result = verify_audit_bundle(fetched, _KAT_SECRET)
+    assert result["valid"] is True
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_workflow_audit_bundle_not_found():
+    respx.get(f"{_BASE}/workflows/trc_missing/audit-bundle").mock(
+        return_value=httpx.Response(404, json={"error": "Workflow not found"})
+    )
+    async with AsyncAEPClient(server_url=_BASE) as client:
+        with pytest.raises(AEPNotFoundError):
+            await client.get_workflow_audit_bundle("trc_missing")
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_workflow_audit_bundle_signing_not_configured():
+    respx.get(f"{_BASE}/workflows/trc_001/audit-bundle").mock(
+        return_value=httpx.Response(503, json={"error": "Audit export not configured"})
+    )
+    async with AsyncAEPClient(server_url=_BASE) as client:
+        with pytest.raises(AEPServerError) as exc_info:
+            await client.get_workflow_audit_bundle("trc_001")
+    assert exc_info.value.status_code == 503
+    assert "Audit export not configured" in str(exc_info.value)
 
 
 # ── health & metrics ──────────────────────────────────────────────────────────
